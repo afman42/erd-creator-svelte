@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "name": "test-shop",
+  "entities": [
+    {
+      "name": "users",
+      "x": 2,
+      "y": 2,
+      "fields": [
+        { "name": "id", "type": "INT", "pk": true, "nullable": false },
+        { "name": "email", "type": "VARCHAR(255)", "unique": true },
+        { "name": "name", "type": "VARCHAR(100)" }
+      ],
+      "todos": [
+        { "id": "t1", "text": "add auth", "done": false }
+      ]
+    },
+    {
+      "name": "posts",
+      "x": 30,
+      "y": 4,
+      "fields": [
+        { "name": "id", "type": "INT", "pk": true, "nullable": false },
+        { "name": "user_id", "type": "INT" },
+        { "name": "title", "type": "VARCHAR(200)" },
+        { "name": "body", "type": "TEXT" },
+        { "name": "created_at", "type": "DATETIME" }
+      ],
+      "todos": []
+    },
+    {
+      "name": "tags",
+      "x": 2,
+      "y": 20,
+      "fields": [
+        { "name": "id", "type": "INT", "pk": true, "nullable": false },
+        { "name": "name", "type": "VARCHAR(50)", "unique": true }
+      ],
+      "todos": []
+    },
+    {
+      "name": "post_tags",
+      "x": 30,
+      "y": 18,
+      "fields": [
+        { "name": "post_id", "type": "INT" },
+        { "name": "tag_id", "type": "INT" }
+      ],
+      "todos": []
+    }
+  ],
+  "relationships": [
+    { "from": "users", "to": "posts", "type": "1:N" },
+    { "from": "posts", "to": "post_tags", "type": "1:N" },
+    { "from": "tags", "to": "post_tags", "type": "1:N" }
+  ]
+}
