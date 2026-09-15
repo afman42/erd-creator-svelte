@@ -24,6 +24,9 @@ importers:
       vite:
         specifier: ^7.0.0
         version: 7.3.6(@types/node@26.5.1)
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
 
 packages:
 

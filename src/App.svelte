@@ -32,8 +32,24 @@ import { exportSvg } from './lib/export.js';
   const v = (e) => e.data?.value ?? e.target?.value ?? '';
   const c = (e) => e.data?.checked ?? e.target?.checked ?? false;
   const key = (e) => e.data?.key ?? e.key;
-  function onEnter(e, fn) {
-    if (key(e) === 'Enter') { e.stopPropagation(); fn(); }
+  const MOVES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  function moveBy(k) {
+    const [dx, dy] = MOVES[k];
+    const en = model.entities.find((x) => x.name === sel);
+    if (!en) return;
+    commit(() => moveEntity(model, sel, Math.max(0, en.x + dx), Math.max(0, en.y + dy)));
+  }
+  // Form inputs own Enter (submit), arrows (move selected entity), Delete (remove
+  // selected) — the focused buffer would otherwise swallow or leak those bytes.
+  function formKey(e, submit) {
+    const k = key(e);
+    if (k === 'Enter') { e.stopPropagation(); submit(); return; }
+    if (MOVES[k] && sel) { e.stopPropagation(); moveBy(k); return; }
+    if (k === 'Delete' && sel) {
+      e.stopPropagation();
+      commit(() => removeEntity(model, sel));
+      sel = null;
+    }
   }
 
   function commit(fn) {
@@ -100,15 +116,7 @@ import { exportSvg } from './lib/export.js';
       if (k === 'Escape' || k === 'Esc') { dialog = null; e.preventDefault?.(); }
       return;
     }
-    const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-    if (moves[k] && sel) {
-      const [dx, dy] = moves[k];
-      const en = model.entities.find((x) => x.name === sel);
-      if (!en) return;
-      commit(() => moveEntity(model, sel, Math.max(0, en.x + dx), Math.max(0, en.y + dy)));
-      e.preventDefault?.();
-      return;
-    }
+    if (MOVES[k] && sel) { moveBy(k); e.preventDefault?.(); return; }
     if (k === 'u') undo();
     else if (k === 'r') redo();
     else if (k === '?' || k === 'h') dialog = 'help';
@@ -211,9 +219,6 @@ import { exportSvg } from './lib/export.js';
     <aside class="panel">
       <details open>
         <summary>Entities ({model.entities.length})</summary>
-        <div class="row">
-          <input data-autofocus placeholder="table_name" value={entName} oninput={(e) => entName = v(e)} onclick={addEnt} onkeydown={(e) => onEnter(e, addEnt)} />
-          <button onclick={addEnt}>add</button>
         {#each model.entities as e (e.name)}
           <div class="ent {e.name === sel ? 'sel' : ''}" onclick={() => sel = e.name}>
             <strong>{e.name}</strong> <span class="dim">{e.x},{e.y}</span>
@@ -228,23 +233,13 @@ import { exportSvg } from './lib/export.js';
       {#if selEntity}
         <details open>
           <summary>Field → {sel}</summary>
-          <div class="row">
-            <input placeholder="name" value={fldName} oninput={(e) => fldName = v(e)} onclick={addFld} onkeydown={(e) => onEnter(e, addFld)} />
-            <select value={fldType} onchange={(e) => fldType = v(e)}>{#each TYPES as t (t)}<option value={t}>{t}</option>{/each}</select>
-          </div>
-          <div class="row">
-            <label><input type="checkbox" checked={fldPk} onchange={(e) => fldPk = c(e)} />PK</label>
-            <label><input type="checkbox" checked={fldNullable} onchange={(e) => fldNullable = c(e)} />NULL</label>
-            <label><input type="checkbox" checked={fldUnique} onchange={(e) => fldUnique = c(e)} />UQ</label>
-            <button onclick={addFld}>add</button>
-          </div>
           {#each selEntity.fields as f (f.name)}
             <div class="fld">{fieldLabel(f)}<button onclick={() => commit(() => removeField(model, sel, f.name))}>x</button></div>
           {/each}
           <details class="todo">
             <summary>TODOs ({(selEntity.todos || []).length})</summary>
             <div class="row">
-              <input placeholder="new task" value={todoText} oninput={(e) => todoText = v(e)} onclick={doAddTodo} onkeydown={(e) => onEnter(e, doAddTodo)} />
+              <input data-navkeys placeholder="new task" value={todoText} oninput={(e) => todoText = v(e)} onclick={doAddTodo} onkeydown={(e) => formKey(e, doAddTodo)} />
               <button onclick={doAddTodo}>+</button>
             </div>
             {#each (selEntity.todos || []) as t (t.id)}
@@ -257,24 +252,12 @@ import { exportSvg } from './lib/export.js';
         {/if}
       <details>
         <summary>Relations ({model.relationships.length})</summary>
-        <div class="row">
-          <select value={relFrom} onchange={(e) => relFrom = v(e)}><option value="">from…</option>{#each model.entities as e (e.name)}<option value={e.name}>{e.name}</option>{/each}</select>
-          <select value={relType} onchange={(e) => relType = v(e)}>{#each REL_TYPES as t (t)}<option value={t}>{t}</option>{/each}</select>
-          <select value={relTo} onchange={(e) => relTo = v(e)}><option value="">to…</option>{#each model.entities as e (e.name)}<option value={e.name}>{e.name}</option>{/each}</select>
-        </div>
-        <div class="row"><button onclick={addRel}>link</button></div>
         {#each model.relationships as r (`${r.from}:${r.to}`)}
           <div class="fld">{r.from} <span class="dim">{r.type}</span> {r.to}
             <button onclick={() => commit(() => removeRelationship(model, r.from, r.to))}>x</button></div>
         {/each}
       </details>
 
-      <div class="row">
-        <button onclick={() => { fileName = model.name; dialog = 'save'; }}>save</button>
-        <button onclick={() => dialog = 'load'}>load</button>
-        <button onclick={openExport}>sql</button>
-        <button onclick={() => { fileName = model.name; dialog = 'svgexport'; }}>svg</button>
-      </div>
       {#if err}<div class="err">{err}</div>{/if}
     </aside>
 
@@ -288,6 +271,30 @@ import { exportSvg } from './lib/export.js';
       {/each}
     </main>
   </div>
+  <div class="footer">
+    <div class="row">
+      <input data-autofocus data-navkeys placeholder="table_name" value={entName} oninput={(e) => entName = v(e)} onclick={addEnt} onkeydown={(e) => formKey(e, addEnt)} />
+      <button onclick={addEnt}>add</button>
+      {#if selEntity}
+        <input data-navkeys placeholder="field" value={fldName} oninput={(e) => fldName = v(e)} onclick={addFld} onkeydown={(e) => formKey(e, addFld)} />
+        <select value={fldType} onchange={(e) => fldType = v(e)}>{#each TYPES as t (t)}<option value={t}>{t}</option>{/each}</select>
+        <label><input type="checkbox" checked={fldPk} onchange={(e) => fldPk = c(e)} />PK</label>
+        <label><input type="checkbox" checked={fldNullable} onchange={(e) => fldNullable = c(e)} />NULL</label>
+        <label><input type="checkbox" checked={fldUnique} onchange={(e) => fldUnique = c(e)} />UQ</label>
+        <button onclick={addFld}>add</button>
+      {/if}
+    </div>
+    <div class="row">
+      <select value={relFrom} onchange={(e) => relFrom = v(e)}><option value="">from…</option>{#each model.entities as e (e.name)}<option value={e.name}>{e.name}</option>{/each}</select>
+      <select value={relType} onchange={(e) => relType = v(e)}>{#each REL_TYPES as t (t)}<option value={t}>{t}</option>{/each}</select>
+      <select value={relTo} onchange={(e) => relTo = v(e)}><option value="">to…</option>{#each model.entities as e (e.name)}<option value={e.name}>{e.name}</option>{/each}</select>
+      <button onclick={addRel}>link</button>
+      <button onclick={() => { fileName = model.name; dialog = 'save'; }}>save</button>
+      <button onclick={() => dialog = 'load'}>load</button>
+      <button onclick={openExport}>sql</button>
+      <button onclick={() => { fileName = model.name; dialog = 'svgexport'; }}>svg</button>
+    </div>
+  </div>
 
   <div class="status">{msg || `${model.entities.length} entities · ${model.relationships.length} relations · sel: ${sel || '-'} · u/r undo/redo`}</div>
 </div>
@@ -298,7 +305,7 @@ import { exportSvg } from './lib/export.js';
   arrows   move selected table 1 cell
   click    select table       Del  remove
   u / r    undo / redo        ?    this help
-  save/load/sql buttons below entity list
+  bottom bar: add table/field · link · save/load/sql/svg
   esc      close dialog</pre>
     <button onclick={() => dialog = null}>ok</button>
   </div>
@@ -329,6 +336,7 @@ import { exportSvg } from './lib/export.js';
     overflow: auto; padding: 0 1cell;
     width: 36cell; height: 24cell;
   }
+  .footer { display: flex; gap: 1cell; margin: 1cell 0 0 0; }
   .row { display: flex; gap: 1cell; align-items: center; }
   .ent { border: single; border-color: gray; padding: 0 1cell; }
   .ent.sel { border-color: yellow; }
