@@ -31,10 +31,10 @@ const appDiv = (() => {
 })();
 
 // 1. add entity 'users' via input + Enter
-const entInput = find('input');
-fire(entInput, 'input', { data: { value: 'users' } });
+const entInput = () => { let o = null; walk(root, (n) => { if (!o && n.tag === 'input' && (n.attributes.get('placeholder') || '') === 'table_name') o = n; }); return o; };
+fire(entInput(), 'input', { data: { value: 'users' } });
 await tick();
-fire(entInput, 'keydown', { key: 'Enter' });
+fire(entInput(), 'keydown', { key: 'Enter' });
 await tick();
 assert.ok(texts().includes('users'), 'entity not added');
 assert.ok(texts().includes('(1)'), 'entity count not 1');
@@ -44,17 +44,17 @@ const boxes = []; walk(root, (n) => { if (n.tag === 'input' && n.attributes.get(
 assert.equal(boxes.length, 3, 'expected PK/NULL/UQ checkboxes');
 fire(boxes[0], 'change', { data: { checked: true } });
 await tick();
-const fldInput = (() => { let out = null; walk(root, (n) => { if (n.tag === 'input' && (n.attributes.get('placeholder') || '') === 'name') out = n; }); return out; })();
-fire(fldInput, 'input', { data: { value: 'id' } });
+const fldInput = () => { let o = null; walk(root, (n) => { if (!o && n.tag === 'input' && (n.attributes.get('placeholder') || '') === 'field') o = n; }); return o; };
+fire(fldInput(), 'input', { data: { value: 'id' } });
 await tick();
-fire(fldInput, 'keydown', { key: 'Enter' });
+fire(fldInput(), 'keydown', { key: 'Enter' });
 await tick();
 assert.ok(texts().includes('id INT PK'), 'field not added');
 
 // 3. add entity posts + relationship users 1:N posts
-fire(entInput, 'input', { data: { value: 'posts' } });
+fire(entInput(), 'input', { data: { value: 'posts' } });
 await tick();
-fire(entInput, 'keydown', { key: 'Enter' });
+fire(entInput(), 'keydown', { key: 'Enter' });
 await tick();
 assert.ok(texts().includes('posts'));
 
@@ -82,6 +82,40 @@ assert.ok(texts().includes('Relations (1)'), 'redo failed');
   assert.ok(texts().includes('posts'), 'posts missing after move');
   assert.ok(/\d+,\d+/.test(texts()), 'coord readout missing');
 assert.ok(bufferToText(buffer).includes('\u2500') || texts().includes('\u2500'), 'no edge line painted');
+
+// 6. file dialogs: save → .erd on disk; sql dialog preview; svg → .svg; load restores
+import { existsSync, rmSync } from 'node:fs';
+const wait = (ms = 100) => new Promise((r) => setTimeout(r, ms));
+const btn = (label) => { let o = null; walk(root, (n) => { if (!o && n.tag === 'button' && n.children.some((c) => c.text === label)) o = n; }); return o; };
+const modal = () => { let o = null; walk(root, (n) => { if (!o && n.tag === 'div' && (n.attributes.get('class') || '').includes('modal')) o = n; }); return o; };
+const modalInput = () => { let o = null; walk(modal(), (n) => { if (!o && n.tag === 'input') o = n; }); return o; };
+function walkFrom(n, f) { f(n); for (const c of n.children ?? []) walkFrom(c, f); }
+const modalBtn = (label) => { let o = null; walkFrom(modal(), (n) => { if (!o && n.tag === 'button' && n.children.some((c) => c.text === label)) o = n; }); return o; };
+
+const NAME = 'smoke-tmp';
+rmSync(`${NAME}.erd`, { force: true }); rmSync(`${NAME}.svg`, { force: true });
+
+fire(btn('save'), 'click'); await tick();
+fire(modalInput(), 'input', { data: { value: NAME } }); await tick();
+fire(modalBtn('confirm'), 'click'); await wait();
+assert.ok(existsSync(`${NAME}.erd`), 'save wrote no .erd');
+assert.ok(texts().includes(`saved ${NAME}.erd`), 'save message missing');
+
+fire(btn('sql'), 'click'); await tick();
+assert.ok(texts().includes('CREATE TABLE'), 'sql dialog shows no DDL');
+fire(modalBtn('cancel'), 'click'); await tick();
+
+fire(btn('svg'), 'click'); await tick();
+fire(modalInput(), 'input', { data: { value: NAME } }); await tick();
+fire(modalBtn('confirm'), 'click'); await wait();
+assert.ok(existsSync(`${NAME}.svg`), 'svg export wrote no file');
+
+fire(btn('load'), 'click'); await tick();
+fire(modalInput(), 'input', { data: { value: NAME } }); await tick();
+fire(modalBtn('confirm'), 'click'); await wait();
+assert.ok(texts().includes('Entities (2)'), 'load did not restore 2 entities');
+
+rmSync(`${NAME}.erd`, { force: true }); rmSync(`${NAME}.svg`, { force: true });
 
 unmount();
 console.log('app.test: all OK');

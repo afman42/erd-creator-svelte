@@ -80,4 +80,49 @@ test.describe('UI — keyboard interaction flow', () => {
     const hasBorder = flat.includes('┌') || flat.includes('─') || flat.includes('│') || flat.includes('┐') || flat.includes('└') || flat.includes('┘');
     expect(hasBorder).toBe(true);
   });
+
+  test('adds field to selected entity', async ({ terminal }) => {
+    terminal.write('users');
+    terminal.submit('');
+    await expect(terminal.getByText('sel: users')).toBeVisible({ timeout: 5_000 });
+    // Tab: table input -> add button -> field input (svelterm Tab-focuses next element)
+    terminal.submit('\t\t');
+    terminal.write('id');
+    terminal.submit('');
+    // 'id INT' paints in sidebar AND canvas box -> relax strict-mode.
+    await expect(terminal.getByText('id INT', { strict: false })).toBeVisible({ timeout: 5_000 });
+  });
+
+  test('second entity lands at different position', async ({ terminal }) => {
+    terminal.write('users');
+    terminal.submit('');
+    terminal.write('posts');
+    terminal.submit('');
+    await expect(terminal.getByText('Entities (2)')).toBeVisible({ timeout: 5_000 });
+    const buf = terminal.getBuffer().flat().join('');
+    expect(buf).toContain('2,4');
+    expect(buf).toContain('24,4');
+  });
+
+  test('moved entity position updates in list', async ({ terminal }) => {
+    terminal.write('users');
+    terminal.submit('');
+    await expect(terminal.getByText('2,4')).toBeVisible({ timeout: 5_000 });
+    terminal.keyRight(3);
+    terminal.keyDown(2);
+    await expect(terminal.getByText('5,6')).toBeVisible({ timeout: 5_000 });
+  });
+
+  test('undo past start restores empty model', async ({ terminal }) => {
+    terminal.write('users');
+    terminal.submit('');
+    terminal.submit('u');
+    await expect(terminal.getByText('Entities (0)')).toBeVisible({ timeout: 5_000 });
+  });
+
+  test('invalid entity name rejected with error', async ({ terminal }) => {
+    terminal.write('9bad');
+    terminal.submit('');
+    await expect(terminal.getByText('Entities (0)')).toBeVisible({ timeout: 5_000 });
+  });
 });
