@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "touch dist/.gitkeep",
     "test": "node --test test/*.test.js",
     "lint": "biome check src",
     "fmt": "biome check --write src"
