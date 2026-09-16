@@ -1,4 +1,6 @@
 // node --test test/ — erd.js is DOM-free ESM; no runner deps.
+// Go-side grammar already covered by grammar_test.go; UI-e2e by playwright (e2e/).
+// node --test test/ — erd.js is DOM-free ESM; no runner deps.
 // Grammar tests moved to Go (grammar_test.go); this covers UI helpers + layout.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -45,4 +47,40 @@ test("layout puts referenced tables left; stacks same layer; cycles terminate", 
   b.columns[0].ref = { tableId: a.id, action: "CASCADE" };
   layout({ tables: [a, b] }); // cycle guard must terminate
   assert.ok(Number.isFinite(a.x) && Number.isFinite(b.x));
+});
+
+test("adoptIds regenerates foreign/garbage ids, keeps refs resolvable", () => {
+  const wire = { tables: [
+    { id: "weird", name: "a", columns: [{ name: "id", ref: { tableId: "t2" } }] },
+    { id: "t2", name: "b", columns: [{ name: "id" }] },
+  ] };
+  adoptIds(wire);
+  const a = wire.tables[0];
+  assert.match(a.id, /^t\d+$/);
+  assert.equal(a.columns[0].ref.tableId, "t2"); // refs untouched — parent id stays valid
+});
+
+test("adoptIds bumps counter past max id so newTable never collides", () => {
+  const wire = { tables: [{ id: "t9", name: "a", columns: [{ name: "id", id: "c9" }] }] };
+  adoptIds(wire);
+  for (let i = 0; i < 5; i++) {
+    const t = newTable("x" + i);
+    assert.notEqual(t.id, "t9");
+    for (const c of t.columns) assert.notEqual(c.id, "c9");
+  }
+});
+
+test("newColumn defaults: no flags, no ref", () => {
+  const c = newColumn();
+  assert.deepEqual(
+    { pk: c.pk, nn: c.nn, ai: c.ai, ux: c.ux, ix: c.ix, ref: c.ref },
+    { pk: false, nn: false, ai: false, ux: false, ix: false, ref: null });
+});
+
+test("layout: FK depth 2 layers — a→b→c puts c leftmost, a rightmost", () => {
+  const a = newTable("a"), b = newTable("b"), c = newTable("c");
+  a.columns[0].ref = { tableId: b.id };
+  b.columns[0].ref = { tableId: c.id };
+  layout({ tables: [a, b, c] });
+  assert.ok(c.x < b.x && b.x < a.x);
 });

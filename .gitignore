@@ -1,5 +1,6 @@
 frontend/node_modules/
 erd-creator
 schemas/
+schemas-e2e/
 frontend/dist/**
 !frontend/dist/.gitkeep

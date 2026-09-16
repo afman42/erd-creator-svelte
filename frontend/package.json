@@ -8,11 +8,13 @@
     "build": "vite build",
     "postbuild": "touch dist/.gitkeep",
     "test": "node --test test/*.test.js",
-    "lint": "biome check src",
-    "fmt": "biome check --write src"
+    "e2e": "playwright test",
+    "lint": "biome check src test e2e",
+    "fmt": "biome check --write src test e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",
+    "@playwright/test": "^1.63.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "svelte": "^5.57.0",
     "vite": "^8.3.0"
