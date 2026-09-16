@@ -4,3 +4,5 @@ schemas/
 schemas-e2e/
 frontend/dist/**
 !frontend/dist/.gitkeep
+graphify-out/
+frontend/test-results/
