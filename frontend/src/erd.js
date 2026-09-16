@@ -29,13 +29,13 @@ export let nextTableId = 1;
 export let nextColId = 1;
 export function newTable(name) {
 	return {
-		id: "t" + nextTableId++,
+		id: `t${nextTableId++}`,
 		name,
 		x: 0,
 		y: 0,
 		columns: [
 			{
-				id: "c" + nextColId++,
+				id: `c${nextColId++}`,
 				name: "id",
 				type: "INT",
 				pk: true,
@@ -51,7 +51,7 @@ export function newTable(name) {
 }
 export function newColumn() {
 	return {
-		id: "c" + nextColId++,
+		id: `c${nextColId++}`,
 		name: "column",
 		type: "VARCHAR(255)",
 		pk: false,
@@ -66,10 +66,10 @@ export function newColumn() {
 export function cloneTable(t) {
 	return {
 		...t,
-		id: "t" + nextTableId++,
+		id: `t${nextTableId++}`,
 		columns: t.columns.map((c) => ({
 			...c,
-			id: "c" + nextColId++,
+			id: `c${nextColId++}`,
 			ref: c.ref ? { ...c.ref } : null,
 		})),
 	};
@@ -82,9 +82,9 @@ export function adoptIds(schema) {
 	for (const t of schema.tables) {
 		if (/^t\d+$/.test(t.id))
 			nextTableId = Math.max(nextTableId, +t.id.slice(1) + 1);
-		else t.id = "t" + nextTableId++;
+		else t.id = `t${nextTableId++}`;
 		for (const c of t.columns) {
-			if (!c.id) c.id = "c" + nextColId++;
+			if (!c.id) c.id = `c${nextColId++}`;
 			else if (/^c\d+$/.test(c.id))
 				nextColId = Math.max(nextColId, +c.id.slice(1) + 1);
 		}

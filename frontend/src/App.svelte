@@ -1,14 +1,12 @@
 <script>
 import {
 	adoptIds,
-	baseType,
 	cloneTable,
 	DEFAULT_TYPE,
 	isInt,
 	layout,
 	newColumn,
 	newTable,
-	TYPES,
 } from "./erd.js";
 import { edgePaths, HDR_H, ROW_H } from "./geometry.js";
 
@@ -19,23 +17,23 @@ layout(schema);
 let showSql = $state(false);
 let sqlText = $state("");
 let error = $state("");
-let errorKind = $state("err");
+let _errorKind = $state("err");
 let drag = $state(null);
 let selected = $state(null);
 let history = [];
 let lint = $state([]);
 let dialect = $state("postgres");
-let exporting = $state(false);
+let _exporting = $state(false);
 let dirty = false;
 
-const actions = ["CASCADE", "RESTRICT", "SET NULL", "NO ACTION"];
+const _actions = ["CASCADE", "RESTRICT", "SET NULL", "NO ACTION"];
 
 // ---- server round-trips (debounced; local-first, banner on error) ----
-let lintTimer, saveTimer, sqlTimer;
+let _lintTimer, saveTimer, sqlTimer;
 $effect(() => {
 	const json = JSON.stringify(schema);
-	lintTimer ??= setTimeout(() => {
-		lintTimer = null;
+	_lintTimer ??= setTimeout(() => {
+		_lintTimer = null;
 		refreshLint();
 	}, 300);
 	if (dirty && currentFile) {
@@ -95,7 +93,7 @@ function uniqName(base) {
 	while (schema.tables.some((t) => t.name === n)) n = base + ++i;
 	return n;
 }
-function addTable() {
+function _addTable() {
 	snap();
 	const y = Math.max(
 		40,
@@ -103,10 +101,10 @@ function addTable() {
 	);
 	schema.tables.push(Object.assign(newTable(uniqName("table1")), { x: 40, y }));
 }
-function dupTable(t) {
+function _dupTable(t) {
 	snap();
 	const c = cloneTable(t);
-	c.name = uniqName(t.name + "_copy");
+	c.name = uniqName(`${t.name}_copy`);
 	c.x = t.x + 30;
 	c.y = t.y + 30;
 	schema.tables.push(c);
@@ -118,7 +116,7 @@ function rmTable(t) {
 		for (const c of o.columns) if (c.ref?.tableId === t.id) c.ref = null;
 	if (selected === t.id) selected = null;
 }
-function rmColumn(t, c) {
+function _rmColumn(t, c) {
 	if (t.columns.length === 1) {
 		flash(`${t.name} needs at least one column`, "err");
 		return;
@@ -126,25 +124,25 @@ function rmColumn(t, c) {
 	snap();
 	t.columns = t.columns.filter((x) => x.id !== c.id);
 }
-function addColumn(t) {
+function _addColumn(t) {
 	snap();
 	t.columns.push(newColumn());
 }
 
 function flash(msg, kind = "ok") {
 	error = msg;
-	errorKind = kind;
+	_errorKind = kind;
 	setTimeout(() => {
 		if (error === msg) error = "";
 	}, 1400);
 }
 function flashLint() {
 	refreshLint().then(() => {
-		if (lint.length) flash("lint: " + lint.join("; "), "warn");
+		if (lint.length) flash(`lint: ${lint.join("; ")}`, "warn");
 	});
 }
 
-function commitTableName(t, ev) {
+function _commitTableName(t, ev) {
 	const v = ev.target.value.trim();
 	if (v && !schema.tables.some((x) => x !== t && x.name === v)) {
 		snap();
@@ -152,14 +150,14 @@ function commitTableName(t, ev) {
 	} else ev.target.value = t.name;
 	flashLint();
 }
-function commitColName(c, ev) {
+function _commitColName(c, ev) {
 	const v = ev.target.value.trim();
 	if (v) {
 		snap();
 		c.name = v;
 	} else ev.target.value = c.name;
 }
-function setType(c, base) {
+function _setType(c, base) {
 	if (base === "ENUM") {
 		const cur = /^ENUM\((.*)\)$/i.exec(c.type)?.[1] ?? "";
 		const vals = prompt("ENUM values, comma separated:", cur || "'a','b'");
@@ -171,7 +169,7 @@ function setType(c, base) {
 				.split(",")
 				.map((v) => {
 					v = v.trim();
-					return /^'(.*)'$/.test(v) ? v : "'" + v.replace(/'/g, "") + "'";
+					return /^'(.*)'$/.test(v) ? v : `'${v.replace(/'/g, "")}'`;
 				})
 				.join(",") +
 			")";
@@ -182,30 +180,30 @@ function setType(c, base) {
 	if (!isInt(c.type)) c.ai = false;
 	flashLint();
 }
-function setRef(c, ev) {
+function _setRef(c, ev) {
 	snap();
 	const id = ev.target.value;
 	c.ref = id ? { tableId: id, action: c.ref?.action ?? "CASCADE" } : null;
 	if (id) c.ai = false;
 	flashLint();
 }
-function setRefAction(c, ev) {
+function _setRefAction(c, ev) {
 	snap();
 	c.ref.action = ev.target.value;
 }
-function togglePk(c) {
+function _togglePk(c) {
 	snap();
 	c.pk = !c.pk;
 	if (c.pk) c.nn = true;
 	flashLint();
 }
 
-function startDrag(t, ev) {
+function _startDrag(t, ev) {
 	selected = t.id;
 	drag = { id: t.id, ox: ev.clientX - t.x, oy: ev.clientY - t.y };
 	ev.preventDefault();
 }
-function onMove(ev) {
+function _onMove(ev) {
 	if (!drag) return;
 	const t = schema.tables.find((x) => x.id === drag.id);
 	if (t) {
@@ -213,10 +211,10 @@ function onMove(ev) {
 		t.y = Math.max(0, ev.clientY - drag.oy - 44);
 	}
 }
-function onUp() {
+function _onUp() {
 	drag = null;
 }
-function onKey(ev) {
+function _onKey(ev) {
 	const tag = document.activeElement?.tagName;
 	const editing = /INPUT|SELECT|TEXTAREA/.test(tag);
 	if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {
@@ -228,7 +226,7 @@ function onKey(ev) {
 	} else if (ev.key === "Escape") selected = null;
 }
 
-const edges = $derived(edgePaths(schema));
+const _edges = $derived(edgePaths(schema));
 
 // ---- file store (Go working dir) ----
 async function refreshFiles() {
@@ -248,7 +246,7 @@ refreshFiles().then(() => {
 async function openFile(name) {
 	if (!name) return;
 	try {
-		const res = await fetch("/api/files/" + encodeURIComponent(name));
+		const res = await fetch(`/api/files/${encodeURIComponent(name)}`);
 		if (!res.ok) throw new Error(await res.text());
 		snap();
 		schema = adoptIds(await res.json());
@@ -257,23 +255,23 @@ async function openFile(name) {
 		error = "";
 		dirty = false;
 	} catch (e) {
-		flash("Open failed: " + e.message, "err");
+		flash(`Open failed: ${e.message}`, "err");
 		refreshFiles();
 	}
 }
-async function newFile() {
+async function _newFile() {
 	const name = (prompt("New schema file name:", "schema") || "")
 		.trim()
 		.replace(/\.sql$/i, "");
 	if (!name) return;
-	if (files.some((f) => f.name === name + ".sql")) {
-		flash(name + ".sql already exists", "err");
+	if (files.some((f) => f.name === `${name}.sql`)) {
+		flash(`${name}.sql already exists`, "err");
 		return;
 	}
 	snap();
 	schema = { tables: [newTable("users")] };
 	layout(schema);
-	currentFile = name + ".sql";
+	currentFile = `${name}.sql`;
 	await saveCurrent();
 	refreshFiles();
 }
@@ -283,26 +281,26 @@ async function saveCurrent(silent = false) {
 		return;
 	}
 	try {
-		const res = await fetch("/api/files/" + encodeURIComponent(currentFile), {
+		const res = await fetch(`/api/files/${encodeURIComponent(currentFile)}`, {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(schema),
 		});
 		if (!res.ok) throw new Error(await res.text());
 		dirty = false;
-		if (!silent) flash("saved " + currentFile);
+		if (!silent) flash(`saved ${currentFile}`);
 	} catch (e) {
-		if (!silent) flash("save failed: " + e.message, "err");
+		if (!silent) flash(`save failed: ${e.message}`, "err");
 	}
 }
-async function deleteFile() {
+async function _deleteFile() {
 	if (!currentFile) return;
-	if (!confirm("Delete " + currentFile + "?")) return;
-	const res = await fetch("/api/files/" + encodeURIComponent(currentFile), {
+	if (!confirm(`Delete ${currentFile}?`)) return;
+	const res = await fetch(`/api/files/${encodeURIComponent(currentFile)}`, {
 		method: "DELETE",
 	});
-	if (!res.ok) flash("delete failed: " + (await res.text()), "err");
-	else flash("deleted " + currentFile);
+	if (!res.ok) flash(`delete failed: ${await res.text()}`, "err");
+	else flash(`deleted ${currentFile}`);
 	currentFile = "";
 	refreshFiles();
 }
@@ -314,7 +312,7 @@ async function copyText(text, msg) {
 		flash("clipboard blocked", "err");
 	}
 }
-async function copyInserts() {
+async function _copyInserts() {
 	try {
 		const res = await fetch("/api/inserts", {
 			method: "POST",
@@ -324,16 +322,16 @@ async function copyInserts() {
 		if (!res.ok) throw new Error(await res.text());
 		await copyText(await res.text(), "copied INSERT templates");
 	} catch (e) {
-		flash("INSERTs failed: " + e.message, "err");
+		flash(`INSERTs failed: ${e.message}`, "err");
 	}
 }
-async function copySql() {
+async function _copySql() {
 	await refreshSql();
 	await copyText(sqlText, "copied SQL");
 }
 
-async function exportDdl() {
-	exporting = true;
+async function _exportDdl() {
+	_exporting = true;
 	try {
 		const res = await fetch("/export", {
 			method: "POST",
@@ -343,9 +341,9 @@ async function exportDdl() {
 		if (!res.ok) throw new Error(await res.text());
 		await copyText(await res.text(), `copied ${dialect} DDL`);
 	} catch (e) {
-		flash("export failed: " + e.message, "err");
+		flash(`export failed: ${e.message}`, "err");
 	} finally {
-		exporting = false;
+		_exporting = false;
 	}
 }
 </script>
