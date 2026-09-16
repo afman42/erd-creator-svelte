@@ -1,249 +1,368 @@
 <script>
-  import { newTable, newColumn, cloneTable, bumpCounters, generate, generateInserts, parse, layout, lint as lintSchema, isInt, TYPES, DEFAULT_TYPE, baseType } from "./erd.js";
-  import { edgePaths, ROW_H, HDR_H } from "./geometry.js";
+import {
+	adoptIds,
+	baseType,
+	cloneTable,
+	DEFAULT_TYPE,
+	isInt,
+	layout,
+	newColumn,
+	newTable,
+	TYPES,
+} from "./erd.js";
+import { edgePaths, HDR_H, ROW_H } from "./geometry.js";
 
-  const DRAFT = "erd:draft";
-  let fileName = $state("schema");
-  let schema = $state(loadDraft() ?? { tables: [newTable("users")] });
-  if (!loadDraft()) layout(schema);
-  let showSql = $state(false);
-  let error = $state("");
-  let errorKind = $state("err");
-  let drag = $state(null);
-  let selected = $state(null);
-  let fileHandle = $state(null);
-  let history = [];
-  let dialect = $state("postgres");
-  let exporting = $state(false);
-  let lastSaved = "";
+let currentFile = $state(""); // "name.sql" | "" (unsaved scratch)
+let files = $state([]); // [{name, mtime}]
+let schema = $state({ tables: [newTable("users")] });
+layout(schema);
+let showSql = $state(false);
+let sqlText = $state("");
+let error = $state("");
+let errorKind = $state("err");
+let drag = $state(null);
+let selected = $state(null);
+let history = [];
+let lint = $state([]);
+let dialect = $state("postgres");
+let exporting = $state(false);
+let dirty = false;
 
-  const actions = ["CASCADE", "RESTRICT", "SET NULL", "NO ACTION"];
+const actions = ["CASCADE", "RESTRICT", "SET NULL", "NO ACTION"];
 
-  const sqlText = $derived(generate(schema));
-  const lint = $derived(lintSchema(schema));
+// ---- server round-trips (debounced; local-first, banner on error) ----
+let lintTimer, saveTimer, sqlTimer;
+$effect(() => {
+	const json = JSON.stringify(schema);
+	lintTimer ??= setTimeout(() => {
+		lintTimer = null;
+		refreshLint();
+	}, 300);
+	if (dirty && currentFile) {
+		clearTimeout(saveTimer);
+		saveTimer = setTimeout(() => saveCurrent(true), 800);
+	}
+	dirty = true;
+	if (showSql) {
+		clearTimeout(sqlTimer);
+		sqlTimer = setTimeout(() => refreshSql(), 300);
+	}
+	void json;
+});
 
-  $effect(() => {
-    const json = JSON.stringify(schema);
-    if (json !== lastSaved) {
-      lastSaved = json;
-      localStorage.setItem(DRAFT, json);
-    }
-  });
+async function refreshLint() {
+	try {
+		const res = await fetch("/api/lint", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ schema }),
+		});
+		lint = res.ok ? await res.json() : [];
+	} catch {
+		lint = [];
+	}
+}
+async function refreshSql() {
+	try {
+		const res = await fetch("/export", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ dialect: "mysql", schema }),
+		});
+		if (res.ok) sqlText = await res.text();
+	} catch {
+		/* keep last good text */
+	}
+}
 
-  function loadDraft() {
-    try {
-      const d = JSON.parse(localStorage.getItem(DRAFT));
-      if (d && Array.isArray(d.tables) && d.tables.length) {
-        bumpCounters(d);
-        return d;
-      }
-    } catch {
-      // corrupt draft → start fresh
-    }
-    return null;
-  }
+function snap() {
+	history.push(JSON.stringify(schema));
+	if (history.length > 60) history.shift();
+}
+function undo() {
+	if (!history.length) return;
+	try {
+		schema = adoptIds(JSON.parse(history.pop()));
+		selected = null;
+	} catch {
+		undo(); // snapshot can only be our own stringify; corrupt → drop it
+	}
+}
 
-  function snap() {
-    history.push(JSON.stringify(schema));
-    if (history.length > 60) history.shift();
-  }
-  function undo() {
-    if (!history.length) return;
-    try {
-      schema = JSON.parse(history.pop());
-      bumpCounters(schema);
-      selected = null;
-    } catch {
-      // snapshot can only be our own stringify; corrupt → drop it
-      undo();
-    }
-  }
+function uniqName(base) {
+	let n = base,
+		i = 1;
+	while (schema.tables.some((t) => t.name === n)) n = base + ++i;
+	return n;
+}
+function addTable() {
+	snap();
+	const y = Math.max(
+		40,
+		...schema.tables.map((t) => t.y + HDR_H + t.columns.length * ROW_H + 36),
+	);
+	schema.tables.push(Object.assign(newTable(uniqName("table1")), { x: 40, y }));
+}
+function dupTable(t) {
+	snap();
+	const c = cloneTable(t);
+	c.name = uniqName(t.name + "_copy");
+	c.x = t.x + 30;
+	c.y = t.y + 30;
+	schema.tables.push(c);
+}
+function rmTable(t) {
+	snap();
+	schema.tables = schema.tables.filter((x) => x.id !== t.id);
+	for (const o of schema.tables)
+		for (const c of o.columns) if (c.ref?.tableId === t.id) c.ref = null;
+	if (selected === t.id) selected = null;
+}
+function rmColumn(t, c) {
+	if (t.columns.length === 1) {
+		flash(`${t.name} needs at least one column`, "err");
+		return;
+	} // empty table = invalid DDL
+	snap();
+	t.columns = t.columns.filter((x) => x.id !== c.id);
+}
+function addColumn(t) {
+	snap();
+	t.columns.push(newColumn());
+}
 
-  function uniqName(base) {
-    let n = base, i = 1;
-    while (schema.tables.some((t) => t.name === n)) n = base + ++i;
-    return n;
-  }
-  function addTable() {
-    snap();
-    const y = Math.max(40, ...schema.tables.map((t) => t.y + HDR_H + t.columns.length * ROW_H + 36));
-    schema.tables.push(Object.assign(newTable(uniqName("table1")), { x: 40, y }));
-  }
-  function dupTable(t) {
-    snap();
-    const c = cloneTable(t);
-    c.name = uniqName(t.name + "_copy");
-    c.x = t.x + 30;
-    c.y = t.y + 30;
-    schema.tables.push(c);
-  }
-  function rmTable(t) {
-    snap();
-    schema.tables = schema.tables.filter((x) => x.id !== t.id);
-    for (const o of schema.tables)
-      for (const c of o.columns) if (c.ref?.tableId === t.id) c.ref = null;
-    if (selected === t.id) selected = null;
-  }
-  function rmColumn(t, c) {
-    if (t.columns.length === 1) { flash(`${t.name} needs at least one column`, "err"); return; } // empty table = invalid DDL
-    snap(); t.columns = t.columns.filter((x) => x.id !== c.id);
-  }
-  function addColumn(t) { snap(); t.columns.push(newColumn()); }
+function flash(msg, kind = "ok") {
+	error = msg;
+	errorKind = kind;
+	setTimeout(() => {
+		if (error === msg) error = "";
+	}, 1400);
+}
+function flashLint() {
+	refreshLint().then(() => {
+		if (lint.length) flash("lint: " + lint.join("; "), "warn");
+	});
+}
 
-  function flash(msg, kind = "ok") {
-    error = msg;
-    errorKind = kind;
-    setTimeout(() => { if (error === msg) error = ""; }, 1400);
-  }
-  function flashLint() {
-    if (lint.length) flash("lint: " + lint.join("; "), "warn");
-  }
+function commitTableName(t, ev) {
+	const v = ev.target.value.trim();
+	if (v && !schema.tables.some((x) => x !== t && x.name === v)) {
+		snap();
+		t.name = v;
+	} else ev.target.value = t.name;
+	flashLint();
+}
+function commitColName(c, ev) {
+	const v = ev.target.value.trim();
+	if (v) {
+		snap();
+		c.name = v;
+	} else ev.target.value = c.name;
+}
+function setType(c, base) {
+	if (base === "ENUM") {
+		const cur = /^ENUM\((.*)\)$/i.exec(c.type)?.[1] ?? "";
+		const vals = prompt("ENUM values, comma separated:", cur || "'a','b'");
+		if (vals == null) return;
+		snap();
+		c.type =
+			"ENUM(" +
+			vals
+				.split(",")
+				.map((v) => {
+					v = v.trim();
+					return /^'(.*)'$/.test(v) ? v : "'" + v.replace(/'/g, "") + "'";
+				})
+				.join(",") +
+			")";
+		return;
+	}
+	snap();
+	c.type = DEFAULT_TYPE[base] ?? base;
+	if (!isInt(c.type)) c.ai = false;
+	flashLint();
+}
+function setRef(c, ev) {
+	snap();
+	const id = ev.target.value;
+	c.ref = id ? { tableId: id, action: c.ref?.action ?? "CASCADE" } : null;
+	if (id) c.ai = false;
+	flashLint();
+}
+function setRefAction(c, ev) {
+	snap();
+	c.ref.action = ev.target.value;
+}
+function togglePk(c) {
+	snap();
+	c.pk = !c.pk;
+	if (c.pk) c.nn = true;
+	flashLint();
+}
 
-  function commitTableName(t, ev) {
-    const v = ev.target.value.trim();
-    if (v && !schema.tables.some((x) => x !== t && x.name === v)) { snap(); t.name = v; }
-    else ev.target.value = t.name;
-    flashLint();
-  }
-  function commitColName(c, ev) {
-    const v = ev.target.value.trim();
-    if (v) { snap(); c.name = v; } else ev.target.value = c.name;
-  }
-  function setType(c, base) {
-    if (base === "ENUM") {
-      const cur = /^ENUM\((.*)\)$/i.exec(c.type)?.[1] ?? "";
-      const vals = prompt("ENUM values, comma separated:", cur || "'a','b'");
-      if (vals == null) return;
-      snap();
-      c.type = "ENUM(" + vals.split(",").map((v) => {
-        v = v.trim();
-        return /^'(.*)'$/.test(v) ? v : "'" + v.replace(/'/g, "") + "'";
-      }).join(",") + ")";
-      return;
-    }
-    snap();
-    c.type = DEFAULT_TYPE[base] ?? base;
-    if (!isInt(c.type)) c.ai = false;
-    flashLint();
-  }
-  function setRef(c, ev) {
-    snap();
-    const id = ev.target.value;
-    c.ref = id ? { tableId: id, action: c.ref?.action ?? "CASCADE" } : null;
-    if (id) c.ai = false;
-    flashLint();
-  }
-  function setRefAction(c, ev) { snap(); c.ref.action = ev.target.value; }
-  function togglePk(c) { snap(); c.pk = !c.pk; if (c.pk) c.nn = true; flashLint(); }
+function startDrag(t, ev) {
+	selected = t.id;
+	drag = { id: t.id, ox: ev.clientX - t.x, oy: ev.clientY - t.y };
+	ev.preventDefault();
+}
+function onMove(ev) {
+	if (!drag) return;
+	const t = schema.tables.find((x) => x.id === drag.id);
+	if (t) {
+		t.x = Math.max(0, ev.clientX - drag.ox - 8);
+		t.y = Math.max(0, ev.clientY - drag.oy - 44);
+	}
+}
+function onUp() {
+	drag = null;
+}
+function onKey(ev) {
+	const tag = document.activeElement?.tagName;
+	const editing = /INPUT|SELECT|TEXTAREA/.test(tag);
+	if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {
+		const t = schema.tables.find((x) => x.id === selected);
+		if (t) rmTable(t);
+	} else if ((ev.ctrlKey || ev.metaKey) && ev.key === "z" && !editing) {
+		ev.preventDefault();
+		undo();
+	} else if (ev.key === "Escape") selected = null;
+}
 
-  function startDrag(t, ev) {
-    selected = t.id;
-    drag = { id: t.id, ox: ev.clientX - t.x, oy: ev.clientY - t.y };
-    ev.preventDefault();
-  }
-  function onMove(ev) {
-    if (!drag) return;
-    const t = schema.tables.find((x) => x.id === drag.id);
-    if (t) {
-      t.x = Math.max(0, ev.clientX - drag.ox - 8);
-      t.y = Math.max(0, ev.clientY - drag.oy - 44);
-    }
-  }
-  function onUp() { drag = null; }
-  function onKey(ev) {
-    const tag = document.activeElement?.tagName;
-    const editing = /INPUT|SELECT|TEXTAREA/.test(tag);
-    if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {
-      const t = schema.tables.find((x) => x.id === selected);
-      if (t) rmTable(t);
-    } else if ((ev.ctrlKey || ev.metaKey) && ev.key === "z" && !editing) {
-      ev.preventDefault();
-      undo();
-    } else if (ev.key === "Escape") selected = null;
-  }
+const edges = $derived(edgePaths(schema));
 
-  const edges = $derived(edgePaths(schema));
+// ---- file store (Go working dir) ----
+async function refreshFiles() {
+	try {
+		const res = await fetch("/api/files");
+		files = res.ok ? await res.json() : [];
+	} catch {
+		files = [];
+	}
+}
+refreshFiles().then(() => {
+	if (!files.length) return;
+	const newest = files.reduce((a, b) => (b.mtime > a.mtime ? b : a));
+	openFile(newest.name);
+});
 
-  async function openFile(ev) {
-    const f = ev.target.files?.[0];
-    ev.target.value = "";
-    if (!f) return;
-    try {
-      snap();
-      schema = parse(await f.text());
-      layout(schema);
-      fileHandle = null;
-      fileName = f.name.replace(/\.sql$/i, "");
-      error = "";
-    } catch (e) {
-      flash("Open failed: " + e.message, "err");
-    }
-  }
-  async function saveFile() {
-    try {
-      if (fileHandle) {
-        const w = await fileHandle.createWritable();
-        await w.write(sqlText);
-        await w.close();
-        flash("saved " + fileName + ".sql");
-        return;
-      }
-      if ("showSaveFilePicker" in window) {
-        fileHandle = await window.showSaveFilePicker({
-          suggestedName: fileName + ".sql",
-          types: [{ description: "SQL", accept: { "text/plain": [".sql"] } }],
-        });
-        const w = await fileHandle.createWritable();
-        await w.write(sqlText);
-        await w.close();
-        flash("saved " + fileName + ".sql");
-        return;
-      }
-    } catch (e) {
-      if (e.name === "AbortError") return;
-      fileHandle = null; // picker failed → download fallback below
-    }
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([sqlText], { type: "text/plain" }));
-    a.download = fileName + ".sql";
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-  async function copyText(text, msg) {
-    try {
-      await navigator.clipboard.writeText(text);
-      flash(msg);
-    } catch {
-      flash("clipboard blocked", "err");
-    }
-  }
+async function openFile(name) {
+	if (!name) return;
+	try {
+		const res = await fetch("/api/files/" + encodeURIComponent(name));
+		if (!res.ok) throw new Error(await res.text());
+		snap();
+		schema = adoptIds(await res.json());
+		layout(schema);
+		currentFile = name;
+		error = "";
+		dirty = false;
+	} catch (e) {
+		flash("Open failed: " + e.message, "err");
+		refreshFiles();
+	}
+}
+async function newFile() {
+	const name = (prompt("New schema file name:", "schema") || "")
+		.trim()
+		.replace(/\.sql$/i, "");
+	if (!name) return;
+	if (files.some((f) => f.name === name + ".sql")) {
+		flash(name + ".sql already exists", "err");
+		return;
+	}
+	snap();
+	schema = { tables: [newTable("users")] };
+	layout(schema);
+	currentFile = name + ".sql";
+	await saveCurrent();
+	refreshFiles();
+}
+async function saveCurrent(silent = false) {
+	if (!currentFile) {
+		flash("no file selected — use New", "err");
+		return;
+	}
+	try {
+		const res = await fetch("/api/files/" + encodeURIComponent(currentFile), {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(schema),
+		});
+		if (!res.ok) throw new Error(await res.text());
+		dirty = false;
+		if (!silent) flash("saved " + currentFile);
+	} catch (e) {
+		if (!silent) flash("save failed: " + e.message, "err");
+	}
+}
+async function deleteFile() {
+	if (!currentFile) return;
+	if (!confirm("Delete " + currentFile + "?")) return;
+	const res = await fetch("/api/files/" + encodeURIComponent(currentFile), {
+		method: "DELETE",
+	});
+	if (!res.ok) flash("delete failed: " + (await res.text()), "err");
+	else flash("deleted " + currentFile);
+	currentFile = "";
+	refreshFiles();
+}
+async function copyText(text, msg) {
+	try {
+		await navigator.clipboard.writeText(text);
+		flash(msg);
+	} catch {
+		flash("clipboard blocked", "err");
+	}
+}
+async function copyInserts() {
+	try {
+		const res = await fetch("/api/inserts", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ schema }),
+		});
+		if (!res.ok) throw new Error(await res.text());
+		await copyText(await res.text(), "copied INSERT templates");
+	} catch (e) {
+		flash("INSERTs failed: " + e.message, "err");
+	}
+}
+async function copySql() {
+	await refreshSql();
+	await copyText(sqlText, "copied SQL");
+}
 
-  async function exportDdl() {
-    exporting = true;
-    try {
-      const res = await fetch("/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dialect, schema }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      await copyText(await res.text(), `copied ${dialect} DDL`);
-    } catch (e) {
-      flash("export failed: " + e.message, "err");
-    } finally {
-      exporting = false;
-    }
-  }
+async function exportDdl() {
+	exporting = true;
+	try {
+		const res = await fetch("/export", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ dialect, schema }),
+		});
+		if (!res.ok) throw new Error(await res.text());
+		await copyText(await res.text(), `copied ${dialect} DDL`);
+	} catch (e) {
+		flash("export failed: " + e.message, "err");
+	} finally {
+		exporting = false;
+	}
+}
 </script>
 
 <svelte:window onpointermove={onMove} onpointerup={onUp} onkeydown={onKey} />
 
 <header>
   <button onclick={addTable}>+ Table</button>
-  <label class="btn"><input type="file" accept=".sql,.txt" onchange={openFile} class="hiddenfile" />Open .sql</label>
-  <button onclick={saveFile}>Save .sql</button>
-  <button onclick={() => copyText(sqlText, "copied SQL")}>Copy SQL</button>
-  <button onclick={() => copyText(generateInserts(schema), "copied INSERT templates")}>Copy INSERTs</button>
+  <select class="dialect" value={currentFile} onchange={(e) => openFile(e.target.value)} title="open schema file">
+    <option value="">— files —</option>
+    {#each files as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
+  </select>
+  <button onclick={newFile}>New</button>
+  <button onclick={() => saveCurrent()} disabled={!currentFile}>Save</button>
+  <button onclick={deleteFile} disabled={!currentFile}>Del</button>
+  <button onclick={copySql}>Copy SQL</button>
+  <button onclick={copyInserts}>Copy INSERTs</button>
   <select class="dialect" bind:value={dialect}>
     <option value="mysql">MySQL</option>
     <option value="mariadb">MariaDB</option>
@@ -251,7 +370,8 @@
     <option value="sqlite">SQLite</option>
   </select>
   <button onclick={exportDdl} disabled={exporting}>{exporting ? "..." : "Export"}</button>
-  <button onclick={() => (showSql = !showSql)}>{showSql ? "Hide" : "Show"} SQL</button>
+  <button onclick={() => { showSql = !showSql; if (showSql) refreshSql(); }}>{showSql ? "Hide" : "Show"} SQL</button>
+  {#if currentFile}<span class="ok">{currentFile}</span>{/if}
   {#if error}<span class={errorKind}>{error}</span>{/if}
   {#if lint.length && !error}<span class="warn">lint: {lint.join("; ")}</span>{/if}
 </header>
@@ -311,9 +431,8 @@
   {#if showSql}
     <aside>
       <div class="sqlhead">
-        <input bind:value={fileName} spellcheck="false" />
-        <span>.sql</span>
-        <button onclick={() => copyText(sqlText, "copied SQL")}>copy</button>
+        <span>{currentFile || "unsaved"}</span>
+        <button onclick={copySql}>copy</button>
       </div>
       <pre>{sqlText}</pre>
     </aside>
@@ -324,6 +443,7 @@
   :global(body) { margin: 0; font: 13px system-ui, sans-serif; background: #101418; color: #d8dee6; }
   header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #1a2028; border-bottom: 1px solid #2a3340; position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
   header button, header .btn { background: #2b6cb0; color: #fff; border: 0; border-radius: 5px; padding: 6px 12px; cursor: pointer; font: inherit; }
+  header button:disabled { background: #3b4654; color: #778; cursor: default; }
   .hiddenfile { display: none; }
   header select.dialect { background: #101418; color: #d8dee6; border: 1px solid #3b4654; border-radius: 5px; padding: 5px 6px; font: inherit; }
   .err { color: #f87171; }
@@ -355,7 +475,6 @@
   .addcol { width: 100%; background: transparent; color: #66bb88; border: 0; border-top: 1px dashed #3b4654; padding: 3px; cursor: pointer; font: inherit; }
   aside { width: 420px; border-left: 1px solid #2a3340; display: flex; flex-direction: column; }
   .sqlhead { display: flex; gap: 4px; align-items: center; padding: 6px 8px; background: #1a2028; }
-  .sqlhead input { background: #101418; border: 1px solid #3b4654; color: #d8dee6; border-radius: 4px; padding: 3px 6px; width: 160px; }
   .sqlhead button { margin-left: auto; }
   aside pre { flex: 1; margin: 0; padding: 12px; overflow: auto; font: 12px/1.5 ui-monospace, monospace; color: #a5d6ff; white-space: pre-wrap; }
 </style>
