@@ -3,7 +3,7 @@
   "files": { "includes": ["**", "!**/dist", "!**/node_modules"] },
   "overrides": [
     {
-      "includes": ["src/App.svelte"],
+      "includes": ["src/*.svelte"],
       "linter": {
         "rules": {
           "correctness": { "noUnusedImports": "off", "noUnusedVariables": "off" }
