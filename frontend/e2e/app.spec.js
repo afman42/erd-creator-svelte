@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 test.beforeEach(async ({ request }) => {
 	const res = await request.get("/api/files");
 	for (const f of await res.json()) {
-		await request.delete("/api/files/" + f.name);
+		await request.delete(`/api/files/${f.name}`);
 	}
 });
 
@@ -26,7 +26,7 @@ test("New file → save → reload round-trips through server", async ({
 	await page.goto("/");
 	page.once("dialog", (d) => d.accept("blog"));
 	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.locator("header .ok")).toHaveText("blog.sql");
+	await expect(page.getByTestId("current-file")).toHaveText("blog.sql");
 
 	// add + rename a table → debounced autosave should write it
 	await page.getByRole("button", { name: "+ Table" }).click();
@@ -34,12 +34,13 @@ test("New file → save → reload round-trips through server", async ({
 	await posts.fill("posts");
 	await posts.blur();
 	await expect(async () => {
-		const body = await (await request.get("/api/files/blog.sql")).text();
-		expect(body).toContain("CREATE TABLE `posts`");
+		const body = await (await request.get("/api/files/blog.sql")).json();
+		expect(body.tables.some((t) => t.name === "posts")).toBe(true);
 	}).toPass({ timeout: 5000 });
 
 	await page.reload();
-	await expect(page.locator(".tname")).toHaveValue("users");
+	await expect(page.locator("section.table")).toHaveCount(2);
+	await expect(page.locator(".tname").first()).toHaveValue("users");
 	expect(await tables(page)).toEqual(["users", "posts"]);
 });
 
@@ -57,12 +58,18 @@ test("undo restores table name (Ctrl+Z outside inputs)", async ({ page }) => {
 test("FK type mismatch surfaces server lint in header", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "+ Table" }).click();
-	// first column row of the second table → FK→ users
+	// second table, first row FK → users
 	const fk = page.locator("section.table").nth(1).locator("select.fk").first();
 	await fk.selectOption({ index: 1 });
-	// id is INT vs users.id INT would pass; change type to VARCHAR first
+	// clear FK, change type to VARCHAR (type select is the non-FK select)
 	await fk.selectOption("");
-	const typeSel = page.locator("section.table").nth(1).locator("select").nth(1);
+	const typeSel = page
+		.locator("section.table")
+		.nth(1)
+		.locator(".row")
+		.first()
+		.locator("select")
+		.first();
 	await typeSel.selectOption("VARCHAR"); // becomes VARCHAR(255)
 	await fk.selectOption({ index: 1 });
 	await expect(page.locator("header .warn")).toContainText("vs", {
@@ -97,10 +104,155 @@ test("Del button deletes current file after confirm dialog", async ({
 	await page.goto("/");
 	page.once("dialog", (d) => d.accept("tmpfile"));
 	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.locator("header .ok")).toHaveText("tmpfile.sql");
+	await expect(page.getByTestId("current-file")).toHaveText("tmpfile.sql");
 	page.once("dialog", (d) => d.accept());
 	await page.getByRole("button", { name: "Del", exact: true }).click();
-	await expect(page.locator("header .ok")).toHaveCount(0);
+	await expect(page.getByTestId("current-file")).toHaveCount(0);
 	const list = await (await request.get("/api/files")).json();
 	expect(list).toEqual([]);
+});
+
+// ---- added coverage (gaps) ----
+
+test("duplicate table copies columns and offsets position", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByTitle("duplicate").click();
+	await expect(page.locator("section.table")).toHaveCount(2);
+	expect(await tables(page)).toEqual(["users", "users_copy"]);
+	// duplicated column retains type
+	const dupType = page
+		.locator("section.table")
+		.nth(1)
+		.locator("select")
+		.first();
+	await expect(dupType).toHaveValue("INT");
+});
+
+test("add column + remove column (last column blocked)", async ({ page }) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "+ column" }).click();
+	await expect(page.locator("section.table .row")).toHaveCount(2);
+	await page.locator("section.table .rmcol").nth(1).click();
+	await expect(page.locator("section.table .row")).toHaveCount(1);
+	// removing last column should flash error, row stays 1
+	await page.locator("section.table .rmcol").first().click();
+	await expect(page.locator("section.table .row")).toHaveCount(1);
+	await expect(page.locator("header .err")).toContainText(
+		"needs at least one column",
+	);
+});
+
+test("PK toggle forces NN and clears on untoggle", async ({ page }) => {
+	await page.goto("/");
+	// users.id starts pk=true, nn disabled checked
+	const pk = page
+		.locator("section.table label")
+		.filter({ hasText: "PK" })
+		.locator("input")
+		.first();
+	const nn = page
+		.locator("section.table label")
+		.filter({ hasText: /^NN/ })
+		.locator("input")
+		.first();
+	await expect(pk).toBeChecked();
+	await expect(nn).toBeChecked();
+	await expect(nn).toBeDisabled();
+	await pk.click();
+	await expect(pk).not.toBeChecked();
+	await expect(nn).not.toBeDisabled();
+});
+
+test("Show SQL panel renders MySQL DDL", async ({ page }) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText("CREATE TABLE `users`");
+	await page.getByRole("button", { name: "Hide SQL" }).click();
+	await expect(page.locator("aside")).toHaveCount(0);
+});
+
+test("column comment persists through save/reload", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	page.once("dialog", (d) => d.accept("cmt"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("cmt.sql");
+	const cmt = page.locator("section.table .cmt input").first();
+	await cmt.fill("hello comment");
+	await cmt.blur();
+	await expect(async () => {
+		const body = await (await request.get("/api/files/cmt.sql")).text();
+		expect(body).toContain("hello comment");
+	}).toPass({ timeout: 5000 });
+	await page.reload();
+	await expect(page.locator("section.table .cmt input").first()).toHaveValue(
+		"hello comment",
+	);
+});
+
+// ---- regression: drag/selection/data-loss fixes ----
+
+test("dragging a table by its header moves it (even over the name input)", async ({
+	page,
+}) => {
+	await page.goto("/");
+	const t = page.locator("section.table").first();
+	const before = await t.evaluate((el) => `${el.style.left},${el.style.top}`);
+	const hdr = await t.locator(".hdr").boundingBox();
+	await page.mouse.move(hdr.x + 60, hdr.y + 10); // over the .tname input
+	await page.mouse.down();
+	await page.mouse.move(hdr.x + 90, hdr.y + 30, { steps: 4 });
+	await page.mouse.up();
+	const after = await t.evaluate((el) => `${el.style.left},${el.style.top}`);
+	expect(after).toBe("70px,60px");
+	expect(before).not.toBe(after);
+});
+
+test("click selects a table and Del removes the selection", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "+ Table" }).click();
+	const second = page.locator("section.table").nth(1);
+	const hdr = await second.locator(".hdr").boundingBox();
+	await page.mouse.move(hdr.x + 30, hdr.y + 8);
+	await page.mouse.down();
+	await page.mouse.up();
+	await expect(second).toHaveClass(/selected/);
+	await page.locator("body").click({ position: { x: 5, y: 400 } }); // defocus
+	await page.keyboard.press("Delete");
+	await expect(page.locator("section.table")).toHaveCount(1);
+});
+
+test("edit switched away from within the autosave window is not lost", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	let n = 0;
+	page.on("dialog", (d) => d.accept(`dl${n++}`));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("dl0.sql");
+	await page.locator(".cname").first().fill("col_renamed");
+	await page.locator(".cname").first().blur();
+	// switch files BEFORE the 800ms autosave fires — pending edit must flush
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("dl1.sql");
+	const body = await (await request.get("/api/files/dl0.sql")).json();
+	expect(body.tables[0].columns[0].name).toBe("col_renamed");
+});
+
+test("Copy SQL succeeds via execCommand fallback without clipboard permission", async ({
+	page,
+}) => {
+	await page.goto("/");
+	// Playwright's default context grants no clipboard permissions, so the
+	// Clipboard API rejects and the textarea/execCommand fallback must run.
+	await page.getByRole("button", { name: "Copy SQL" }).click();
+	await expect(page.getByText("copied SQL")).toBeVisible();
+	await expect(page.getByText("copy failed")).toHaveCount(0);
 });

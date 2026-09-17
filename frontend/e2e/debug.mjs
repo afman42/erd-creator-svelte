@@ -1,4 +1,5 @@
 import { chromium } from "@playwright/test";
+
 const b = await chromium.launch();
 const p = await b.newPage();
 p.on("console", (m) => console.log("CONSOLE", m.type(), m.text()));
