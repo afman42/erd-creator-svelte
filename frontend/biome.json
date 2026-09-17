@@ -1,6 +1,14 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
-  "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules"]
-  }
+  "files": { "includes": ["**", "!**/dist", "!**/node_modules"] },
+  "overrides": [
+    {
+      "includes": ["src/App.svelte"],
+      "linter": {
+        "rules": {
+          "correctness": { "noUnusedImports": "off", "noUnusedVariables": "off" }
+        }
+      }
+    }
+  ]
 }

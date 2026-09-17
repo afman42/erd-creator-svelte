@@ -1,12 +1,14 @@
 <script>
 import {
 	adoptIds,
+	baseType,
 	cloneTable,
 	DEFAULT_TYPE,
 	isInt,
 	layout,
 	newColumn,
 	newTable,
+	TYPES,
 } from "./erd.js";
 import { edgePaths, HDR_H, ROW_H } from "./geometry.js";
 
@@ -17,23 +19,23 @@ layout(schema);
 let showSql = $state(false);
 let sqlText = $state("");
 let error = $state("");
-let _errorKind = $state("err");
+let errorKind = $state("err");
 let drag = $state(null);
 let selected = $state(null);
 let history = [];
 let lint = $state([]);
 let dialect = $state("postgres");
-let _exporting = $state(false);
+let exporting = $state(false);
 let dirty = false;
 
-const _actions = ["CASCADE", "RESTRICT", "SET NULL", "NO ACTION"];
+const actions = ["CASCADE", "RESTRICT", "SET NULL", "NO ACTION"];
 
 // ---- server round-trips (debounced; local-first, banner on error) ----
-let _lintTimer, saveTimer, sqlTimer;
+let lintTimer, saveTimer, sqlTimer;
 $effect(() => {
 	const json = JSON.stringify(schema);
-	_lintTimer ??= setTimeout(() => {
-		_lintTimer = null;
+	lintTimer ??= setTimeout(() => {
+		lintTimer = null;
 		refreshLint();
 	}, 300);
 	if (dirty && currentFile) {
@@ -86,6 +88,26 @@ function undo() {
 		undo(); // snapshot can only be our own stringify; corrupt → drop it
 	}
 }
+function clearTimers() {
+	if (lintTimer) {
+		clearTimeout(lintTimer);
+		lintTimer = null;
+	}
+	clearTimeout(saveTimer);
+	clearTimeout(sqlTimer);
+}
+// Flush pending debounced writes for the current file before any switch —
+// a pending saveTimer would otherwise fire against the NEXT file (or drop).
+async function flushCurrent() {
+	clearTimers();
+	if (dirty && currentFile) {
+		try {
+			await saveCurrent(true);
+		} catch {
+			// saveCurrent flashes itself; the edit is now only in memory
+		}
+	}
+}
 
 function uniqName(base) {
 	let n = base,
@@ -93,7 +115,7 @@ function uniqName(base) {
 	while (schema.tables.some((t) => t.name === n)) n = base + ++i;
 	return n;
 }
-function _addTable() {
+function addTable() {
 	snap();
 	const y = Math.max(
 		40,
@@ -101,7 +123,7 @@ function _addTable() {
 	);
 	schema.tables.push(Object.assign(newTable(uniqName("table1")), { x: 40, y }));
 }
-function _dupTable(t) {
+function dupTable(t) {
 	snap();
 	const c = cloneTable(t);
 	c.name = uniqName(`${t.name}_copy`);
@@ -116,7 +138,7 @@ function rmTable(t) {
 		for (const c of o.columns) if (c.ref?.tableId === t.id) c.ref = null;
 	if (selected === t.id) selected = null;
 }
-function _rmColumn(t, c) {
+function rmColumn(t, c) {
 	if (t.columns.length === 1) {
 		flash(`${t.name} needs at least one column`, "err");
 		return;
@@ -124,14 +146,14 @@ function _rmColumn(t, c) {
 	snap();
 	t.columns = t.columns.filter((x) => x.id !== c.id);
 }
-function _addColumn(t) {
+function addColumn(t) {
 	snap();
 	t.columns.push(newColumn());
 }
 
 function flash(msg, kind = "ok") {
 	error = msg;
-	_errorKind = kind;
+	errorKind = kind;
 	setTimeout(() => {
 		if (error === msg) error = "";
 	}, 1400);
@@ -142,7 +164,7 @@ function flashLint() {
 	});
 }
 
-function _commitTableName(t, ev) {
+function commitTableName(t, ev) {
 	const v = ev.target.value.trim();
 	if (v && !schema.tables.some((x) => x !== t && x.name === v)) {
 		snap();
@@ -150,14 +172,14 @@ function _commitTableName(t, ev) {
 	} else ev.target.value = t.name;
 	flashLint();
 }
-function _commitColName(c, ev) {
+function commitColName(c, ev) {
 	const v = ev.target.value.trim();
 	if (v) {
 		snap();
 		c.name = v;
 	} else ev.target.value = c.name;
 }
-function _setType(c, base) {
+function setType(c, base) {
 	if (base === "ENUM") {
 		const cur = /^ENUM\((.*)\)$/i.exec(c.type)?.[1] ?? "";
 		const vals = prompt("ENUM values, comma separated:", cur || "'a','b'");
@@ -180,41 +202,63 @@ function _setType(c, base) {
 	if (!isInt(c.type)) c.ai = false;
 	flashLint();
 }
-function _setRef(c, ev) {
+function setRef(c, ev) {
 	snap();
 	const id = ev.target.value;
 	c.ref = id ? { tableId: id, action: c.ref?.action ?? "CASCADE" } : null;
 	if (id) c.ai = false;
 	flashLint();
 }
-function _setRefAction(c, ev) {
+function setRefAction(c, ev) {
 	snap();
 	c.ref.action = ev.target.value;
 }
-function _togglePk(c) {
+function togglePk(c) {
 	snap();
 	c.pk = !c.pk;
 	if (c.pk) c.nn = true;
 	flashLint();
 }
 
-function _startDrag(t, ev) {
-	selected = t.id;
-	drag = { id: t.id, ox: ev.clientX - t.x, oy: ev.clientY - t.y };
-	ev.preventDefault();
+function startDrag(t, ev) {
+	if (ev.target.closest("button")) return;
+	const cv = document.querySelector(".canvas");
+	const r = cv.getBoundingClientRect();
+	drag = {
+		id: t.id,
+		x0: ev.clientX,
+		y0: ev.clientY,
+		moved: false,
+		ox: ev.clientX - r.left + cv.scrollLeft - t.x,
+		oy: ev.clientY - r.top + cv.scrollTop - t.y,
+		cl: r.left,
+		ct: r.top,
+		sl: cv.scrollLeft,
+		st: cv.scrollTop,
+	};
+	if (!ev.target.closest("input")) ev.preventDefault();
 }
-function _onMove(ev) {
+function onMove(ev) {
 	if (!drag) return;
+	if (!drag.moved) {
+		// <4px = click (select), not a drag
+		if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < 4) return;
+		drag.moved = true;
+	}
 	const t = schema.tables.find((x) => x.id === drag.id);
 	if (t) {
-		t.x = Math.max(0, ev.clientX - drag.ox - 8);
-		t.y = Math.max(0, ev.clientY - drag.oy - 44);
+		t.x = Math.max(0, ev.clientX - drag.cl + drag.sl - drag.ox);
+		t.y = Math.max(0, ev.clientY - drag.ct + drag.st - drag.oy);
 	}
 }
-function _onUp() {
+function onUp() {
+	if (!drag) return;
+	const moved = drag.moved;
+	const t = schema.tables.find((x) => x.id === drag.id);
 	drag = null;
+	if (t && !moved) selected = t.id;
 }
-function _onKey(ev) {
+function onKey(ev) {
 	const tag = document.activeElement?.tagName;
 	const editing = /INPUT|SELECT|TEXTAREA/.test(tag);
 	if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {
@@ -226,7 +270,7 @@ function _onKey(ev) {
 	} else if (ev.key === "Escape") selected = null;
 }
 
-const _edges = $derived(edgePaths(schema));
+const edges = $derived(edgePaths(schema));
 
 // ---- file store (Go working dir) ----
 async function refreshFiles() {
@@ -245,6 +289,7 @@ refreshFiles().then(() => {
 
 async function openFile(name) {
 	if (!name) return;
+	await flushCurrent();
 	try {
 		const res = await fetch(`/api/files/${encodeURIComponent(name)}`);
 		if (!res.ok) throw new Error(await res.text());
@@ -259,7 +304,7 @@ async function openFile(name) {
 		refreshFiles();
 	}
 }
-async function _newFile() {
+async function newFile() {
 	const name = (prompt("New schema file name:", "schema") || "")
 		.trim()
 		.replace(/\.sql$/i, "");
@@ -268,6 +313,7 @@ async function _newFile() {
 		flash(`${name}.sql already exists`, "err");
 		return;
 	}
+	await flushCurrent();
 	snap();
 	schema = { tables: [newTable("users")] };
 	layout(schema);
@@ -293,9 +339,10 @@ async function saveCurrent(silent = false) {
 		if (!silent) flash(`save failed: ${e.message}`, "err");
 	}
 }
-async function _deleteFile() {
+async function deleteFile() {
 	if (!currentFile) return;
 	if (!confirm(`Delete ${currentFile}?`)) return;
+	clearTimers(); // pending autosave targets a file about to vanish
 	const res = await fetch(`/api/files/${encodeURIComponent(currentFile)}`, {
 		method: "DELETE",
 	});
@@ -304,15 +351,30 @@ async function _deleteFile() {
 	currentFile = "";
 	refreshFiles();
 }
+function execCopy(text) {
+	const ta = document.createElement("textarea");
+	ta.value = text;
+	ta.style.cssText = "position:fixed;opacity:0";
+	document.body.appendChild(ta);
+	ta.select();
+	try {
+		return document.execCommand("copy");
+	} finally {
+		ta.remove();
+	}
+}
 async function copyText(text, msg) {
 	try {
 		await navigator.clipboard.writeText(text);
-		flash(msg);
 	} catch {
-		flash("clipboard blocked", "err");
+		if (!execCopy(text)) {
+			flash("clipboard blocked — copy failed", "err");
+			return;
+		}
 	}
+	flash(msg);
 }
-async function _copyInserts() {
+async function copyInserts() {
 	try {
 		const res = await fetch("/api/inserts", {
 			method: "POST",
@@ -325,13 +387,13 @@ async function _copyInserts() {
 		flash(`INSERTs failed: ${e.message}`, "err");
 	}
 }
-async function _copySql() {
+async function copySql() {
 	await refreshSql();
 	await copyText(sqlText, "copied SQL");
 }
 
-async function _exportDdl() {
-	_exporting = true;
+async function exportDdl() {
+	exporting = true;
 	try {
 		const res = await fetch("/export", {
 			method: "POST",
@@ -343,7 +405,7 @@ async function _exportDdl() {
 	} catch (e) {
 		flash(`export failed: ${e.message}`, "err");
 	} finally {
-		_exporting = false;
+		exporting = false;
 	}
 }
 </script>
@@ -369,7 +431,7 @@ async function _exportDdl() {
   </select>
   <button onclick={exportDdl} disabled={exporting}>{exporting ? "..." : "Export"}</button>
   <button onclick={() => { showSql = !showSql; if (showSql) refreshSql(); }}>{showSql ? "Hide" : "Show"} SQL</button>
-  {#if currentFile}<span class="ok">{currentFile}</span>{/if}
+  {#if currentFile}<span class="ok" data-testid="current-file">{currentFile}</span>{/if}
   {#if error}<span class={errorKind}>{error}</span>{/if}
   {#if lint.length && !error}<span class="warn">lint: {lint.join("; ")}</span>{/if}
 </header>
@@ -388,7 +450,7 @@ async function _exportDdl() {
     </svg>
     {#each schema.tables as t (t.id)}
       <section class="table" class:selected={selected === t.id} style="left:{t.x}px; top:{t.y}px">
-        <div class="hdr" onpointerdown={(e) => !e.target.matches("button,input") && startDrag(t, e)}>
+        <div class="hdr" onpointerdown={(e) => startDrag(t, e)}>
           <input class="tname" value={t.name} onchange={(e) => commitTableName(t, e)} spellcheck="false" />
           <button title="duplicate" onclick={() => dupTable(t)}>⧉</button>
           <button title="delete table (Del)" onclick={() => rmTable(t)}>×</button>
