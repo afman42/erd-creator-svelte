@@ -6,10 +6,8 @@ schema directory — the Go process owns the grammar (generate/parse/lint) and
 the store; re-open a file and the diagram comes back exactly.
 
 ```
-go run .        # → http://127.0.0.1:8731  (needs only Go; dist/ is committed)
+make run        # → http://127.0.0.1:8731  (Go + Node/pnpm; builds dist/ first)
 ```
-
-![canvas: users → posts with FK edge, MySQL DDL panel](docs/screenshot.png)
 
 ## Features
 
@@ -20,7 +18,8 @@ go run .        # → http://127.0.0.1:8731  (needs only Go; dist/ is committed)
 - **Relationships** — per-column `FK→` select + `ON DELETE` action; bezier edge
   renders automatically; type-mismatch lint (server-side) in the header
 - **Files** — schema store in `-dir` (default `./schemas`): Files dropdown +
-  New/Save/Del; saves debounce-autosave the current file. Server generates and
+  New/Save/Del; saves debounce-autosave the current file — switching or
+  deleting a file flushes the pending save first. Server generates and
   parses the canonical MySQL DDL; `Copy INSERTs` emits seed-row templates
 - **Dialect exports** (`POST /export`) — PostgreSQL, SQLite, MariaDB. Saved
   files stay MySQL-canonical; other dialects are export-only
@@ -48,13 +47,15 @@ main.go                 embed.FS server + API route wiring
 ## Development
 
 ```
-cd frontend && pnpm install && pnpm run build   # regenerate dist/ (commit it)
-cd frontend && pnpm test                      # node --test, zero test deps
-go test ./...                                 # dialect generator tests
+make test       # node --test + go test (also rebuilds dist/)
+make build      # rebuild dist/ + static binary
+cd frontend && pnpm run e2e   # UI flows against the real server (chromium)
+cd frontend && pnpm test      # node --test, zero test deps
+go test ./...                       # grammar/dialect/export tests
 ```
 
-Edit frontend sources under `frontend/src/`; `frontend/dist/` is committed so
-`go run .` stays a one-binary experience.
+Edit frontend sources under `frontend/src/`; `frontend/dist/` is built into
+the server at compile time (`go:embed`) — `make build` regenerates it.
 
 ## Out of scope (deliberate)
 
