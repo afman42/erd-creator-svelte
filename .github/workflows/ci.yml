@@ -64,6 +64,11 @@ jobs:
       - name: go test -race
         run: go test -race -count=1 ./...
       - name: production build
+        # CGO_ENABLED=0 matches the Makefile so local and CI produce the same
+        # static binary. Scoped to this step only: `go test -race` above
+        # requires cgo and would fail under a job-wide setting.
+        env:
+          CGO_ENABLED: "0"
         run: go build -trimpath -ldflags "-s -w" -o erd-creator .
       - uses: actions/upload-artifact@v4
         with:
