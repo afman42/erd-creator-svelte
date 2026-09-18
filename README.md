@@ -59,6 +59,7 @@ main.go                 embed.FS server + API route wiring
 ```
 make test       # node --test + go test (also rebuilds dist/)
 make build      # rebuild dist/ + static binary
+make dist       # cross-compile all platforms into dist-bin/
 cd frontend && pnpm run e2e   # UI flows against the real server (chromium)
 cd frontend && pnpm test      # node --test, zero test deps
 go test ./...                       # grammar/dialect/export tests
@@ -66,6 +67,19 @@ go test ./...                       # grammar/dialect/export tests
 
 Edit frontend sources under `frontend/src/`; `frontend/dist/` is built into
 the server at compile time (`go:embed`) — `make build` regenerates it.
+
+`make build` produces one self-contained `erd-creator` binary: the Svelte app
+is embedded via `go:embed`, so there is no asset directory to ship. The build
+sets `CGO_ENABLED=0`, so the binary is statically linked and does not depend on
+the host's glibc — the same setting lets one host cross-compile every target.
+
+`make dist` cross-compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}` and
+`windows/amd64` into `dist-bin/` (gitignored), one file per platform.
+
+Because `dist/` is committed, a stale local binary is easy to miss: `git
+status` stays clean while `./erd-creator` serves an older embedded UI. Re-run
+`make build` after pulling. The binary depends on the whole `dist/` tree, not
+just `index.html`, so a changed asset does trigger a rebuild.
 
 ## Out of scope (deliberate)
 
