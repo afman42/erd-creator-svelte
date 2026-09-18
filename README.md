@@ -12,7 +12,10 @@ make run        # → http://127.0.0.1:8731  (Go + Node/pnpm; builds dist/ first
 ## Features
 
 - **Canvas** — add/rename/delete/duplicate tables (⧉), drag by header, `Del`
-  deletes selection, `Ctrl+Z` undo, auto-layout by FK depth on file open
+  deletes selection, `Ctrl+Z` undo, auto-layout by FK depth on file open.
+  New tables auto-name `table1`, `table2`, … and duplicates `users_copy`,
+  `users_copy2`, …; undo history is per-file, so `Ctrl+Z` never restores a
+  schema across a file switch
 - **Columns** — name, type (`INT…JSON`, `ENUM` with editable values), per-column
   `PK` (composite supported) `NN` `UQ` `AI` `IX` flags, per-column comment
 - **Relationships** — per-column `FK→` select + `ON DELETE` action; bezier edge
@@ -27,17 +30,24 @@ make run        # → http://127.0.0.1:8731  (Go + Node/pnpm; builds dist/ first
 ## Architecture
 
 ```
-frontend/src/geometry.js(canvas box metrics + FK edge paths)      (pure, testable)
-frontend/src/erd.js     (UI helpers + auto-layout — no grammar)   (pure, testable)
-frontend/src/App.svelte (canvas, editing, fetch glue, undo)
-grammar.go              model + MySQL emit/parse/lint + inserts  (canonical grammar)
+frontend/src/geometry.js     (canvas box metrics + FK edge paths)   (pure, testable)
+frontend/src/erd.js          (UI helpers + naming + auto-layout)    (pure, testable)
+frontend/src/schema.svelte.js(store: model state, mutations, undo, fetch glue)
+frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
+grammar.go              model + MySQL parse/lint + inserts  (canonical grammar)
 files.go                working-dir .sql store (GET/PUT/DELETE)
-export.go               dialect generators: mysql|postgres|sqlite
+export.go               dialect generators: mysql|mariadb|postgres|sqlite
 main.go                 embed.FS server + API route wiring
 ```
 
+- **One MySQL emitter**: `GenSQL` (the saved file) delegates to `buildMysql`
+  (the `/export` path), so save and export cannot drift. `TestGenSQLGolden`
+  pins the saved-file bytes — that format is a contract with existing `.sql`.
 - **Parse boundary**: `ParseDDL` only reads DDL this tool itself emits — not
   arbitrary MySQL dumps. Unsupported clause → 400 error banner, canvas kept.
+- **FK onto a PK-less parent** is omitted from every dialect (an FK target must
+  be unique) and reported by `Lint()` rather than silently redirected to the
+  first column.
 - **Split rule**: browser owns interaction/pixels; Go owns grammar + storage.
   Model travels as JSON; ids are client-allocated (`adoptIds`).
 - ENUM survives as case-sensitive `ENUM('a','b')`; dialect maps:

@@ -6,7 +6,7 @@ git history, not here.
 ## Deferred — add when trigger fires
 
 - [ ] Box geometry lives in `geometry.js` but CSS hardcodes the same numbers
-      (`.row { height:26px }`, table `width:280px` in App.svelte).
+      (`.row { height:26px }`, table `width:280px` in `TableCard.svelte`).
       Trigger: first visual bug from ROW_H/HDR_H/BOX_W vs CSS mismatch; fix
       by driving CSS from the JS constants.
 
