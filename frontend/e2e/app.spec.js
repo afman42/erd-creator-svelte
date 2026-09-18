@@ -322,15 +322,19 @@ test("dialect dropdown drives the SQL panel, not a hardcoded dialect", async ({
 	await page.getByRole("button", { name: "Show SQL" }).click();
 	// default is mysql: backticks
 	await expect(page.locator("aside pre")).toContainText("CREATE TABLE `users`");
+	await expect(page.getByTestId("sql-dialect")).toHaveText("mysql");
 	// switch to postgres: the panel must follow, showing double quotes
 	await page.getByTestId("dialect").selectOption("postgres");
 	await expect(page.locator("aside pre")).toContainText('CREATE TABLE "users"');
 	await expect(page.locator("aside pre")).not.toContainText(
 		"CREATE TABLE `users`",
 	);
+	// and the panel labels which grammar it is showing
+	await expect(page.getByTestId("sql-dialect")).toHaveText("postgres");
 	// and back again
 	await page.getByTestId("dialect").selectOption("mysql");
 	await expect(page.locator("aside pre")).toContainText("CREATE TABLE `users`");
+	await expect(page.getByTestId("sql-dialect")).toHaveText("mysql");
 });
 
 test("saving in postgres writes postgres DDL that reopens intact", async ({

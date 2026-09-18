@@ -5,6 +5,9 @@ import { copySql, store } from "./schema.svelte.js";
 <aside>
 	<div class="sqlhead">
 		<span>{store.currentFile || "unsaved"}</span>
+		<!-- Names the dialect so the panel is unambiguous now that a file can be
+		     written in more than one grammar. -->
+		<span class="dialect" data-testid="sql-dialect">{store.schema.dialect}</span>
 		<button onclick={copySql}>copy</button>
 	</div>
 	<pre>{store.sqlText}</pre>
@@ -23,6 +26,13 @@ import { copySql, store } from "./schema.svelte.js";
 		align-items: center;
 		padding: 6px 8px;
 		background: #1a2028;
+	}
+	.sqlhead .dialect {
+		color: #9fb0c0;
+		font-size: 11px;
+		border: 1px solid #3b4654;
+		border-radius: 4px;
+		padding: 0 5px;
 	}
 	.sqlhead button {
 		margin-left: auto;
