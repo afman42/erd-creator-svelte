@@ -3,6 +3,7 @@ import { baseType, isInt, TYPES } from "./erd.js";
 import {
 	addColumn,
 	commitColName,
+	commitComment,
 	commitTableName,
 	dupTable,
 	rmColumn,
@@ -10,8 +11,8 @@ import {
 	setRef,
 	setRefAction,
 	setType,
-	snap,
 	store,
+	toggleFlag,
 	togglePk,
 } from "./schema.svelte.js";
 
@@ -56,20 +57,14 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 					type="checkbox"
 					checked={c.nn || c.pk}
 					disabled={c.pk}
-					onchange={() => {
-						snap();
-						c.nn = !c.nn;
-					}}
+					onchange={() => toggleFlag(c, "nn")}
 				/>NN</label
 			>
 			<label title="unique"
 				><input
 					type="checkbox"
 					checked={c.ux}
-					onchange={() => {
-						snap();
-						c.ux = !c.ux;
-					}}
+					onchange={() => toggleFlag(c, "ux")}
 				/>UQ</label
 			>
 			<label title="auto increment"
@@ -77,20 +72,14 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 					type="checkbox"
 					checked={c.ai}
 					disabled={!isInt(c.type)}
-					onchange={() => {
-						snap();
-						c.ai = !c.ai;
-					}}
+					onchange={() => toggleFlag(c, "ai")}
 				/>AI</label
 			>
 			<label title="index"
 				><input
 					type="checkbox"
 					checked={c.ix}
-					onchange={() => {
-						snap();
-						c.ix = !c.ix;
-					}}
+					onchange={() => toggleFlag(c, "ix")}
 				/>IX</label
 			>
 			<select class="fk" value={c.ref?.tableId ?? ""} onchange={(e) => setRef(c, e)}>
@@ -118,10 +107,7 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 			<input
 				placeholder="comment"
 				value={c.comment}
-				onchange={(e) => {
-					snap();
-					c.comment = e.target.value.trim();
-				}}
+				onchange={(e) => commitComment(c, e)}
 				spellcheck="false"
 			/>
 		</div>

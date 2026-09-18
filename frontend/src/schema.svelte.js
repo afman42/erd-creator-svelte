@@ -190,6 +190,11 @@ export function commitColName(c, ev) {
 		c.name = v;
 	} else ev.target.value = c.name;
 }
+// Comments accept empty (clearing one is legitimate), unlike names.
+export function commitComment(c, ev) {
+	snap();
+	c.comment = ev.target.value.trim();
+}
 export function setType(c, base) {
 	if (base === "ENUM") {
 		const cur = /^ENUM\((.*)\)$/i.exec(c.type)?.[1] ?? "";
@@ -229,6 +234,14 @@ export function togglePk(c) {
 	c.pk = !c.pk;
 	if (c.pk) c.nn = true;
 	flashLint();
+}
+
+// toggleFlag flips one of a column's boolean flags (nn/ux/ai/ix). Lives here
+// with the other mutations so every undo snapshot is taken in one place —
+// TableCard used to inline snap() plus the flip four times.
+export function toggleFlag(c, flag) {
+	snap();
+	c[flag] = !c[flag];
 }
 
 export function flash(msg, kind = "ok") {
