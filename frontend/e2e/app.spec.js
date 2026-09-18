@@ -256,3 +256,41 @@ test("Copy SQL succeeds via execCommand fallback without clipboard permission", 
 	await expect(page.getByText("copied SQL")).toBeVisible();
 	await expect(page.getByText("copy failed")).toHaveCount(0);
 });
+
+test("Ctrl+Z after switching files must not write the old file's schema", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	let n = 0;
+	page.on("dialog", (d) => d.accept(`f${n++}`));
+	// file A: a rename pushes an undo snapshot that belongs to A
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("f0.sql");
+	const name = page.locator(".tname").first();
+	await name.fill("alpha");
+	await name.blur();
+	await expect(async () => {
+		const body = await (await request.get("/api/files/f0.sql")).json();
+		expect(body.tables[0].name).toBe("alpha");
+	}).toPass({ timeout: 5000 });
+	// file B: fresh schema, different file
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("f1.sql");
+	// undo must not reach back into f0's history and restore it into f1
+	await page.locator("body").click({ position: { x: 5, y: 400 } }); // defocus
+	await page.keyboard.press("Control+z");
+	// Deterministic: the in-memory schema is the assertion, checked immediately.
+	await expect(page.locator(".tname").first()).toHaveValue("users");
+	// Then flush whatever is in memory to disk via an explicit save, so the
+	// server-side check does not depend on the 800ms autosave having elapsed.
+	// With the bug, the undone A-schema would be what lands in f1.sql.
+	await page.getByRole("button", { name: "Save", exact: true }).click();
+	await expect(async () => {
+		const body = await (await request.get("/api/files/f1.sql")).json();
+		expect(body.tables[0].name).toBe("users");
+	}).toPass({ timeout: 5000 });
+	// f0 must be untouched by any of this
+	const a = await (await request.get("/api/files/f0.sql")).json();
+	expect(a.tables[0].name).toBe("alpha");
+});

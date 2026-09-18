@@ -62,12 +62,22 @@ export async function refreshSql() {
 
 // Wired from App's $effect (which tracks schema deep state + the local
 // showSql flag): debounce fan-out — lint 300ms, autosave 800ms, SQL 300ms.
+// skipTouch: set right before openFile/newFile swap store.schema; the App
+// $effect fires once on the swap — that is a load, not a user edit, so it must
+// not mark the file dirty or schedule a needless save.
+let skipTouch = false;
 export function touch(showSql) {
+	if (skipTouch) {
+		skipTouch = false;
+		return;
+	}
 	lintTimer ??= setTimeout(() => {
 		lintTimer = null;
 		refreshLint();
 	}, 300);
-	if (dirty && store.currentFile) {
+	// Schedule on every real edit, first one included — a fresh file is not
+	// dirty until the first touch, but its first edit must still persist.
+	if (store.currentFile) {
 		clearTimeout(saveTimer);
 		saveTimer = setTimeout(() => saveCurrent(true), 800);
 	}
@@ -114,6 +124,12 @@ async function flushCurrent() {
 		}
 	}
 }
+// Unload safety: a pending saveTimer dies with the page, dropping up to 800ms
+// of edits. Flush best-effort on the way out.
+// ponytail: plain fetch may abort mid-unload; keepalive fetch (64KB cap) would
+// harden the final write — add if real tab-closes drop edits.
+window.addEventListener("pagehide", () => void flushCurrent());
+window.addEventListener("beforeunload", () => void flushCurrent());
 
 // ---- model mutations ----
 function uniqName(base) {
@@ -257,12 +273,16 @@ export async function openFile(name) {
 	try {
 		const res = await fetch(`/api/files/${encodeURIComponent(name)}`);
 		if (!res.ok) throw new Error(await res.text());
-		snap();
+		skipTouch = true;
 		store.schema = adoptIds(await res.json());
 		layout(store.schema);
 		store.currentFile = name;
 		store.error = "";
 		dirty = false;
+		// Snapshots belong to the file they were taken in. Carrying them across a
+		// switch lets Ctrl+Z restore file A's schema while currentFile is B — and
+		// the App $effect would then autosave A's tables into B.sql (data loss).
+		history.length = 0;
 	} catch (e) {
 		flash(`Open failed: ${e.message}`, "err");
 		refreshFiles();
@@ -278,10 +298,11 @@ export async function newFile() {
 		return;
 	}
 	await flushCurrent();
-	snap();
+	skipTouch = true;
 	store.schema = { tables: [newTable("users")] };
 	layout(store.schema);
 	store.currentFile = `${name}.sql`;
+	history.length = 0; // new file context → prior snapshots are unreachable
 	await saveCurrent();
 	refreshFiles();
 }
@@ -319,6 +340,7 @@ export async function deleteFile() {
 	if (!res.ok) flash(`delete failed: ${await res.text()}`, "err");
 	else flash(`deleted ${store.currentFile}`);
 	store.currentFile = "";
+	history.length = 0; // the file these snapshots described no longer exists
 	refreshFiles();
 }
 

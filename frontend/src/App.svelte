@@ -1,4 +1,5 @@
 <script>
+import { untrack } from "svelte";
 import { edgePaths } from "./geometry.js";
 import SqlPanel from "./SqlPanel.svelte";
 import {
@@ -18,9 +19,10 @@ let drag = $state(null);
 const edges = $derived(edgePaths(store.schema));
 
 // store.schema is the single reactive root; deep-change tracker + debounce fan-out.
+// showSql read untracked so toggling the panel alone doesn't mark the file dirty.
 $effect(() => {
 	void JSON.stringify(store.schema);
-	touch(showSql);
+	untrack(() => touch(showSql));
 });
 
 function toggleSql() {
