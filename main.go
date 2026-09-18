@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -28,8 +29,8 @@ func main() {
 	}
 
 	http.HandleFunc("/export", handleExport)
-	http.HandleFunc("/api/lint", handleLint)
-	http.HandleFunc("/api/inserts", handleInserts)
+	http.HandleFunc("/api/lint", handleSchemaAPI)
+	http.HandleFunc("/api/inserts", handleSchemaAPI)
 	fileAPI := handleFiles(*dir)
 	http.Handle("/api/files", fileAPI)
 	http.Handle("/api/files/", fileAPI)
@@ -46,47 +47,88 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-// handleLint / handleInserts: POST schema JSON → text answer.
-func handleLint(w http.ResponseWriter, r *http.Request) {
+// schemaAPI: POST schema JSON → answer. Path→renderer table:
+// /api/lint → JSON diagnostics, /api/inserts → seed-row SQL text.
+var schemaAPI = map[string]func(http.ResponseWriter, *Schema){
+	"/api/lint": func(w http.ResponseWriter, s *Schema) {
+		l := s.Lint()
+		if l == nil {
+			l = []string{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(l)
+	},
+	"/api/inserts": func(w http.ResponseWriter, s *Schema) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(w, s.GenInserts())
+	},
+}
+
+func handleSchemaAPI(w http.ResponseWriter, r *http.Request) {
 	s, ok := decodeSchema(w, r)
 	if !ok {
 		return
 	}
-	l := s.Lint()
-	if l == nil {
-		l = []string{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(l)
-}
-
-func handleInserts(w http.ResponseWriter, r *http.Request) {
-	s, ok := decodeSchema(w, r)
+	render, ok := schemaAPI[r.URL.Path]
 	if !ok {
+		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprint(w, s.GenInserts())
+	render(w, s)
 }
 
-// decodeSchema reads a {schema:{tables}} or bare {tables} POST body.
-func decodeSchema(w http.ResponseWriter, r *http.Request) (*Schema, bool) {
+// decodeBody enforces POST-only + 1 MiB cap and returns the raw body.
+// Shared by every JSON-accepting endpoint.
+func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return nil, false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req struct {
-		Schema Schema  `json:"schema"`
-		Tables []Table `json:"tables"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
 		return nil, false
 	}
-	s := &req.Schema
-	if len(s.Tables) == 0 {
-		s.Tables = req.Tables
+	return b, true
+}
+
+// schemaEnvelope is the accepted POST body shape for every schema endpoint:
+// either {"schema":{"tables":[...]}} or the bare {"tables":[...]}.
+type schemaEnvelope struct {
+	Schema Schema  `json:"schema"`
+	Tables []Table `json:"tables"`
+}
+
+// schema returns the payload from whichever envelope field was populated.
+// Both are accepted so callers may post a bare table list.
+func (e *schemaEnvelope) schema() *Schema {
+	if len(e.Schema.Tables) == 0 {
+		e.Schema.Tables = e.Tables
+	}
+	return &e.Schema
+}
+
+// decodeSchemaJSON parses an envelope body. Shared by decodeSchema and
+// handleExport so the accepted shapes stay identical.
+func decodeSchemaJSON(b []byte) (*Schema, error) {
+	var req schemaEnvelope
+	if err := json.Unmarshal(b, &req); err != nil {
+		return nil, err
+	}
+	return req.schema(), nil
+}
+
+// decodeSchema reads a {schema:{tables}} or bare {tables} POST body.
+func decodeSchema(w http.ResponseWriter, r *http.Request) (*Schema, bool) {
+	b, ok := decodeBody(w, r)
+	if !ok {
+		return nil, false
+	}
+	s, err := decodeSchemaJSON(b)
+	if err != nil {
+		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		return nil, false
 	}
 	return s, true
 }
