@@ -64,10 +64,14 @@ main.go                 embed.FS server + API route wiring
   Postgres → `TEXT + CHECK` / identity columns / `COMMENT ON`; SQLite →
   rowid-alias `INTEGER PRIMARY KEY` / inline `CHECK` / `--` comments.
 - **Round-trip fidelity differs by dialect.** A mysql file round-trips exactly.
-  Postgres is idempotent but not lossless: it has no `TINYINT`/`DATETIME`, so
-  those become `SMALLINT`/`TIMESTAMP` and the original name is not recovered.
-  ENUM values survive (recovered from the `TEXT + CHECK` shape). The tests
-  assert idempotence rather than model equality, and say so.
+  Postgres is idempotent and lossy in exactly two places: it has no
+  `TINYINT`/`DATETIME`, so those become `SMALLINT`/`TIMESTAMP` and the original
+  name is not recovered. Both replacements are valid in every dialect, so the
+  loss is cosmetic rather than breaking. Everything else — including `JSON`,
+  which the emitter writes as Postgres-native `JSONB` and the parser maps back
+  — round-trips unchanged, and `ENUM` is recovered from the `TEXT + CHECK`
+  shape. A reopened postgres file is therefore safe to re-export to any
+  dialect; `TestPostgresReopenIsPortable` pins that.
 
 ## Development
 
