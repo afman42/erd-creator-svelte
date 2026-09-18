@@ -1,0 +1,18 @@
+name: Setup Go
+description: Install the Go toolchain pinned by go.mod, with module caching.
+
+inputs:
+  go-version-file:
+    description: File whose `go` directive pins the toolchain version.
+    required: false
+    default: go.mod
+
+runs:
+  using: composite
+  steps:
+    # go-version-file keeps go.mod as the single source of truth, rather than
+    # repeating the version literal in every job.
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+        cache: true

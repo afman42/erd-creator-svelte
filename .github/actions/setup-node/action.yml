@@ -1,0 +1,33 @@
+name: Setup Node + pnpm
+description: Install pnpm and Node, and enable the pnpm store cache.
+
+# Single source of truth for the frontend toolchain versions. Both the frontend
+# and e2e jobs call this, so the pins cannot drift apart.
+inputs:
+  node-version:
+    description: Node.js version to install.
+    required: false
+    default: "24"
+  pnpm-version:
+    description: pnpm version to install.
+    required: false
+    default: "10"
+  cache-dependency-path:
+    description: Lockfile for the pnpm store cache key, relative to repo root.
+    required: false
+    default: frontend/pnpm-lock.yaml
+
+runs:
+  using: composite
+  steps:
+    # pnpm must be on PATH *before* setup-node: setup-node shells out to
+    # `pnpm store path` to resolve the cache directory, and silently skips
+    # caching if pnpm is missing.
+    - uses: pnpm/action-setup@v4
+      with:
+        version: ${{ inputs.pnpm-version }}
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
