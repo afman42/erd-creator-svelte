@@ -295,19 +295,28 @@ func firstLine(s string) string {
 
 // TestNormalizeDialect: spellings map to canonical names, unknown input falls
 // back to mysql rather than erroring (an unset dialect is the common case).
+//
+// mariadb is its own canonical name, not a spelling of mysql: the two share a
+// grammar but a mariadb schema must keep that identity on save.
 func TestNormalizeDialect(t *testing.T) {
 	cases := map[string]string{
 		"":            DialectMysql,
 		"mysql":       DialectMysql,
 		"MySQL":       DialectMysql,
-		"mariadb":     DialectMysql, // shares the mysql grammar
+		"mariadb":     DialectMariaDB,
+		"MariaDB":     DialectMariaDB,
+		"maria":       DialectMariaDB,
+		"  mariadb  ": DialectMariaDB,
 		"postgres":    DialectPostgres,
 		"PostgreSQL":  DialectPostgres,
 		"postgresql":  DialectPostgres,
 		"pg":          DialectPostgres,
 		"  postgres ": DialectPostgres,
-		"sqlite":      DialectMysql, // export-only: not a save format
-		"nonsense":    DialectMysql,
+		// sqlite keeps its own name so saveable() can reject it. Letting it
+		// fall through to mysql made a sqlite schema saveable as MySQL.
+		"sqlite":   DialectSqlite,
+		"SQLite":   DialectSqlite,
+		"nonsense": DialectMysql,
 	}
 	for in, want := range cases {
 		if got := normalizeDialect(in); got != want {
