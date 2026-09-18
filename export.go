@@ -109,6 +109,22 @@ func enumValues(ty string) []string {
 	return vals
 }
 
+// enumCheck renders an ENUM as a CHECK constraint, for dialects without a
+// native enum type: CHECK (<col> IN ('a', 'b')). ok=false when ty is not an
+// ENUM with at least one value, leaving the caller to fall back to TEXT.
+// q quotes the column identifier (backticks or double quotes, per dialect).
+func enumCheck(colName, ty string, q func(string) string) (string, bool) {
+	vals := enumValues(ty)
+	if vals == nil {
+		return "", false
+	}
+	quoted := make([]string, len(vals))
+	for i, v := range vals {
+		quoted[i] = sqlStr(v)
+	}
+	return fmt.Sprintf("CHECK (%s IN (%s))", q(colName), strings.Join(quoted, ", ")), true
+}
+
 func baseOf(ty string) string {
 	base, _ := splitType(ty)
 	return base
@@ -148,6 +164,28 @@ func pkCol(t Table) (Col, bool) {
 		return pk, true
 	}
 	return Col{}, false
+}
+
+// fkTarget resolves a column's FK to its parent table and the single PK column
+// that FK references. ok=false when the parent is missing (dangling ref) or has
+// no sole PK — a single-column FK onto a composite or absent PK is invalid DDL,
+// so every dialect omits it. Lint reports both cases.
+//
+// Shared by all three dialect builders: they differ in how they render the
+// constraint, not in which FKs are emittable.
+func fkTarget(tables []Table, c Col) (*Table, Col, bool) {
+	if c.Ref == nil {
+		return nil, Col{}, false
+	}
+	rt := findTable(tables, c.Ref.TableId)
+	if rt == nil {
+		return nil, Col{}, false
+	}
+	rp, ok := pkCol(*rt)
+	if !ok {
+		return nil, Col{}, false
+	}
+	return rt, rp, true
 }
 
 func refCols(t Table) []Col {
@@ -217,13 +255,9 @@ func buildMysql(tables []Table, header string) string {
 			}
 		}
 		for _, c := range refCols(t) {
-			rt := findTable(tables, c.Ref.TableId)
-			if rt == nil {
-				continue
-			}
-			rp, ok := pkCol(*rt)
+			rt, rp, ok := fkTarget(tables, c)
 			if !ok {
-				continue // composite PK parent → invalid single-col FK; client lint warns
+				continue
 			}
 			lines = append(lines, fmt.Sprintf(
 				"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s",
@@ -246,12 +280,8 @@ func pgType(c Col) (string, string) { // type + inline extra (CHECK for ENUM)
 	case "JSON":
 		base = "JSONB"
 	case "ENUM":
-		if vals := enumValues(c.Type); vals != nil {
-			quoted := make([]string, len(vals))
-			for i, v := range vals {
-				quoted[i] = sqlStr(v)
-			}
-			return "TEXT", fmt.Sprintf("CHECK (%s IN (%s))", quoteDQ(c.Name), strings.Join(quoted, ", "))
+		if check, ok := enumCheck(c.Name, c.Type, quoteDQ); ok {
+			return "TEXT", check
 		}
 		base = "TEXT"
 	}
@@ -297,11 +327,7 @@ func buildPostgres(tables []Table) string {
 			lines = append(lines, l)
 		}
 		for _, c := range refCols(t) {
-			rt := findTable(tables, c.Ref.TableId)
-			if rt == nil {
-				continue
-			}
-			rp, ok := pkCol(*rt)
+			rt, rp, ok := fkTarget(tables, c)
 			if !ok {
 				continue
 			}
@@ -326,12 +352,7 @@ func buildSqlite(tables []Table) string {
 			continue
 		}
 		var lines, post []string
-		pks := make([]Col, 0, 2)
-		for _, c := range t.Columns {
-			if c.Pk {
-				pks = append(pks, c)
-			}
-		}
+		pks := pkCols(t)
 		// rowid alias: single integer PK → inline INTEGER PRIMARY KEY, auto-assign for free
 		aiPk := len(pks) == 1 && pks[0].Ai && isInt(baseOf(pks[0].Type))
 		for _, c := range t.Columns {
@@ -343,12 +364,8 @@ func buildSqlite(tables []Table) string {
 			switch base {
 			case "ENUM":
 				ty = "TEXT"
-				if vals := enumValues(c.Type); vals != nil {
-					quoted := make([]string, len(vals))
-					for i, v := range vals {
-						quoted[i] = sqlStr(v)
-					}
-					check = fmt.Sprintf("CHECK (%s IN (%s))", quoteTick(c.Name), strings.Join(quoted, ", "))
+				if sql, ok := enumCheck(c.Name, c.Type, quoteTick); ok {
+					check = sql
 				}
 			case "BOOLEAN":
 				ty = "INTEGER"
@@ -384,11 +401,7 @@ func buildSqlite(tables []Table) string {
 			}
 		}
 		for _, c := range refCols(t) {
-			rt := findTable(tables, c.Ref.TableId)
-			if rt == nil {
-				continue
-			}
-			rp, ok := pkCol(*rt)
+			rt, rp, ok := fkTarget(tables, c)
 			if !ok {
 				continue
 			}

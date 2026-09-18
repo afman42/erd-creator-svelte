@@ -46,15 +46,6 @@ type Schema struct {
 	Tables []Table `json:"tables"`
 }
 
-func (s *Schema) findTable(id string) *Table {
-	for i := range s.Tables {
-		if s.Tables[i].Id == id {
-			return &s.Tables[i]
-		}
-	}
-	return nil
-}
-
 // Lint: FK base-type vs referenced PK base-type mismatch; FK onto composite PK.
 func (s *Schema) Lint() []string {
 	var out []string
@@ -63,7 +54,7 @@ func (s *Schema) Lint() []string {
 			if c.Ref == nil {
 				continue
 			}
-			p := s.findTable(c.Ref.TableId)
+			p := findTable(s.Tables, c.Ref.TableId)
 			if p == nil {
 				continue
 			}
