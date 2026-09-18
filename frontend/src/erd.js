@@ -21,9 +21,23 @@ export const DEFAULT_TYPE = {
 	DECIMAL: "DECIMAL(10,2)",
 	VARCHAR: "VARCHAR(255)",
 };
+// Dialects the server can emit. Only mysql and postgres are saveable (the
+// server has parsers for both); mariadb and sqlite are export-only, which is
+// why SAVEABLE_DIALECTS is a subset — the dropdown still offers all four.
+export const DIALECTS = ["mysql", "mariadb", "postgres", "sqlite"];
+export const SAVEABLE_DIALECTS = ["mysql", "postgres"];
+export const DEFAULT_DIALECT = "mysql";
+export const isSaveable = (d) => SAVEABLE_DIALECTS.includes(d);
 export const baseType = (t) => t.split("(")[0];
 const INT_RE = /^(INT|BIGINT|SMALLINT|TINYINT)/;
 export const isInt = (t) => INT_RE.test(baseType(t));
+
+// newSchema: the client's schema envelope. The dialect travels with the model
+// so one dropdown drives save, the SQL panel, copy and export, and so a saved
+// file remembers which grammar it is written in.
+export function newSchema(dialect = DEFAULT_DIALECT, tables = []) {
+	return { dialect, tables };
+}
 
 export let nextTableId = 1;
 export let nextColId = 1;

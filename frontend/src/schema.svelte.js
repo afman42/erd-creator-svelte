@@ -7,10 +7,12 @@
 import {
 	adoptIds,
 	cloneTable,
+	DEFAULT_DIALECT,
 	DEFAULT_TYPE,
 	isInt,
 	layout,
 	newColumn,
+	newSchema,
 	newTable,
 	uniqName,
 } from "./erd.js";
@@ -20,13 +22,14 @@ import { HDR_H, ROW_H } from "./geometry.js";
 export const store = $state({
 	currentFile: "", // "name.sql" | "" (unsaved scratch)
 	files: [], // [{name, mtime}]
-	schema: { tables: [newTable("users")] },
+	// The dialect lives on the schema, not beside it: one dropdown then drives
+	// save, the SQL panel, copy and export, and the file remembers its grammar.
+	schema: newSchema("mysql", [newTable("users")]),
 	sqlText: "",
 	error: "",
 	errorKind: "err",
 	selected: null,
 	lint: [],
-	dialect: "postgres",
 	exporting: false,
 });
 layout(store.schema);
@@ -53,7 +56,13 @@ export async function refreshSql() {
 		const res = await fetch("/export", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ dialect: "mysql", schema: store.schema }),
+			// The panel shows the schema's own dialect, so it always agrees with
+			// the dropdown and with what Save writes. It used to hardcode mysql,
+			// which contradicted a dropdown reading "PostgreSQL".
+			body: JSON.stringify({
+				dialect: store.schema.dialect,
+				schema: store.schema,
+			}),
 		});
 		if (res.ok) store.sqlText = await res.text();
 	} catch {
@@ -254,8 +263,15 @@ export function flash(msg, kind = "ok") {
 export function setSelected(id) {
 	store.selected = id;
 }
+// setDialect switches the schema's grammar. It is a real mutation (the saved
+// bytes change), so it snapshots for undo and refreshes the SQL panel when it
+// is open — previously the panel kept showing the old dialect because nothing
+// reacted to the change.
 export function setDialect(d) {
-	store.dialect = d;
+	if (store.schema.dialect === d) return;
+	snap();
+	store.schema.dialect = d;
+	if (store.sqlText) refreshSql();
 }
 function flashLint() {
 	refreshLint().then(() => {
@@ -285,7 +301,11 @@ export async function openFile(name) {
 		const res = await fetch(`/api/files/${encodeURIComponent(name)}`);
 		if (!res.ok) throw new Error(await res.text());
 		skipTouch = true;
-		store.schema = adoptIds(await res.json());
+		const loaded = await res.json();
+		// The server always sets dialect (both parsers do), but default rather
+		// than leave the dropdown blank if an older payload omits it.
+		if (!loaded.dialect) loaded.dialect = DEFAULT_DIALECT;
+		store.schema = adoptIds(loaded);
 		layout(store.schema);
 		store.currentFile = name;
 		store.error = "";
@@ -310,7 +330,9 @@ export async function newFile() {
 	}
 	await flushCurrent();
 	skipTouch = true;
-	store.schema = { tables: [newTable("users")] };
+	// Keep the dialect the user is currently working in — switching to postgres
+	// and then hitting New should give a postgres file, not silently reset.
+	store.schema = newSchema(store.schema.dialect, [newTable("users")]);
 	layout(store.schema);
 	store.currentFile = `${name}.sql`;
 	history.length = 0; // new file context → prior snapshots are unreachable
@@ -402,10 +424,13 @@ export async function exportDdl() {
 		const res = await fetch("/export", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ dialect: store.dialect, schema: store.schema }),
+			body: JSON.stringify({
+				dialect: store.schema.dialect,
+				schema: store.schema,
+			}),
 		});
 		if (!res.ok) throw new Error(await res.text());
-		await copyText(await res.text(), `copied ${store.dialect} DDL`);
+		await copyText(await res.text(), `copied ${store.schema.dialect} DDL`);
 	} catch (e) {
 		flash(`export failed: ${e.message}`, "err");
 	} finally {

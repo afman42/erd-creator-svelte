@@ -312,3 +312,52 @@ test("Ctrl+Z after switching files must not write the old file's schema", async 
 	const a = await (await request.get("/api/files/f0.sql")).json();
 	expect(a.tables[0].name).toBe("alpha");
 });
+
+// ---- dialect switching (mysql ⇄ postgres) ----
+
+test("dialect dropdown drives the SQL panel, not a hardcoded dialect", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	// default is mysql: backticks
+	await expect(page.locator("aside pre")).toContainText("CREATE TABLE `users`");
+	// switch to postgres: the panel must follow, showing double quotes
+	await page.getByTestId("dialect").selectOption("postgres");
+	await expect(page.locator("aside pre")).toContainText('CREATE TABLE "users"');
+	await expect(page.locator("aside pre")).not.toContainText(
+		"CREATE TABLE `users`",
+	);
+	// and back again
+	await page.getByTestId("dialect").selectOption("mysql");
+	await expect(page.locator("aside pre")).toContainText("CREATE TABLE `users`");
+});
+
+test("saving in postgres writes postgres DDL that reopens intact", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	page.once("dialog", (d) => d.accept("pgfile"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("pgfile.sql");
+	// switch this file to postgres, then edit so a save is scheduled
+	await page.getByTestId("dialect").selectOption("postgres");
+	const name = page.locator(".tname").first();
+	await name.fill("members");
+	await name.blur();
+	await page.getByRole("button", { name: "Save", exact: true }).click();
+	// GET /api/files/:name returns the PARSED schema, not the raw file, so the
+	// dialect field is what proves the postgres grammar round-tripped. (Reading
+	// the raw bytes would need filesystem access the test doesn't have.)
+	await expect(async () => {
+		const body = await (await request.get("/api/files/pgfile.sql")).json();
+		expect(body.dialect).toBe("postgres");
+		expect(body.tables[0].name).toBe("members");
+	}).toPass({ timeout: 5000 });
+	// and the SQL panel renders postgres DDL for that file
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText(
+		'CREATE TABLE "members"',
+	);
+});

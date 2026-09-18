@@ -46,7 +46,10 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 				onchange={(e) => commitColName(c, e)}
 				spellcheck="false"
 			/>
-			<select value={baseType(c.type)} onchange={(e) => setType(c, e.target.value)}>
+			<select
+				value={baseType(c.type)}
+				onchange={(e) => setType(c, e.currentTarget.value)}
+			>
 				{#each TYPES as ty}<option value={ty}>{ty}</option>{/each}
 			</select>
 			<label title="primary key"

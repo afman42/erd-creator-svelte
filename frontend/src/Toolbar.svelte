@@ -1,4 +1,5 @@
 <script>
+import { DIALECTS, isSaveable } from "./erd.js";
 import {
 	addTable,
 	copyInserts,
@@ -8,10 +9,19 @@ import {
 	newFile,
 	openFile,
 	saveCurrent,
+	setDialect,
 	store,
 } from "./schema.svelte.js";
 
 let { showSql, onToggleSql } = $props();
+
+// Display names; the values are the server's dialect identifiers.
+const LABELS = {
+	mysql: "MySQL",
+	mariadb: "MariaDB",
+	postgres: "PostgreSQL",
+	sqlite: "SQLite",
+};
 </script>
 
 <header>
@@ -19,7 +29,7 @@ let { showSql, onToggleSql } = $props();
 	<select
 		class="dialect"
 		value={store.currentFile}
-		onchange={(e) => openFile(e.target.value)}
+		onchange={(e) => openFile(e.currentTarget.value)}
 		title="open schema file"
 	>
 		<option value="">— files —</option>
@@ -30,11 +40,16 @@ let { showSql, onToggleSql } = $props();
 	<button onclick={deleteFile} disabled={!store.currentFile}>Del</button>
 	<button onclick={copySql}>Copy SQL</button>
 	<button onclick={copyInserts}>Copy INSERTs</button>
-	<select class="dialect" bind:value={store.dialect}>
-		<option value="mysql">MySQL</option>
-		<option value="mariadb">MariaDB</option>
-		<option value="postgres">PostgreSQL</option>
-		<option value="sqlite">SQLite</option>
+	<select
+		class="dialect"
+		value={store.schema.dialect}
+		onchange={(e) => setDialect(e.currentTarget.value)}
+		title="DDL dialect (saved files, SQL panel, and export)"
+		data-testid="dialect"
+	>
+		{#each DIALECTS as d (d)}
+			<option value={d}>{LABELS[d]}{isSaveable(d) ? "" : " (export only)"}</option>
+		{/each}
 	</select>
 	<button onclick={exportDdl} disabled={store.exporting}>
 		{store.exporting ? "..." : "Export"}
