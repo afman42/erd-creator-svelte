@@ -12,6 +12,7 @@ import {
 	layout,
 	newColumn,
 	newTable,
+	uniqName,
 } from "./erd.js";
 import { HDR_H, ROW_H } from "./geometry.js";
 
@@ -132,12 +133,9 @@ window.addEventListener("pagehide", () => void flushCurrent());
 window.addEventListener("beforeunload", () => void flushCurrent());
 
 // ---- model mutations ----
-function uniqName(base) {
-	let n = base,
-		i = 1;
-	while (store.schema.tables.some((t) => t.name === n)) n = base + ++i;
-	return n;
-}
+// Names come from erd.js's uniqName (pure + unit-tested); it needs the taken
+// set passed in, since it has no access to the store.
+const takenNames = () => store.schema.tables.map((t) => t.name);
 export function addTable() {
 	snap();
 	const y = Math.max(
@@ -147,13 +145,13 @@ export function addTable() {
 		),
 	);
 	store.schema.tables.push(
-		Object.assign(newTable(uniqName("table1")), { x: 40, y }),
+		Object.assign(newTable(uniqName("table1", takenNames())), { x: 40, y }),
 	);
 }
 export function dupTable(t) {
 	snap();
 	const c = cloneTable(t);
-	c.name = uniqName(`${t.name}_copy`);
+	c.name = uniqName(`${t.name}_copy`, takenNames());
 	c.x = t.x + 30;
 	c.y = t.y + 30;
 	store.schema.tables.push(c);

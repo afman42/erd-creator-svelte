@@ -13,6 +13,7 @@ import {
 	newColumn,
 	newTable,
 	TYPES,
+	uniqName,
 } from "../src/erd.js";
 import { BOX_W, HDR_H, ROW_H } from "../src/geometry.js";
 
@@ -229,4 +230,40 @@ test("BOX_W / HDR_H / ROW_H constants match CSS", () => {
 	assert.equal(BOX_W, 280);
 	assert.equal(HDR_H, 28);
 	assert.equal(ROW_H, 42);
+});
+
+// uniqName increments a trailing number instead of appending to it. The old
+// `base + ++i` produced table1, table12, table13 — skipping table2..table11,
+// which is what a user sees as "why did my table numbers jump?".
+test("uniqName increments the trailing number rather than appending", () => {
+	assert.equal(uniqName("table1", ["users"]), "table1");
+	assert.equal(uniqName("table1", ["users", "table1"]), "table2");
+	assert.equal(uniqName("table1", ["users", "table1", "table2"]), "table3");
+	// the regression: with 1..11 taken, the next must be 12 — not "table12" from
+	// concatenation, and not a jump past 11.
+	const many = [
+		"table1",
+		...Array.from({ length: 10 }, (_, i) => `table${i + 2}`),
+	];
+	assert.equal(uniqName("table1", many), "table12");
+});
+
+test("uniqName appends a number when the base has no trailing digits", () => {
+	assert.equal(uniqName("users_copy", ["users"]), "users_copy");
+	assert.equal(uniqName("users_copy", ["users", "users_copy"]), "users_copy2");
+	assert.equal(
+		uniqName("users_copy", ["users_copy", "users_copy2"]),
+		"users_copy3",
+	);
+});
+
+test("uniqName fills the first free number, not just max+1", () => {
+	// table2 freed by deletion → reused, keeping names dense
+	assert.equal(uniqName("table1", ["table1", "table3"]), "table2");
+});
+
+test("uniqName handles multi-digit suffixes and empty taken sets", () => {
+	assert.equal(uniqName("table9", ["table9"]), "table10");
+	assert.equal(uniqName("table10", ["table10"]), "table11");
+	assert.equal(uniqName("t1", []), "t1");
 });

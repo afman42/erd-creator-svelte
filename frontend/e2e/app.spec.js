@@ -130,6 +130,24 @@ test("duplicate table copies columns and offsets position", async ({
 	await expect(dupType).toHaveValue("INT");
 });
 
+test("+ Table names increment numerically (table1, table2, …)", async ({
+	page,
+}) => {
+	await page.goto("/");
+	for (let i = 0; i < 4; i++) {
+		await page.getByRole("button", { name: "+ Table" }).click();
+	}
+	// uniqName is unit-tested in test/erd.test.js; this covers the wiring, which
+	// previously produced table1, table12, table13 by concatenating the counter.
+	expect(await tables(page)).toEqual([
+		"users",
+		"table1",
+		"table2",
+		"table3",
+		"table4",
+	]);
+});
+
 test("add column + remove column (last column blocked)", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "+ column" }).click();

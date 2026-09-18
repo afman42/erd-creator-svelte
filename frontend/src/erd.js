@@ -125,3 +125,17 @@ export function layout(schema) {
 		}
 	}
 }
+
+// uniqName picks a name absent from `taken`, starting at `base`.
+// A trailing number is incremented, not appended: "table1" yields table2,
+// table3 — the naive `base + ++i` produced table12, table13, silently
+// skipping table2..table11. A base with no trailing digits gets one appended,
+// so "users_copy" yields users_copy, users_copy2, users_copy3.
+export function uniqName(base, taken) {
+	const m = /^(.*?)(\d+)$/.exec(base);
+	const prefix = m ? m[1] : base;
+	let n = m ? Number(m[2]) : 1;
+	let name = base;
+	while (taken.includes(name)) name = prefix + ++n;
+	return name;
+}
