@@ -50,6 +50,29 @@ func unquoteDQ(s string) string {
 	return s
 }
 
+// pgToModelType maps a Postgres-emitted type name back to the model's portable
+// name. Most Postgres spellings are left alone because they are valid in every
+// dialect we emit; JSONB is not:
+//
+//	JSONB -> JSON
+//
+// JSONB is a Postgres-only type name. Leaving it in the model meant that
+// opening a postgres file, switching the dropdown to mysql and exporting
+// produced `c` JSONB — invalid MySQL and invalid SQLite. JSON is the exact
+// inverse of the emitter's JSON -> JSONB, and Postgres has had a native JSON
+// type since 9.2, so nothing is lost by mapping back.
+//
+// SMALLINT and TIMESTAMP are deliberately NOT remapped. They are valid in every
+// dialect, so the TINYINT/DATETIME information loss stays harmless in practice;
+// rewriting them to a dialect-specific spelling would only add a second
+// mismatch to reason about.
+func pgToModelType(ty string) string {
+	if ty == "JSONB" {
+		return "JSON"
+	}
+	return ty
+}
+
 // parsePostgres reads the grammar buildPostgres emits.
 func parsePostgres(sql string) (*Schema, error) {
 	s := &Schema{Dialect: DialectPostgres}
@@ -138,7 +161,17 @@ func parsePostgres(sql string) (*Schema, error) {
 		// An ENUM round-trips as TEXT + CHECK, so recover the original ENUM
 		// rather than degrading it to TEXT. Only ENUMs produce that shape.
 		if m[6] != "" {
-			ty = "ENUM(" + m[7] + ")"
+			// Rebuild without the spaces splitTop inserted, so ENUM('a','b')
+			// comes back as written rather than ENUM('a', 'b') — otherwise a
+			// saved file's bytes change on the first reopen for no reason.
+			vals := enumValues("ENUM(" + m[7] + ")")
+			quoted := make([]string, len(vals))
+			for i, v := range vals {
+				quoted[i] = sqlStr(v)
+			}
+			ty = "ENUM(" + strings.Join(quoted, ",") + ")"
+		} else {
+			ty = pgToModelType(ty)
 		}
 		tbl.Columns = append(tbl.Columns, Col{
 			Name: unquoteDQ(m[1]),
