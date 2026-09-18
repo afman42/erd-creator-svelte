@@ -2,6 +2,7 @@
 // Go-side grammar already covered by grammar_test.go; UI-e2e by playwright (e2e/).
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
 	adoptIds,
@@ -224,6 +225,125 @@ test("adoptIds handles missing column ids and empty schema", () => {
 	assert.match(wire.tables[0].columns[0].id, /^c\d+$/);
 	assert.match(wire.tables[0].columns[1].id, /^c\d+$/);
 	assert.notEqual(wire.tables[0].columns[0].id, wire.tables[0].columns[1].id);
+});
+
+// TableCard.svelte's <style> block is the source of truth for the box metrics
+// geometry.js mirrors, and those numbers are hand-copied — so they drift.
+// The previous version of this test only re-asserted the constants against
+// themselves, which is why it passed while the CSS said something else
+// entirely: ROW_H claimed 42 (row 26 + comment 16) but the real row+comment was
+// 47, so FK edges attached progressively lower down the table — 14px off by the
+// fourth column. These tests read the actual CSS instead.
+const CARD_SRC = readFileSync(
+	new URL("../src/TableCard.svelte", import.meta.url),
+	"utf8",
+);
+const STYLE = CARD_SRC.slice(
+	CARD_SRC.indexOf("<style>"),
+	CARD_SRC.lastIndexOf("</style>"),
+).replace(/\/\*[\s\S]*?\*\//g, "");
+
+function ruleBody(selector) {
+	const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const m = STYLE.match(new RegExp(`${esc}\\s*\\{([^}]*)\\}`));
+	return m ? m[1] : null;
+}
+
+function decl(selector, prop) {
+	const body = ruleBody(selector);
+	if (body === null) return null;
+	const m = body.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`));
+	return m ? m[1].trim() : null;
+}
+
+const px = (v, what) => {
+	const n = Number.parseFloat(v);
+	if (Number.isNaN(n)) {
+		throw new Error(
+			`could not read ${what ?? "a width"} from TableCard.svelte's <style> — ` +
+				`if the selector or property was renamed, update this test with it`,
+		);
+	}
+	return n;
+};
+
+test("TableCard CSS matches the geometry.js box metrics", () => {
+	// width: the FK edge starts at x + BOX_W, so a mismatch detaches every edge
+	assert.equal(
+		px(decl("section.table", "width"), "section.table width"),
+		BOX_W,
+		"section.table width must equal BOX_W or FK edges start at the wrong x",
+	);
+	// without border-box the 1px borders push the real box past the declared
+	// width, and every child's own padding understates its rendered width
+	assert.equal(
+		decl("section.table", "box-sizing"),
+		"border-box",
+		"section.table needs box-sizing:border-box so the declared width is the real width",
+	);
+	// header height: rows are positioned from HDR_H, so this shifts every row
+	assert.equal(
+		px(decl(".hdr", "height"), ".hdr height"),
+		HDR_H,
+		"header height must equal HDR_H or every column row sits at the wrong y",
+	);
+	// row + comment line: the per-column step used to walk down the table
+	assert.equal(
+		px(decl(".row", "height"), ".row height") +
+			px(decl(".cmt", "height"), ".cmt height"),
+		ROW_H,
+		"row + comment height must equal ROW_H or FK edges drift down the table",
+	);
+	// the row is the unit ROW_H counts, so it must not be content-sized
+	assert.equal(decl(".row", "box-sizing"), "border-box");
+});
+
+test("TableCard column row fits inside BOX_W", () => {
+	// Worst case per row: name, type select, 5 flag labels (PK NN UQ AI IX),
+	// FK select, FK action select, remove button — ten flex children.
+	//
+	// This is a genuine space budget, not a formality. Measured in Chromium, the
+	// controls need ~342px to show their longest option against a 280px box, so
+	// something must clip; the name field absorbs it (it scrolls) and the type
+	// select is given a floor that shows all but TIMESTAMP. This test pins that
+	// arrangement: if a control grows, the name field is squeezed and the
+	// assertion on its resulting width fails.
+	const LABEL_W = 19; // measured in Chromium: widest flag label at 9px
+	const GAP = px(decl(".row", "gap"), ".row gap");
+	const PAD = 2 * 2; // .row padding: 1px 2px
+	const NAME_MIN = px(
+		decl("input.cname", "min-width"),
+		"input.cname min-width",
+	);
+	const TYPE_MIN = px(
+		decl(".row select:not(.fk):not(.act)", "min-width"),
+		"type select min-width",
+	);
+	const fixed =
+		NAME_MIN +
+		TYPE_MIN +
+		px(decl(".row select.fk", "width"), ".fk width") +
+		px(decl(".row select.act", "width"), ".act width") +
+		5 * LABEL_W;
+
+	// 10 flex children in the widest row => 9 gaps
+	const needed = fixed + 9 * GAP + PAD;
+	assert.ok(
+		needed <= BOX_W,
+		`widest column row needs ${needed}px but the box is ${BOX_W}px ` +
+			`(${needed - BOX_W}px over) — controls would spill outside the card`,
+	);
+	// the name field gets whatever is left; it must stay usable
+	const nameActual = NAME_MIN + (BOX_W - needed);
+	assert.ok(
+		nameActual >= 28,
+		`name field would be squeezed to ${nameActual}px — below a usable width`,
+	);
+	// and the type select must stay wide enough to read the type names
+	assert.ok(
+		TYPE_MIN >= 60,
+		`type select floor is ${TYPE_MIN}px — too narrow to read the type names`,
+	);
 });
 
 test("BOX_W / HDR_H / ROW_H constants match CSS", () => {

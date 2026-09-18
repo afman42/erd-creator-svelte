@@ -385,3 +385,45 @@ test("mariadb is offered as saveable and drives the panel", async ({
 		page.getByTestId("dialect").locator('option[value="sqlite"]'),
 	).toHaveText("SQLite (export only)");
 });
+
+// The column row is dense: name, type, five flag checkboxes, FK select, action
+// select and the remove button — ten flex children in a 280px card. They used
+// to spill outside the card's right border, because box-sizing was left at
+// content-box (so the declared widths understated every control) and nothing
+// was allowed to shrink. Measured in the real DOM rather than asserted from
+// constants, since the failure is a layout one.
+test("column controls stay inside the table box, even with an FK set", async ({
+	page,
+}) => {
+	await page.goto("/");
+	// worst case: a second table to reference, so the FK + action selects appear
+	await page.getByRole("button", { name: "+ Table" }).click();
+	const second = page.locator("section.table").nth(1);
+	await second.locator("select.fk").selectOption({ index: 1 });
+	await expect(second.locator("select.act")).toBeVisible();
+	// and a name long enough to tempt the row wider
+	const name = second.locator(".cname").first();
+	await name.fill("a_very_long_column_name");
+	await name.blur();
+
+	const overflow = await page.evaluate(() => {
+		return [...document.querySelectorAll("section.table")].map((sec) => {
+			const box = sec.getBoundingClientRect();
+			const row = sec.querySelector(".row");
+			const last = row.lastElementChild.getBoundingClientRect();
+			return {
+				scrollOver: row.scrollWidth - row.clientWidth,
+				pastRightEdge: Math.round(last.right - box.right),
+			};
+		});
+	});
+	for (const [i, m] of overflow.entries()) {
+		expect(m.scrollOver, `table ${i} row overflows its own content box`).toBe(
+			0,
+		);
+		expect(
+			m.pastRightEdge,
+			`table ${i} controls extend past the card border`,
+		).toBeLessThanOrEqual(0);
+	}
+});

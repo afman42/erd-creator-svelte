@@ -122,6 +122,10 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 	section.table {
 		position: absolute;
 		width: 280px;
+		/* border-box so the declared width IS the box width (BOX_W in
+		   geometry.js). With content-box the 1px borders pushed the real box to
+		   282px and every child width was understated by its own padding. */
+		box-sizing: border-box;
 		background: #1a2028;
 		border: 1px solid #3b4654;
 		border-radius: 6px;
@@ -132,12 +136,16 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 	}
 	.hdr {
 		display: flex;
+		/* explicit height pins HDR_H in geometry.js */
+		height: 28px;
+		box-sizing: border-box;
 		background: #2b6cb0;
 		border-radius: 5px 5px 0 0;
 		cursor: grab;
 	}
 	.tname {
 		flex: 1;
+		min-width: 0;
 		background: transparent;
 		border: 0;
 		color: #fff;
@@ -149,19 +157,32 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 	.row {
 		display: flex;
 		align-items: center;
-		gap: 2px;
-		padding: 1px 3px;
+		/* gap and side padding are deliberately minimal: the row is ten controls
+		   wide and every pixel here comes straight out of the name field. */
+		gap: 0;
+		padding: 1px 2px;
+		/* explicit height + border-box pins the 26px row that ROW_H (42) is
+		   built from: 26px row + 16px comment line. */
 		height: 26px;
+		box-sizing: border-box;
 	}
 	.row:hover {
 		background: #232b35;
 	}
 	input.cname {
-		width: 62px;
+		/* flexes into whatever the fixed-width controls leave; min-width lets it
+		   shrink instead of forcing the row wider than the box. The name is the
+		   one field that degrades gracefully when squeezed (it scrolls), so it
+		   absorbs the whole shortfall rather than the selects, whose options
+		   become unreadable the moment they clip. */
+		flex: 1 1 auto;
+		min-width: 24px;
+		width: auto;
+		font-size: 11px;
 		background: transparent;
 		border: 0;
 		color: #d8dee6;
-		font: inherit;
+		font-family: inherit;
 		outline: none;
 	}
 	input.cname.pk {
@@ -173,23 +194,45 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 		color: #9fb0c0;
 		border: 0;
 		font: 10px ui-monospace, monospace;
+		/* min-width:0 lets a select shrink below its intrinsic width rather than
+		   pushing the row past the box. */
+		min-width: 0;
+	}
+	/* The row genuinely cannot hold all ten controls in 280px. Measured need
+	   for the longest option of each: name ~40 + type 73 (TIMESTAMP) + 5 flags
+	   ~89 + FK 42 + action 73 (NO ACTION) + remove ~10 + gaps/padding ~15 =
+	   ~342px against 280px, so at least one control has to clip. The name field
+	   is the one that degrades gracefully (it scrolls), so it absorbs the
+	   shortfall; the type select is next in line and is given a floor of 64px,
+	   which shows every type name except TIMESTAMP. The FK and action selects
+	   keep the width they had before this fix, so their options read as they
+	   always did. */
+	.row select:not(.fk):not(.act) {
+		flex: 1 1 auto;
+		min-width: 64px;
+		width: auto;
+		font-size: 9px;
 	}
 	.row select.fk {
-		width: 62px;
+		flex: 0 0 auto;
+		width: 40px;
 	}
 	.row select.act {
-		width: 58px;
+		flex: 0 0 auto;
+		width: 40px;
+		font-size: 9px;
 	}
 	.row label {
 		font-size: 9px;
 		color: #9fb0c0;
 		display: flex;
-		gap: 1px;
+		gap: 0;
 		align-items: center;
+		flex: 0 0 auto;
 	}
 	.row label input {
-		width: 10px;
-		height: 10px;
+		width: 8px;
+		height: 8px;
 		margin: 0;
 	}
 	.rmcol,
@@ -199,10 +242,20 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 		border: 0;
 		cursor: pointer;
 		font-size: 13px;
+		flex: 0 0 auto;
+	}
+	.rmcol {
+		padding: 0;
+		font-size: 11px;
 	}
 	.rmcol:hover,
 	.hdr button:hover {
 		color: #f87171;
+	}
+	/* explicit 16px so row(26) + comment(16) = ROW_H(42) exactly */
+	.cmt {
+		height: 16px;
+		box-sizing: border-box;
 	}
 	.cmt input {
 		width: calc(100% - 10px);
