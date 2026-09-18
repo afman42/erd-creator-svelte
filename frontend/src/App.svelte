@@ -32,19 +32,16 @@ function toggleSql() {
 
 function startDrag(t, ev) {
 	if (ev.target.closest("button")) return;
-	const cv = document.querySelector(".canvas");
-	const r = cv.getBoundingClientRect();
+	// Pure delta: only the pointer origin and the table's origin matter. The
+	// previous form stored the canvas rect and scroll offsets too, but they
+	// cancel out of `client - cl + sl - ox`, so they were dead state.
 	drag = {
 		id: t.id,
 		x0: ev.clientX,
 		y0: ev.clientY,
+		tx0: t.x,
+		ty0: t.y,
 		moved: false,
-		ox: ev.clientX - r.left + cv.scrollLeft - t.x,
-		oy: ev.clientY - r.top + cv.scrollTop - t.y,
-		cl: r.left,
-		ct: r.top,
-		sl: cv.scrollLeft,
-		st: cv.scrollTop,
 	};
 	if (!ev.target.closest("input")) ev.preventDefault();
 }
@@ -57,8 +54,8 @@ function onMove(ev) {
 	}
 	const t = store.schema.tables.find((x) => x.id === drag.id);
 	if (t) {
-		t.x = Math.max(0, ev.clientX - drag.cl + drag.sl - drag.ox);
-		t.y = Math.max(0, ev.clientY - drag.ct + drag.st - drag.oy);
+		t.x = Math.max(0, drag.tx0 + ev.clientX - drag.x0);
+		t.y = Math.max(0, drag.ty0 + ev.clientY - drag.y0);
 	}
 }
 function onUp() {
