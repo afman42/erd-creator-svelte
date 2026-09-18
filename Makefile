@@ -21,9 +21,19 @@ PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 # a toolchain bump changes the output.
 GO_SRC := $(wildcard *.go) go.mod
 
-.PHONY: all build frontend test lint fmt run clean dist clean-dist
+.PHONY: all build frontend test lint fmt run clean dist clean-dist platforms-json
 
 all: build
+
+# Emits PLATFORMS as a GitHub Actions matrix payload, so CI derives its matrix
+# from this file instead of repeating the list. Adding a platform here is then
+# enough — the workflow needs no edit.
+#
+# The loop lives in scripts/ rather than inline: a line-based shell linter
+# cannot follow a Makefile recipe that assigns a variable on one line and uses
+# it on the next, and flags every one as unused.
+platforms-json:
+	@env BIN=$(BIN) PLATFORMS="$(PLATFORMS)" scripts/platforms-json.sh
 
 # frontend is a real prerequisite of $(BIN), not just a sibling, so `make -j`
 # cannot start the Go build while vite is still writing dist/.
@@ -53,15 +63,10 @@ run: build
 
 # Cross-compile every platform into dist-bin/. Requires the frontend built
 # first (go:embed), so it depends on the frontend target.
-# The loop is one physical line on purpose: linters that shellcheck each recipe
-# line in isolation cannot see variables assigned on a previous \ continuation,
-# so the multi-line form reports spurious "appears unused" warnings.
+# The build loop lives in scripts/cross-compile.sh — see platforms-json above
+# for why it is not inline.
 dist: frontend
-	rm -rf $(DIST_BIN)
-	mkdir -p $(DIST_BIN)
-	for p in $(PLATFORMS); do os=$${p%/*}; arch=$${p#*/}; ext=""; if [ "$$os" = windows ]; then ext=".exe"; fi; out=$(DIST_BIN)/$(BIN)-$$os-$$arch$$ext; echo "  building $$out"; GOOS=$$os GOARCH=$$arch $(GO) build $(LDFLAGS) -o $$out . || exit 1; done
-	echo "--- $(DIST_BIN) ---"
-	ls -la $(DIST_BIN)
+	env BIN=$(BIN) DIST_BIN=$(DIST_BIN) PLATFORMS="$(PLATFORMS)" scripts/cross-compile.sh
 
 clean-dist:
 	rm -rf $(DIST_BIN)
