@@ -74,7 +74,14 @@ sets `CGO_ENABLED=0`, so the binary is statically linked and does not depend on
 the host's glibc — the same setting lets one host cross-compile every target.
 
 `make dist` cross-compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}` and
-`windows/amd64` into `dist-bin/` (gitignored), one file per platform.
+`windows/amd64` into `dist-bin/` (gitignored), one file per platform. The
+platform list lives in `Makefile`'s `PLATFORMS`; `make platforms-json` emits it
+as a matrix payload, which is what CI builds from — so adding a platform needs
+no workflow edit.
+
+On every push to `main`, CI runs that same list as a build matrix and uploads
+each binary as its own artifact (`erd-creator-<os>-<arch>`), downloadable from
+the run summary. PRs run the full test suite but produce no artifacts.
 
 Because `dist/` is committed, a stale local binary is easy to miss: `git
 status` stays clean while `./erd-creator` serves an older embedded UI. Re-run
