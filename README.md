@@ -26,10 +26,19 @@ make run        # → http://127.0.0.1:8731  (Go + Node/pnpm; builds dist/ first
   parses the file's DDL in its own dialect; `Copy INSERTs` emits seed-row
   templates (MySQL syntax)
 - **Dialects** — one dropdown selects the DDL flavor, and it drives everything:
-  what Save writes, the SQL panel, Copy SQL and Export. `mysql` and `postgres`
-  are saveable (each has a parser, so a saved file reopens); `mariadb` shares
-  the mysql grammar and `sqlite` is export-only, so both are labelled
-  "(export only)" and the server refuses to save them
+  what Save writes, the SQL panel, Copy SQL and Export. `mysql`, `mariadb` and
+  `postgres` are saveable (each has a parser, so a saved file reopens and keeps
+  its dialect); `sqlite` is export-only — it has no parser, so saving it would
+  write a file that cannot be loaded. It is the only entry labelled
+  "(export only)", and the server refuses to save it.
+
+  `mariadb` shares the MySQL grammar: every construct we emit is valid in both,
+  so the two files differ only in the header comment. It is nonetheless its own
+  dialect, because a schema saved as MariaDB should reopen as MariaDB rather
+  than silently becoming MySQL. The emitters are separate functions
+  (`buildMysql`, `buildMariaDB`) so MariaDB-specific syntax has somewhere to go;
+  `TestMariaDBMatchesMysql` pins them to identical output so the moment they
+  diverge — deliberately or by accident — the test fails and forces a decision.
 
 ## Architecture
 
@@ -38,7 +47,7 @@ frontend/src/geometry.js     (canvas box metrics + FK edge paths)   (pure, testa
 frontend/src/erd.js          (UI helpers + naming + dialects + layout)(pure, testable)
 frontend/src/schema.svelte.js(store: model state, mutations, undo, fetch glue)
 frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
-grammar.go              model + mysql parse/lint + inserts
+grammar.go              model + mysql/mariadb parse/lint + inserts
 grammar_postgres.go     postgres parse (reads buildPostgres output)
 files.go                working-dir .sql store (GET/PUT/DELETE)
 export.go               dialect emitters: mysql|mariadb|postgres|sqlite
