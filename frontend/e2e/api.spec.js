@@ -89,6 +89,41 @@ test("export dialects produce expected headers", async ({ request }) => {
 	}
 });
 
+test("mariadb schema saves and reopens as mariadb, not mysql", async ({
+	request,
+}) => {
+	const md = { dialect: "mariadb", tables: schema.tables };
+	const put = await request.put("/api/files/md.sql", { data: md });
+	expect(put.status()).toBe(204);
+
+	// reopening reports mariadb — this used to come back as mysql, because the
+	// dialect was collapsed during normalization
+	const reopened = await (await request.get("/api/files/md.sql")).json();
+	expect(reopened.dialect).toBe("mariadb");
+	expect(reopened.tables[0].name).toBe("users");
+
+	// and it is exportable to every other dialect
+	for (const dialect of ["mysql", "postgres", "sqlite"]) {
+		const body = await (
+			await request.post("/export", {
+				data: { dialect, schema: reopened },
+			})
+		).text();
+		expect(body).toContain("CREATE TABLE");
+		expect(body).not.toContain("JSONB");
+	}
+});
+
+test("sqlite is refused on save (export-only)", async ({ request }) => {
+	// sqlite has no parser, so a saved file would fail to reopen. The server
+	// must reject it rather than write MySQL bytes under a sqlite request.
+	const res = await request.put("/api/files/sq.sql", {
+		data: { dialect: "sqlite", tables: schema.tables },
+	});
+	expect(res.status()).toBe(400);
+	expect(await res.text()).toContain("export-only");
+});
+
 test("lint surfaces FK type mismatch (INT vs TEXT)", async ({ request }) => {
 	const bad = {
 		tables: [

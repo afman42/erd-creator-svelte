@@ -21,11 +21,16 @@ export const DEFAULT_TYPE = {
 	DECIMAL: "DECIMAL(10,2)",
 	VARCHAR: "VARCHAR(255)",
 };
-// Dialects the server can emit. Only mysql and postgres are saveable (the
-// server has parsers for both); mariadb and sqlite are export-only, which is
-// why SAVEABLE_DIALECTS is a subset — the dropdown still offers all four.
+// Dialects the server can emit. mysql, mariadb and postgres are saveable (each
+// has a parser, so a saved file reopens); sqlite is export-only. That is why
+// SAVEABLE_DIALECTS is a subset — the dropdown still offers all four, labelling
+// the unsaveable one.
+//
+// This list must agree with the server's Schema.saveable(); the two disagreed
+// once, with the UI calling MariaDB export-only while the server would have
+// saved it as mysql.
 export const DIALECTS = ["mysql", "mariadb", "postgres", "sqlite"];
-export const SAVEABLE_DIALECTS = ["mysql", "postgres"];
+export const SAVEABLE_DIALECTS = ["mysql", "mariadb", "postgres"];
 export const DEFAULT_DIALECT = "mysql";
 export const isSaveable = (d) => SAVEABLE_DIALECTS.includes(d);
 export const baseType = (t) => t.split("(")[0];
