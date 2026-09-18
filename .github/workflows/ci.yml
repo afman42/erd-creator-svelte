@@ -61,19 +61,56 @@ jobs:
       - name: go test
         run: go test -count=1 ./...
       # The store is a concurrent HTTP server; race is cheap here (no deps).
+      # CGO stays on for this step — -race requires it.
       - name: go test -race
         run: go test -race -count=1 ./...
-      - name: production build
-        # CGO_ENABLED=0 matches the Makefile so local and CI produce the same
-        # static binary. Scoped to this step only: `go test -race` above
-        # requires cgo and would fail under a job-wide setting.
+      # Deliberately no build here: the release job compiles every platform,
+      # linux/amd64 included. Building it twice would also collide on the
+      # artifact name, since upload-artifact requires unique names per run.
+
+  # Reads the platform list out of the Makefile so PLATFORMS stays the single
+  # source of truth — adding a platform there needs no workflow edit.
+  platforms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      matrix: ${{ steps.emit.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: emit
+        run: echo "matrix=$(make platforms-json)" >> "$GITHUB_OUTPUT"
+
+  # One leg per platform, each uploading its own artifact. fail-fast is off so
+  # one broken platform does not cancel the other four uploads.
+  release:
+    needs: [frontend, platforms]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.platforms.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-go
+      # frontend/dist is committed, so no frontend build is needed: go:embed
+      # reads it from the source tree, and the frontend job has already
+      # verified it matches a fresh build.
+      - name: build ${{ matrix.platform.goos }}/${{ matrix.platform.goarch }}
         env:
-          CGO_ENABLED: "0"
-        run: go build -trimpath -ldflags "-s -w" -o erd-creator .
+          PLATFORM: ${{ matrix.platform.goos }}/${{ matrix.platform.goarch }}
+        run: scripts/cross-compile.sh "$PLATFORM"
       - uses: actions/upload-artifact@v4
         with:
-          name: erd-creator-linux-amd64
-          path: erd-creator
+          name: ${{ matrix.platform.bin }}
+          path: dist-bin/${{ matrix.platform.bin }}
+          if-no-files-found: error
 
   e2e:
     runs-on: ubuntu-latest
