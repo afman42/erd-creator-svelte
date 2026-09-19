@@ -16,7 +16,7 @@ import {
 	newTable,
 	uniqName,
 } from "./erd.js";
-import { HDR_H, ROW_H } from "./geometry.js";
+import { stackStep } from "./geometry.js";
 
 // ---- state ----
 export const store = $state({
@@ -147,11 +147,13 @@ window.addEventListener("beforeunload", () => void flushCurrent());
 const takenNames = () => store.schema.tables.map((t) => t.name);
 export function addTable() {
 	snap();
+	// Place the new card one full stack step below the lowest existing card,
+	// using the same arithmetic layout() uses. This was a bare `+36` with no
+	// derivation; it agreed with layout()'s `24 + GAP` only by coincidence
+	// (24+12=36), and both understated the real card by 3px.
 	const y = Math.max(
 		40,
-		...store.schema.tables.map(
-			(t) => t.y + HDR_H + t.columns.length * ROW_H + 36,
-		),
+		...store.schema.tables.map((t) => t.y + stackStep(t.columns.length)),
 	);
 	store.schema.tables.push(
 		Object.assign(newTable(uniqName("table1", takenNames())), { x: 40, y }),

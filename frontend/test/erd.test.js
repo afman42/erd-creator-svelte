@@ -16,7 +16,16 @@ import {
 	TYPES,
 	uniqName,
 } from "../src/erd.js";
-import { BOX_W, HDR_H, ROW_H } from "../src/geometry.js";
+import {
+	ADDCOL_H,
+	BORDER_H,
+	BOX_W,
+	boxHeight,
+	GAP,
+	HDR_H,
+	ROW_H,
+	stackStep,
+} from "../src/geometry.js";
 
 function col(name, props) {
 	return Object.assign(newColumn(), { name }, props);
@@ -178,9 +187,9 @@ test("layout stacks tables in same layer vertically by box height", () => {
 	assert.equal(t3.x, 40);
 	assert.ok(t2.y > t1.y);
 	assert.ok(t3.y > t2.y);
-	// y step = HDR_H + ncols*ROW_H + 24 + GAP (12)
-	const expectedStep = HDR_H + 1 * ROW_H + 24 + 12;
-	assert.equal(t2.y, t1.y + expectedStep);
+	// spacing comes from geometry.js, so layout() and addTable() cannot drift
+	assert.equal(t2.y, t1.y + stackStep(1));
+	assert.equal(t3.y, t2.y + stackStep(1));
 });
 
 test("adoptIds regenerates foreign/garbage ids, keeps refs resolvable", () => {
@@ -296,6 +305,39 @@ test("TableCard CSS matches the geometry.js box metrics", () => {
 	);
 	// the row is the unit ROW_H counts, so it must not be content-sized
 	assert.equal(decl(".row", "box-sizing"), "border-box");
+	// the footer and border complete the height model: boxHeight() is what
+	// layout() and addTable() stack cards by, so these must match too. Both
+	// callers used to open-code this, assuming a 24px footer where the real one
+	// plus borders is 27px, so cards were stacked 3px tighter than intended.
+	assert.equal(
+		px(decl(".addcol", "height"), ".addcol height"),
+		ADDCOL_H,
+		".addcol footer height must equal ADDCOL_H or boxHeight() is wrong",
+	);
+	assert.equal(
+		// declared as the shorthand `border: 1px solid …`, so take its width
+		px(
+			(decl("section.table", "border") ?? "").split(/\s+/)[0],
+			"section.table border width",
+		) * 2,
+		BORDER_H,
+		"section.table borders must equal BORDER_H or boxHeight() understates the card",
+	);
+});
+
+test("boxHeight / stackStep match the real rendered card", () => {
+	// The height model, spelled out: header + columns + footer + borders.
+	assert.equal(boxHeight(0), HDR_H + ADDCOL_H + BORDER_H);
+	assert.equal(boxHeight(3), HDR_H + 3 * ROW_H + ADDCOL_H + BORDER_H);
+	// one card plus the gap between cards in a layer
+	assert.equal(stackStep(2), boxHeight(2) + GAP);
+	// and the two callers of stackStep must agree: layout() and addTable() both
+	// place cards this far apart. They used to use different constants (24+GAP
+	// vs a bare 36), so this equality is the regression guard.
+	const t1 = newTable("t1");
+	const t2 = newTable("t2");
+	layout({ tables: [t1, t2] });
+	assert.equal(t2.y - t1.y, stackStep(1));
 });
 
 test("TableCard column row fits inside BOX_W", () => {

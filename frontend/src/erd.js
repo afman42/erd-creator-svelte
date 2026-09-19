@@ -1,6 +1,6 @@
 // erd.js — client-side UI helpers + auto-layout. All SQL grammar (generate,
 // parse, lint) lives in Go; the browser talks to /api and /export.
-import { HDR_H, ROW_H } from "./geometry.js";
+import { stackStep } from "./geometry.js";
 
 export const TYPES = [
 	"INT",
@@ -133,14 +133,16 @@ export function layout(schema) {
 		if (!cols.has(layer)) cols.set(layer, []);
 		cols.get(layer).push(t);
 	}
-	const COL_W = 340,
-		GAP = 12;
+	const COL_W = 340;
 	for (const [layer, ts] of cols) {
 		let y = 40;
 		for (const t of ts) {
 			t.x = 40 + layer * COL_W;
 			t.y = y;
-			y += HDR_H + t.columns.length * ROW_H + 24 + GAP; // box height from geometry.js
+			// stackStep() owns the card-height + gap arithmetic (geometry.js).
+			// This was open-coded as `+ 24 + GAP`, which is 3px less than the
+			// real card, so stacked cards sat closer than intended.
+			y += stackStep(t.columns.length);
 		}
 	}
 }

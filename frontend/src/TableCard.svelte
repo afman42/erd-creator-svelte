@@ -272,6 +272,11 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 	}
 	.addcol {
 		width: 100%;
+		/* explicit height + border-box pins ADDCOL_H in geometry.js, so
+		   boxHeight() — which layout() and addTable() stack cards by — stays
+		   true even if the font or padding changes. */
+		height: 25px;
+		box-sizing: border-box;
 		background: transparent;
 		color: #66bb88;
 		border: 0;
