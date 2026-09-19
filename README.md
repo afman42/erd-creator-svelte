@@ -88,16 +88,22 @@ string.
   comment line's 16px are unchanged, so FK edge anchors are unaffected.)
 - **Relationships** — per-column `FK→` select + `ON DELETE` action; bezier edge
   renders automatically; type-mismatch lint (server-side) in the header
+- **Export PNG** — `Export PNG` rasterizes the canvas (tables + FK edges) to a
+  `.png` via `html-to-image` (dynamic import, no extra weight on SQL path);
+  filename mirrors Export (`mydb.sql`→`mydb.png`). Empty schema shows error,
+  no download.
 - **Files** — schema store in `-dir` (default `./schemas`): Files dropdown +
   New/Save/Del; saves debounce-autosave the current file — switching or
   deleting a file flushes the pending save first. The server generates and
   parses the file's DDL in its own dialect; `Copy INSERTs` emits seed-row
   templates (MySQL syntax)
 - **Dialects** — one dropdown selects the DDL flavor, and it drives everything:
-  what Save writes, the SQL panel, Copy SQL and Export (downloads a `.sql`
+  what Save writes, the SQL panel, Copy SQL, Export (downloads a `.sql`
   file named after the current file, or `<dialect>-schema.sql` for unsaved
-  schemas). All four dialects are saveable: each has a parser, so a saved file
-  reopens and keeps its own dialect rather than silently becoming MySQL.
+  schemas) and Export PNG (downloads the diagram as `.png`, same name with
+  `.sql`→`.png`, or `<dialect>-schema.png`). All four dialects are saveable:
+  each has a parser, so a saved file reopens and keeps its own dialect rather
+  than silently becoming MySQL.
 
   `mariadb` shares the MySQL grammar: every construct we emit is valid in both,
   so the two files differ only in the header comment. It is nonetheless its own
@@ -130,6 +136,7 @@ string.
 ```
 frontend/src/geometry.js     (canvas box metrics + FK edge paths)   (pure, testable)
 frontend/src/erd.js          (UI helpers + naming + dialects + layout)(pure, testable)
+frontend/src/capture.js      (PNG rasterization via html-to-image, bounds via geometry)
 frontend/src/schema.svelte.js(store: model state, mutations, undo, fetch glue)
 frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
 grammar.go              model + mysql/mariadb parse/lint + inserts

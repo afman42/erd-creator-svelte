@@ -443,6 +443,16 @@ export async function copySql() {
 // default-src (verified against the served page — the blob download fires with
 // no console error), fetch+Content-Disposition is unavailable because the
 // filename is ours to choose and the endpoint is shared with Copy SQL.
+function downloadBlob(blob, filename) {
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = filename;
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	URL.revokeObjectURL(url);
+}
 function downloadText(text, filename) {
 	const url = URL.createObjectURL(
 		new Blob([text], { type: "text/plain;charset=utf-8" }),
@@ -478,6 +488,30 @@ export async function exportDdl() {
 		flash(`downloaded ${name}`);
 	} catch (e) {
 		flash(`export failed: ${e.message}`, "err");
+	} finally {
+		store.exporting = false;
+	}
+}
+export function pngFilename() {
+	if (store.currentFile) return store.currentFile.replace(/\.sql$/i, ".png");
+	return `${store.schema.dialect || "erd"}-schema.png`;
+}
+export async function exportPng() {
+	if (!store.schema.tables.length) {
+		flash("nothing to export — add a table first", "err");
+		return;
+	}
+	store.exporting = true;
+	try {
+		const el = document.querySelector(".canvas");
+		if (!el) throw new Error("canvas not found");
+		const { capturePng } = await import("./capture.js");
+		const blob = await capturePng(el);
+		const name = pngFilename();
+		downloadBlob(blob, name);
+		flash(`downloaded ${name}`);
+	} catch (e) {
+		flash(`png export failed: ${e.message}`, "err");
 	} finally {
 		store.exporting = false;
 	}

@@ -551,7 +551,7 @@ test("Export downloads the selected dialect's DDL as a .sql file", async ({
 }) => {
 	await page.goto("/");
 	const download = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export" }).click();
+	await page.getByRole("button", { name: "Export", exact: true }).click();
 	const dl = await download;
 	// unsaved scratch schema → dialect-named file
 	expect(dl.suggestedFilename()).toBe("mysql-schema.sql");
@@ -568,7 +568,7 @@ test("Export downloads the selected dialect's DDL as a .sql file", async ({
 	// the downloaded DDL must follow the dropdown, not be hardcoded mysql
 	await page.getByTestId("dialect").selectOption("postgres");
 	const pgDownload = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export" }).click();
+	await page.getByRole("button", { name: "Export", exact: true }).click();
 	const pg = await pgDownload;
 	expect(pg.suggestedFilename()).toBe("postgres-schema.sql");
 	const pgStream = await pg.createReadStream();
@@ -587,7 +587,7 @@ test("Export of a saved file uses the file's own name", async ({ page }) => {
 	await page.getByRole("button", { name: "New", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText("mydb.sql");
 	const download = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export" }).click();
+	await page.getByRole("button", { name: "Export", exact: true }).click();
 	expect((await download).suggestedFilename()).toBe("mydb.sql");
 });
 
@@ -606,8 +606,51 @@ test("Export on an empty schema surfaces the server error", async ({
 	page.on("download", () => {
 		downloaded = true;
 	});
-	await page.getByRole("button", { name: "Export" }).click();
+	await page.getByRole("button", { name: "Export", exact: true }).click();
 	await expect(page.locator("header .err")).toBeVisible();
 	await expect(page.getByText(/downloaded /)).toHaveCount(0);
+	expect(downloaded).toBe(false);
+});
+
+test("Export PNG downloads diagram as .png with PNG signature", async ({
+	page,
+}) => {
+	await page.goto("/");
+	const download = page.waitForEvent("download");
+	await page.getByRole("button", { name: "Export PNG" }).click();
+	const dl = await download;
+	expect(dl.suggestedFilename()).toBe("mysql-schema.png");
+	const stream = await dl.createReadStream();
+	const chunks = [];
+	for await (const c of stream) chunks.push(c);
+	const buf = Buffer.concat(chunks);
+	// PNG signature 89 50 4E 47 0D 0A 1A 0A
+	expect(buf.subarray(0, 4).toString("hex")).toBe("89504e47");
+	expect(buf.length).toBeGreaterThan(1000);
+	await expect(page.getByText("downloaded mysql-schema.png")).toBeVisible();
+});
+
+test("Export PNG of saved file uses .png name", async ({ page }) => {
+	await page.goto("/");
+	page.once("dialog", (d) => d.accept("shot"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("shot.sql");
+	const dl = page.waitForEvent("download");
+	await page.getByRole("button", { name: "Export PNG" }).click();
+	expect((await dl).suggestedFilename()).toBe("shot.png");
+});
+
+test("Export PNG on empty schema shows error, no download", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByTitle("delete table (Del)").click();
+	await expect(page.locator("section.table")).toHaveCount(0);
+	let downloaded = false;
+	page.on("download", () => {
+		downloaded = true;
+	});
+	await page.getByRole("button", { name: "Export PNG" }).click();
+	await expect(page.locator("header .err")).toContainText("nothing to export");
 	expect(downloaded).toBe(false);
 });

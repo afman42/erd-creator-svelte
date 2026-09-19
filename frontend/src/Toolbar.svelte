@@ -6,6 +6,7 @@ import {
 	copySql,
 	deleteFile,
 	exportDdl,
+	exportPng,
 	newFile,
 	openFile,
 	saveCurrent,
@@ -71,6 +72,7 @@ const LABELS = {
 	<button onclick={exportDdl} disabled={store.exporting}>
 		{store.exporting ? "..." : "Export"}
 	</button>
+	<button onclick={exportPng} disabled={store.exporting}>Export PNG</button>
 	<button onclick={onToggleSql}>{showSql ? "Hide" : "Show"} SQL</button>
 	{#if store.currentFile}
 		<span class="ok" data-testid="current-file">{store.currentFile}</span>

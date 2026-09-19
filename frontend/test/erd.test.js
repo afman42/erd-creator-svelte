@@ -513,3 +513,33 @@ test("uniqName handles multi-digit suffixes and empty taken sets", () => {
 	assert.equal(uniqName("table10", ["table10"]), "table11");
 	assert.equal(uniqName("t1", []), "t1");
 });
+
+import { captureBounds, pngFilename } from "../src/capture.js";
+
+test("pngFilename mirrors exportFilename with .png", () => {
+	assert.equal(pngFilename("mydb.sql", "mysql"), "mydb.png");
+	assert.equal(pngFilename("MYDB.SQL", "mysql"), "MYDB.png");
+	assert.equal(pngFilename("", "mysql"), "mysql-schema.png");
+	assert.equal(pngFilename("", "postgres"), "postgres-schema.png");
+	assert.equal(pngFilename(null, "sqlite"), "sqlite-schema.png");
+	assert.equal(pngFilename("", ""), "erd-schema.png");
+});
+
+test("captureBounds computes padded extents from schema", () => {
+	const s = {
+		tables: [
+			{ x: 40, y: 40, columns: [{}, {}] },
+			{ x: 380, y: 200, columns: [{}] },
+		],
+	};
+	const b = captureBounds(s);
+	// first table h = HDR_H(28)+2*ROW_H(42)+ADDCOL_H(25)+BORDER_H(2)=139
+	// second h = 28+42+25+2=97
+	assert.equal(b.x, 0); // 40-40 pad
+	assert.equal(b.y, 0); // 40-40
+	assert.ok(b.width > BOX_W);
+	assert.ok(b.height > 100);
+	// empty
+	assert.equal(captureBounds({ tables: [] }), null);
+	assert.equal(captureBounds(null), null);
+});
