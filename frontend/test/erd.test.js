@@ -8,11 +8,15 @@ import {
 	adoptIds,
 	baseType,
 	cloneTable,
+	DEFAULT_DIALECT,
 	DEFAULT_TYPE,
+	DIALECTS,
 	isInt,
+	isSaveable,
 	layout,
 	newColumn,
 	newTable,
+	SAVEABLE_DIALECTS,
 	TYPES,
 	uniqName,
 } from "../src/erd.js";
@@ -39,6 +43,41 @@ test("TYPES and DEFAULT_TYPE expose expected values", () => {
 	assert.equal(DEFAULT_TYPE.VARCHAR, "VARCHAR(255)");
 	assert.equal(DEFAULT_TYPE.DECIMAL, "DECIMAL(10,2)");
 	assert.equal(DEFAULT_TYPE.INT, undefined);
+});
+
+// The frontend's SAVEABLE_DIALECTS must match the server's Schema.saveable().
+// They disagreed twice — the UI called MariaDB export-only while the server
+// saved it, and sqlite was refused until it gained a parser — and both times the
+// symptom was a dropdown label contradicting what the server actually did.
+// This reads the Go source so the two lists cannot drift again.
+test("frontend SAVEABLE_DIALECTS agrees with the Go saveable() switch", () => {
+	const go = readFileSync(new URL("../../grammar.go", import.meta.url), "utf8");
+	const body = go.slice(
+		go.indexOf("func (s *Schema) saveable() bool"),
+		go.indexOf("// Lint:"),
+	);
+	// the dialects named in the Go switch's case clause
+	const goSaveable = [
+		...body.matchAll(/Dialect(Mysql|MariaDB|Postgres|Sqlite)/g),
+	].map((m) => m[1].toLowerCase());
+	const normalize = (d) => (d === "mariadb" ? "mariadb" : d);
+	const goSet = [...new Set(goSaveable.map(normalize))].sort();
+
+	assert.deepEqual(
+		[...SAVEABLE_DIALECTS].sort(),
+		goSet,
+		"SAVEABLE_DIALECTS must list exactly the dialects Go's saveable() accepts",
+	);
+	// every offered dialect must be saveable now; the dropdown labels anything
+	// outside SAVEABLE_DIALECTS "(export only)", which would be a lie
+	for (const d of DIALECTS) {
+		assert.ok(
+			isSaveable(d),
+			`${d} is offered but not saveable — the dropdown would label it "(export only)"`,
+		);
+	}
+	assert.ok(DIALECTS.includes(DEFAULT_DIALECT));
+	assert.ok(isSaveable(DEFAULT_DIALECT));
 });
 
 test("baseType strips params", () => {
