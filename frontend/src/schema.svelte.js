@@ -434,6 +434,33 @@ export async function copySql() {
 	await refreshSql();
 	await copyText(store.sqlText, "copied SQL");
 }
+// downloadText saves `text` as a file. It is what makes Export different from
+// Copy SQL: both POST the same schema to /export and get the same DDL back, but
+// Export must put it on disk rather than in the clipboard.
+//
+// A Blob + a synthetic <a download> is the only mechanism that works here: the
+// CSP is default-src 'self', and while downloads are not governed by
+// default-src (verified against the served page — the blob download fires with
+// no console error), fetch+Content-Disposition is unavailable because the
+// filename is ours to choose and the endpoint is shared with Copy SQL.
+function downloadText(text, filename) {
+	const url = URL.createObjectURL(
+		new Blob([text], { type: "text/plain;charset=utf-8" }),
+	);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = filename;
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	URL.revokeObjectURL(url);
+}
+// The name to save under. A loaded file keeps its own name (users.sql stays
+// users.sql); an unsaved scratch schema gets a name that says which grammar it
+// is in, since that is the one thing the bytes do not state up front.
+export function exportFilename() {
+	return store.currentFile || `${store.schema.dialect}-schema.sql`;
+}
 export async function exportDdl() {
 	store.exporting = true;
 	try {
@@ -446,7 +473,9 @@ export async function exportDdl() {
 			}),
 		});
 		if (!res.ok) throw new Error(await res.text());
-		await copyText(await res.text(), `copied ${store.schema.dialect} DDL`);
+		const name = exportFilename();
+		downloadText(await res.text(), name);
+		flash(`downloaded ${name}`);
 	} catch (e) {
 		flash(`export failed: ${e.message}`, "err");
 	} finally {

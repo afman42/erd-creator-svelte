@@ -78,8 +78,14 @@ string.
   New tables auto-name `table1`, `table2`, … and duplicates `users_copy`,
   `users_copy2`, …; undo history is per-file, so `Ctrl+Z` never restores a
   schema across a file switch
-- **Columns** — name, type (`INT…JSON`, `ENUM` with editable values), per-column
-  `PK` (composite supported) `NN` `UQ` `AI` `IX` flags, per-column comment
+- **Columns** — each column is a read-only row: name, type, active flag badges,
+  the FK target, and a ✎ button that opens the edit dialog. The dialog holds
+  name, type (`INT…JSON`, `ENUM` with editable values), the `PK` (composite
+  supported) `NN` `UQ` `AI` `IX` flags, the FK and its `ON DELETE` action, the
+  comment, and Remove. It is a native `<dialog>`, so Escape closes it and focus
+  is trapped while it is open. (The ten controls used to sit inline in a 280px
+  row, where they needed ~342px and clipped; the row's 26px height and the
+  comment line's 16px are unchanged, so FK edge anchors are unaffected.)
 - **Relationships** — per-column `FK→` select + `ON DELETE` action; bezier edge
   renders automatically; type-mismatch lint (server-side) in the header
 - **Files** — schema store in `-dir` (default `./schemas`): Files dropdown +
@@ -88,9 +94,10 @@ string.
   parses the file's DDL in its own dialect; `Copy INSERTs` emits seed-row
   templates (MySQL syntax)
 - **Dialects** — one dropdown selects the DDL flavor, and it drives everything:
-  what Save writes, the SQL panel, Copy SQL and Export. All four dialects are
-  saveable: each has a parser, so a saved file reopens and keeps its own
-  dialect rather than silently becoming MySQL.
+  what Save writes, the SQL panel, Copy SQL and Export (downloads a `.sql`
+  file named after the current file, or `<dialect>-schema.sql` for unsaved
+  schemas). All four dialects are saveable: each has a parser, so a saved file
+  reopens and keeps its own dialect rather than silently becoming MySQL.
 
   `mariadb` shares the MySQL grammar: every construct we emit is valid in both,
   so the two files differ only in the header comment. It is nonetheless its own
