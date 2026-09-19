@@ -11,7 +11,9 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"strconv"
 )
 
 //go:embed frontend/dist
@@ -19,8 +21,14 @@ var dist embed.FS
 
 func main() {
 	dir := flag.String("dir", "schemas", "directory holding .sql schema files")
+	host := flag.String("host", "127.0.0.1", "interface to bind; empty string binds all interfaces")
+	port := flag.Int("port", 8731, "TCP port to listen on; 0 picks a free one")
 	flag.Parse()
 	if err := ensureDir(*dir); err != nil {
+		log.Fatal(err)
+	}
+	addr, err := listenAddr(*host, *port)
+	if err != nil {
 		log.Fatal(err)
 	}
 	sub, err := fs.Sub(dist, "frontend/dist")
@@ -42,9 +50,44 @@ func main() {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
-	addr := "127.0.0.1:8731"
-	log.Printf("erd-creator on http://%s (schemas: %s)", addr, *dir)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	// Listen explicitly rather than http.ListenAndServe so the log line can
+	// report the port actually bound — with -port 0 that is the only way to
+	// learn it — and so a bind failure is reported once, with the address.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("cannot listen on %s: %v", addr, err)
+	}
+	log.Printf("erd-creator on %s (schemas: %s)", displayURL(ln.Addr()), *dir)
+	log.Fatal(http.Serve(ln, nil))
+}
+
+// listenAddr joins the -host and -port flags into an address net.Listen
+// accepts. JoinHostPort is used rather than string concatenation because it
+// brackets IPv6 literals: "::1" + ":" + "8731" would be the ambiguous
+// "::1:8731", whereas JoinHostPort yields "[::1]:8731".
+//
+// An empty host is deliberately allowed: it binds every interface, which is
+// what "expose this on my LAN" needs. The default stays loopback-only.
+func listenAddr(host string, port int) (string, error) {
+	if port < 0 || port > 65535 {
+		return "", fmt.Errorf("invalid port %d: want 0-65535", port)
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port)), nil
+}
+
+// displayURL renders a bound address for the startup log. A wildcard bind is
+// reachable but is not itself a usable URL, so it is labelled instead —
+// printing "http://0.0.0.0:8731" invites a click that cannot work.
+func displayURL(addr net.Addr) string {
+	host, port, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return addr.String()
+	}
+	switch host {
+	case "0.0.0.0", "::":
+		return fmt.Sprintf("http://localhost:%s (all interfaces)", port)
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 // schemaAPI: POST schema JSON → answer. Path→renderer table:

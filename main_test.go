@@ -10,6 +10,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -250,5 +251,80 @@ func TestEnsureDir(t *testing.T) {
 	// idempotent: a second call must not fail
 	if err := ensureDir(dir); err != nil {
 		t.Errorf("second ensureDir: %v", err)
+	}
+}
+
+// TestListenAddr: the address string handed to net.Listen. JoinHostPort is used
+// rather than concatenation so an IPv6 literal is bracketed — "::1:8731" is
+// ambiguous and net.Listen rejects it, while "[::1]:8731" works.
+func TestListenAddr(t *testing.T) {
+	cases := []struct {
+		host string
+		port int
+		want string
+	}{
+		{"127.0.0.1", 8731, "127.0.0.1:8731"},
+		{"0.0.0.0", 80, "0.0.0.0:80"},
+		{"localhost", 3000, "localhost:3000"},
+		// empty host binds every interface; the port alone is still addressable
+		{"", 8731, ":8731"},
+		// port 0 asks the OS for a free port
+		{"127.0.0.1", 0, "127.0.0.1:0"},
+		// IPv6 must be bracketed or the address is unparseable
+		{"::1", 8731, "[::1]:8731"},
+		{"fe80::1", 9000, "[fe80::1]:9000"},
+		// boundary ports
+		{"127.0.0.1", 1, "127.0.0.1:1"},
+		{"127.0.0.1", 65535, "127.0.0.1:65535"},
+	}
+	for _, c := range cases {
+		got, err := listenAddr(c.host, c.port)
+		if err != nil {
+			t.Errorf("listenAddr(%q, %d): %v", c.host, c.port, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("listenAddr(%q, %d) = %q, want %q", c.host, c.port, got, c.want)
+		}
+		// the result must be something net can actually split, which is what
+		// proves the IPv6 bracketing is right
+		if _, _, err := net.SplitHostPort(got); err != nil {
+			t.Errorf("listenAddr(%q, %d) = %q is not splittable: %v", c.host, c.port, got, err)
+		}
+	}
+
+	// out-of-range ports are rejected rather than passed to net.Listen, which
+	// would fail later with a less direct message
+	for _, p := range []int{-1, -100, 65536, 100000} {
+		if _, err := listenAddr("127.0.0.1", p); err == nil {
+			t.Errorf("port %d accepted, want rejected", p)
+		}
+	}
+}
+
+// TestDisplayURL: the startup line. A wildcard bind is reachable but is not
+// itself a URL, so it is labelled rather than printed as http://0.0.0.0:port —
+// which looks clickable and is not.
+func TestDisplayURL(t *testing.T) {
+	cases := []struct {
+		addr string
+		want string
+	}{
+		{"127.0.0.1:8731", "http://127.0.0.1:8731"},
+		{"192.168.1.5:8080", "http://192.168.1.5:8080"},
+		// wildcards are labelled, not rendered as a bogus URL
+		{"0.0.0.0:8731", "http://localhost:8731 (all interfaces)"},
+		{"[::]:8731", "http://localhost:8731 (all interfaces)"},
+		// a real IPv6 address stays bracketed in the URL
+		{"[::1]:8731", "http://[::1]:8731"},
+	}
+	for _, c := range cases {
+		ta, err := net.ResolveTCPAddr("tcp", c.addr)
+		if err != nil {
+			t.Fatalf("bad test address %q: %v", c.addr, err)
+		}
+		if got := displayURL(ta); got != c.want {
+			t.Errorf("displayURL(%q) = %q, want %q", c.addr, got, c.want)
+		}
 	}
 }
