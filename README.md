@@ -31,6 +31,46 @@ printed on startup, since that is the only way to learn it.
 The frontend is served from the same origin and uses relative paths, so changing
 host or port needs no frontend rebuild — open the printed URL.
 
+## Security
+
+This is a single-user tool with **no authentication**. Everything below assumes
+the caller reached the port, so the goal is to limit what reaching it gets you
+and to keep the SQL this tool emits safe to paste into a database.
+
+**Threat model.** The untrusted inputs are (1) HTTP request bodies, (2) `.sql`
+files in the store — they may be hand-written or written by another tool — and
+(3) the Host and Origin headers. The asset is the schema store and, more
+importantly, the DDL this program generates: a value that escapes its position
+becomes injection in whatever database the user pastes the output into.
+
+| Control | What it stops |
+|---|---|
+| **Schema validation** on every path that reads or emits (`Validate`) | SQL injection through a type, name, or comment; control characters that break the line-oriented file format; oversized input |
+| **`GenSQL` returns an error** instead of emitting invalid input | A caller that forgets to validate gets an error, not a footgun |
+| **Host allowlist** | DNS rebinding — a page whose name resolves to 127.0.0.1 is refused, because its Host is not a name this server answers to |
+| **Origin check on mutating methods** | Cross-site writes from any page the user visits |
+| **Symlink containment** (`storePath`, `os.CreateTemp`) | A planted link in the store reading or overwriting a file outside it |
+| **Security headers** (CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy`) | XSS, clickjacking, MIME confusion. The CSP is strict (`script-src 'self'`, no inline) and the built app has no inline script or style to allow |
+| **Server timeouts** | Slowloris — a stalled connection is closed after 10s |
+| **1 MiB body cap** | Memory exhaustion from an oversized request |
+
+The `type` field is the subtle one. Types are emitted as raw text because the
+grammar is open-ended (`DECIMAL(10,2)`, `ENUM('a','b')`), so unlike an
+identifier they cannot simply be quoted — `VARCHAR(1;DROP TABLE users;--)` was
+emitted verbatim before validation. Types are now matched against a strict
+pattern, and the file parser applies the same check, so a malicious `.sql`
+cannot persist an injection that re-emits on every save.
+
+**Not in scope, deliberately:** authentication (single local user), TLS (plain
+HTTP on loopback), and rate limiting (a local tool has no remote attacker to
+throttle; the body cap and timeouts bound the damage). If you bind beyond
+loopback with `-host`, you are putting an unauthenticated service on the
+network — do that only on a network you trust.
+
+Error messages are deliberately terse and never echo a rejected payload: a
+response, a log, or a pasted bug report is not a place to reproduce an attack
+string.
+
 ## Features
 
 - **Canvas** — add/rename/delete/duplicate tables (⧉), drag by header, `Del`
@@ -88,6 +128,8 @@ frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
 grammar.go              model + mysql/mariadb parse/lint + inserts
 grammar_postgres.go     postgres parse (reads buildPostgres output)
 grammar_sqlite.go       sqlite parse (reads buildSqlite output)
+validate.go             trust boundary: schema + output validation
+security.go             HTTP hardening: headers, Host/Origin guards, timeouts
 files.go                working-dir .sql store (GET/PUT/DELETE)
 export.go               dialect emitters: mysql|mariadb|postgres|sqlite
 main.go                 embed.FS server + API route wiring
