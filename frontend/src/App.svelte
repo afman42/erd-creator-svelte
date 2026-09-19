@@ -1,5 +1,6 @@
 <script>
 import { untrack } from "svelte";
+import EmptyState from "./EmptyState.svelte";
 import { edgePaths } from "./geometry.js";
 import SqlPanel from "./SqlPanel.svelte";
 import {
@@ -80,6 +81,21 @@ function onKey(ev) {
 		ev.preventDefault();
 		undo();
 	} else if (ev.key === "Escape") setSelected(null);
+	else if (
+		!editing &&
+		store.selected &&
+		["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(ev.key)
+	) {
+		const t = store.schema.tables.find((x) => x.id === store.selected);
+		if (t) {
+			ev.preventDefault();
+			const step = ev.shiftKey ? 20 : 10;
+			if (ev.key === "ArrowUp") t.y = Math.max(0, t.y - step);
+			if (ev.key === "ArrowDown") t.y += step;
+			if (ev.key === "ArrowLeft") t.x = Math.max(0, t.x - step);
+			if (ev.key === "ArrowRight") t.x += step;
+		}
+	}
 }
 </script>
 
@@ -114,6 +130,9 @@ function onKey(ev) {
 		{#each store.schema.tables as t (t.id)}
 			<TableCard table={t} onDragStart={startDrag} />
 		{/each}
+		{#if store.schema.tables.length === 0}
+			<EmptyState />
+		{/if}
 	</div>
 
 	{#if showSql}
@@ -125,8 +144,8 @@ function onKey(ev) {
 	:global(body) {
 		margin: 0;
 		font: 13px system-ui, sans-serif;
-		background: #101418;
-		color: #d8dee6;
+		background: var(--color-bg);
+		color: var(--color-text);
 	}
 	main {
 		display: flex;
@@ -138,6 +157,7 @@ function onKey(ev) {
 		overflow: auto;
 		background: radial-gradient(#232b35 1px, transparent 1px);
 		background-size: 20px 20px;
+		min-height: 300px;
 	}
 	.canvas.dragging {
 		user-select: none;
@@ -156,6 +176,28 @@ function onKey(ev) {
 		stroke-width: 1.5;
 	}
 	.self {
-		stroke: #bb5588;
+		stroke: var(--color-accent);
+	}
+	@media (max-width: 768px) {
+		main {
+			flex-direction: column;
+			height: auto;
+			min-height: calc(100vh - 41px);
+		}
+		.canvas {
+			min-height: 420px;
+		}
+		:global(aside) {
+			width: 100% !important;
+			border-left: none !important;
+			border-top: 1px solid var(--color-border-strong);
+			height: 40vh;
+			min-height: 220px;
+		}
+	}
+	@media (max-width: 320px) {
+		.canvas {
+			background-size: 16px 16px;
+		}
 	}
 </style>

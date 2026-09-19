@@ -308,10 +308,22 @@ const CARD_SRC = readFileSync(
 	new URL("../src/TableCard.svelte", import.meta.url),
 	"utf8",
 );
-const STYLE = CARD_SRC.slice(
+let STYLE = CARD_SRC.slice(
 	CARD_SRC.indexOf("<style>"),
 	CARD_SRC.lastIndexOf("</style>"),
 ).replace(/\/\*[\s\S]*?\*\//g, "");
+// ColumnRow now owns .row/.cmt — merge its style so geometry checks still pass
+try {
+	const ROW_SRC = readFileSync(
+		new URL("../src/ColumnRow.svelte", import.meta.url),
+		"utf8",
+	);
+	const rowStyle = ROW_SRC.slice(
+		ROW_SRC.indexOf("<style>"),
+		ROW_SRC.lastIndexOf("</style>"),
+	).replace(/\/\*[\s\S]*?\*\//g, "");
+	STYLE += rowStyle;
+} catch {}
 
 function ruleBody(selector) {
 	const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

@@ -378,6 +378,7 @@ func detectDialect(sql string) string {
 func parseMysql(sql string, dialect string) (*Schema, error) {
 	s := &Schema{Dialect: dialect}
 	byName := map[string]int{} // name → index in s.Tables
+	byId := map[string]int{}   // id → index, O(1) for pending FK attachment
 	var pending []pendingFK
 	cur := -1
 	tableID := 0
@@ -395,8 +396,10 @@ func parseMysql(sql string, dialect string) (*Schema, error) {
 				return nil, fmt.Errorf("line %d: duplicate table %q", n, name)
 			}
 			tableID++
-			s.Tables = append(s.Tables, Table{Id: fmt.Sprintf("t%d", tableID), Name: name})
+			id := fmt.Sprintf("t%d", tableID)
+			s.Tables = append(s.Tables, Table{Id: id, Name: name})
 			byName[name] = len(s.Tables) - 1
+			byId[id] = len(s.Tables) - 1
 			cur = len(s.Tables) - 1
 			continue
 		}
@@ -458,14 +461,13 @@ func parseMysql(sql string, dialect string) (*Schema, error) {
 		if !ok {
 			continue // dangling FK ref → dropped, not crashed on
 		}
-		for i := range s.Tables {
-			if s.Tables[i].Id != p.tableID {
-				continue
-			}
-			markCol(&s.Tables[i], p.col, func(c *Col) {
-				c.Ref = &Ref{TableId: s.Tables[idx].Id, Action: p.action}
-			})
+		si, ok := byId[p.tableID]
+		if !ok {
+			continue
 		}
+		markCol(&s.Tables[si], p.col, func(c *Col) {
+			c.Ref = &Ref{TableId: s.Tables[idx].Id, Action: p.action}
+		})
 	}
 	if len(s.Tables) == 0 {
 		return nil, fmt.Errorf("no CREATE TABLE found")

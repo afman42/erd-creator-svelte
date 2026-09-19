@@ -26,27 +26,34 @@ const LABELS = {
 };
 </script>
 
-<header>
-	<button onclick={addTable}>+ Table</button>
+<header aria-label="ERD toolbar">
+	<h1 class="sr-only">ERD Creator</h1>
+	<button onclick={addTable} aria-label="Add new table">+ Table</button>
+	<label class="sr-only" for="file-select">Open schema file</label>
 	<select
+		id="file-select"
 		class="dialect"
 		value={store.currentFile}
 		onchange={(e) => openFile(e.currentTarget.value)}
 		title="open schema file"
+		aria-label="Open schema file"
 	>
 		<option value="">— files —</option>
 		{#each store.files as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
 	</select>
-	<button onclick={newFile}>New</button>
-	<button onclick={() => saveCurrent()} disabled={!store.currentFile}>Save</button>
-	<button onclick={deleteFile} disabled={!store.currentFile}>Del</button>
-	<button onclick={copySql}>Copy SQL</button>
-	<button onclick={copyInserts}>Copy INSERTs</button>
+	<button onclick={newFile} aria-label="Create new schema file">New</button>
+	<button onclick={() => saveCurrent()} disabled={!store.currentFile} aria-label="Save current file">Save</button>
+	<button onclick={deleteFile} disabled={!store.currentFile} aria-label="Delete current file">Del</button>
+	<button onclick={copySql} aria-label="Copy SQL to clipboard">Copy SQL</button>
+	<button onclick={copyInserts} aria-label="Copy INSERT templates">Copy INSERTs</button>
+	<label class="sr-only" for="dialect-select">DDL dialect</label>
 	<select
+		id="dialect-select"
 		class="dialect"
 		value={store.schema.dialect}
 		onchange={(e) => setDialect(e.currentTarget.value)}
 		title="DDL dialect (saved files, SQL panel, and export)"
+		aria-label="DDL dialect"
 		data-testid="dialect"
 	>
 		{#each DIALECTS as d (d)}
@@ -58,28 +65,31 @@ const LABELS = {
 		     a real choice: keep the model's name (lossless) or write the storage
 		     class it would pick anyway. Only shown for sqlite — it changes nothing
 		     for the other dialects. -->
+		<label class="sr-only" for="sqlite-types">SQLite types mode</label>
 		<select
+			id="sqlite-types"
 			class="dialect"
 			value={store.schema.sqliteTypes ?? DEFAULT_SQLITE_TYPES}
 			onchange={(e) => setSqliteTypes(e.currentTarget.value)}
 			title="how SQLite renders BOOLEAN / DATETIME / TIMESTAMP"
+			aria-label="SQLite types mode"
 			data-testid="sqlite-types"
 		>
 			<option value="native">types: native</option>
 			<option value="portable">types: portable</option>
 		</select>
 	{/if}
-	<button onclick={exportDdl} disabled={store.exporting}>
+	<button onclick={exportDdl} disabled={store.exporting} aria-label="Export DDL to file">
 		{store.exporting ? "..." : "Export"}
 	</button>
-	<button onclick={exportPng} disabled={store.exporting}>Export PNG</button>
-	<button onclick={onToggleSql}>{showSql ? "Hide" : "Show"} SQL</button>
+	<button onclick={exportPng} disabled={store.exporting} aria-label="Export diagram as PNG">Export PNG</button>
+	<button onclick={onToggleSql} aria-label="{showSql ? 'Hide' : 'Show'} SQL panel" aria-expanded={showSql} aria-controls="sql-panel">{showSql ? "Hide" : "Show"} SQL</button>
 	{#if store.currentFile}
-		<span class="ok" data-testid="current-file">{store.currentFile}</span>
+		<span class="ok" data-testid="current-file" role="status" aria-live="polite">{store.currentFile}</span>
 	{/if}
-	{#if store.error}<span class={store.errorKind}>{store.error}</span>{/if}
+	{#if store.error}<span class={store.errorKind} role={store.errorKind === 'err' ? 'alert' : 'status'} aria-live={store.errorKind === 'err' ? 'assertive' : 'polite'}>{store.error}</span>{/if}
 	{#if store.lint.length && !store.error}
-		<span class="warn">lint: {store.lint.join("; ")}</span>
+		<span class="warn" role="status" aria-live="polite">lint: {store.lint.join("; ")}</span>
 	{/if}
 </header>
 
@@ -127,5 +137,16 @@ const LABELS = {
 	}
 	.warn {
 		color: #fbbf24;
+	}
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 </style>

@@ -13,6 +13,7 @@
 // The comment line renders even when empty: it is 16px of the height model, and
 // dropping it would move every row below it.
 import ColumnEditModal from "./ColumnEditModal.svelte";
+import ColumnRow from "./ColumnRow.svelte";
 import {
 	addColumn,
 	commitTableName,
@@ -34,45 +35,66 @@ const parentName = (c) =>
 	store.schema.tables.find((x) => x.id === c.ref?.tableId)?.name;
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <section
 	class="table"
 	class:selected={store.selected === table.id}
 	style="left:{table.x}px; top:{table.y}px"
+	aria-label="Table {table.name}"
+	tabindex="0"
+	onclick={() => (store.selected = table.id)}
+	onkeydown={(e) => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			store.selected = table.id;
+		}
+		if (e.target !== e.currentTarget) return;
+		if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)) {
+			e.preventDefault();
+			const step = e.shiftKey ? 20 : 10;
+			if (e.key === "ArrowUp") table.y = Math.max(0, table.y - step);
+			if (e.key === "ArrowDown") table.y += step;
+			if (e.key === "ArrowLeft") table.x = Math.max(0, table.x - step);
+			if (e.key === "ArrowRight") table.x += step;
+		}
+	}}
 >
-	<div class="hdr" onpointerdown={(e) => onDragStart(table, e)}>
+	<div
+		class="hdr"
+		role="button"
+		tabindex="0"
+		aria-label="Move table {table.name}. Use arrow keys to nudge when selected, drag with mouse."
+		onpointerdown={(e) => onDragStart(table, e)}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				store.selected = table.id;
+			}
+		}}
+	>
 		<input
 			class="tname"
 			value={table.name}
 			onchange={(e) => commitTableName(table, e)}
 			spellcheck="false"
+			aria-label="Table name {table.name}"
 		/>
-		<button title="duplicate" onclick={() => dupTable(table)}>⧉</button>
-		<button title="delete table (Del)" onclick={() => rmTable(table)}>×</button>
+		<button
+			title="duplicate"
+			aria-label="duplicate table {table.name}"
+			onclick={() => dupTable(table)}>⧉</button>
+		<button
+			title="delete table (Del)"
+			aria-label="delete table {table.name}"
+			onclick={() => rmTable(table)}>×</button>
 	</div>
 	{#each table.columns as c (c.id)}
-		<div class="row">
-			<span class="cname" class:pk={c.pk} title={c.name}>{c.name}</span>
-			<span class="ty" title={c.type}>{c.type}</span>
-			<!-- only the flags that are set: five badges on every row is what
-			     made the row overflow in the first place -->
-			<span class="flags">
-				{#if c.pk}<b>PK</b>{/if}
-				{#if c.nn || c.pk}<b>NN</b>{/if}
-				{#if c.ux}<b>UQ</b>{/if}
-				{#if c.ai}<b>AI</b>{/if}
-				{#if c.ix}<b>IX</b>{/if}
-			</span>
-			{#if c.ref}
-				<span class="fkinfo" title="→ {parentName(c) ?? "?"}">→{parentName(c) ?? "?"}</span>
-			{/if}
-			<button
-				class="edit"
-				title="edit column"
-				aria-label="edit {c.name}"
-				onclick={() => (editingColId = c.id)}>✎</button
-			>
-		</div>
-		<div class="cmt" title={c.comment}>{c.comment}</div>
+		<ColumnRow
+			column={c}
+			parentName={parentName(c)}
+			onEdit={() => (editingColId = c.id)}
+		/>
 	{/each}
 	<button class="addcol" onclick={() => addColumn(table)}>+ column</button>
 </section>
@@ -101,6 +123,10 @@ const parentName = (c) =>
 	section.selected {
 		border-color: #63b3ed;
 	}
+	section.table:focus-visible {
+		outline: 2px solid #63b3ed;
+		outline-offset: 2px;
+	}
 	.hdr {
 		display: flex;
 		/* explicit height pins HDR_H in geometry.js */
@@ -121,83 +147,9 @@ const parentName = (c) =>
 		padding: 5px 8px;
 		outline: none;
 	}
-	.row {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 1px 2px;
-		/* explicit height + border-box pins the 26px row that ROW_H (42) is
-		   built from: 26px row + 16px comment line. The row is a label now, but
-		   the height is load-bearing — every FK anchor derives from it. */
-		height: 26px;
-		box-sizing: border-box;
-	}
-	.row:hover {
-		background: #232b35;
-	}
-	/* The name is the only part that flexes; everything else is fixed-width and
-	   clips with an ellipsis. The name is also the one field that degrades
-	   gracefully when squeezed, so it absorbs the whole shortfall. */
-	.row .cname {
-		flex: 1 1 auto;
-		min-width: 24px;
-		font-size: 11px;
-		color: #d8dee6;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.row .cname.pk {
-		color: #fbbf24;
-		font-weight: 600;
-	}
-	.row .ty {
-		flex: 0 0 auto;
-		max-width: 80px;
-		font: 9px ui-monospace, monospace;
-		color: #7fa3c0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.row .flags {
-		flex: 0 0 auto;
-		display: flex;
-		gap: 2px;
-		font: 8px ui-monospace, monospace;
-		color: #66bb88;
-		/* declared so the row's space budget is verifiable from the CSS —
-		   the worst case is all five flags (PK NN UQ AI IX) */
-		max-width: 62px;
-		overflow: hidden;
-	}
-	.row .fkinfo {
-		flex: 0 0 auto;
-		max-width: 52px;
-		font: 9px ui-monospace, monospace;
-		color: #bb5588;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.row .edit {
-		flex: 0 0 auto;
-		/* declared for the same reason as .flags above */
-		width: 16px;
-		box-sizing: border-box;
-		background: transparent;
-		color: #778;
-		border: 0;
-		cursor: pointer;
-		font-size: 11px;
-		padding: 0;
-	}
-	.row .edit:hover {
-		color: #63b3ed;
-	}
 	.hdr button {
 		background: transparent;
-		color: #778;
+		color: #c0cedd;
 		border: 0;
 		cursor: pointer;
 		font-size: 13px;
@@ -206,24 +158,13 @@ const parentName = (c) =>
 	.hdr button:hover {
 		color: #f87171;
 	}
-	/* explicit 16px so row(26) + comment(16) = ROW_H(42) exactly. Always
-	   rendered, even with no comment: it is part of the height model. */
-	.cmt {
-		height: 16px;
-		box-sizing: border-box;
-		padding: 0 4px;
-		font: italic 10px system-ui, sans-serif;
-		color: #7fa3c0;
-		line-height: 16px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	.hdr button:focus-visible,
+	.tname:focus-visible {
+		outline: 1px solid #63b3ed;
+		outline-offset: -1px;
 	}
 	.addcol {
 		width: 100%;
-		/* explicit height + border-box pins ADDCOL_H in geometry.js, so
-		   boxHeight() — which layout() and addTable() stack cards by — stays
-		   true even if the font or padding changes. */
 		height: 25px;
 		box-sizing: border-box;
 		background: transparent;
@@ -233,5 +174,9 @@ const parentName = (c) =>
 		padding: 3px;
 		cursor: pointer;
 		font: inherit;
+	}
+	.addcol:focus-visible {
+		outline: 1px solid #63b3ed;
+		outline-offset: -1px;
 	}
 </style>
