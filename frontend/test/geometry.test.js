@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BOX_W, edgePaths, HDR_H, ROW_H } from "../src/geometry.js";
+import {
+	ADDCOL_H,
+	BORDER_H,
+	BOX_W,
+	boxHeight,
+	edgePaths,
+	GAP,
+	HDR_H,
+	ROW_CENTER,
+	ROW_H,
+	stackStep,
+} from "../src/geometry.js";
 
 const tab = (id, x, y, cols) => ({ id, x, y, columns: cols });
 
@@ -8,6 +19,46 @@ test("constants match CSS", () => {
 	assert.equal(BOX_W, 280);
 	assert.equal(HDR_H, 28);
 	assert.equal(ROW_H, 42);
+});
+
+// ROW_CENTER is where an FK edge attaches inside its column row. It is
+// deliberately NOT ROW_H/2: ROW_H spans the row *and* its comment line (26+16),
+// so half of it (21) would land in the comment. It is half the 26px row.
+test("ROW_CENTER is half the row, not half ROW_H", () => {
+	assert.equal(ROW_CENTER, 13);
+	assert.equal(ROW_CENTER * 2, ROW_H - 16, "2*ROW_CENTER is the 26px row");
+	assert.notEqual(ROW_CENTER, ROW_H / 2);
+	// and it is what edgePaths actually uses for the anchor
+	const child = tab("c", 0, 0, [{ id: "c1", ref: { tableId: "p" } }]);
+	const parent = tab("p", 400, 0, [{ id: "c0" }]);
+	const [e] = edgePaths({ tables: [child, parent] });
+	assert.ok(
+		e.d.startsWith(`M ${BOX_W} ${0 + HDR_H + ROW_CENTER} `),
+		`anchor should use ROW_CENTER: ${e.d}`,
+	);
+});
+
+test("boxHeight and stackStep compose the CSS parts", () => {
+	// the model, spelled out: header + columns + footer + borders
+	assert.equal(boxHeight(0), HDR_H + ADDCOL_H + BORDER_H);
+	assert.equal(boxHeight(4), HDR_H + 4 * ROW_H + ADDCOL_H + BORDER_H);
+	// each added column adds exactly one ROW_H
+	assert.equal(boxHeight(3) - boxHeight(2), ROW_H);
+	// stackStep is one card plus the gap below it
+	assert.equal(stackStep(0), boxHeight(0) + GAP);
+	assert.equal(stackStep(5) - stackStep(4), ROW_H);
+	// every part is a positive contribution — a zero here would silently make
+	// cards overlap, which is the bug the model was introduced to fix
+	for (const [name, v] of Object.entries({
+		HDR_H,
+		ROW_H,
+		ADDCOL_H,
+		BORDER_H,
+		GAP,
+		ROW_CENTER,
+	})) {
+		assert.ok(v > 0, `${name} must be positive`);
+	}
 });
 
 test("edgePaths: empty schema returns empty", () => {
