@@ -137,15 +137,19 @@ string.
 frontend/src/geometry.js     (canvas box metrics + FK edge paths)   (pure, testable)
 frontend/src/erd.js          (UI helpers + naming + dialects + layout)(pure, testable)
 frontend/src/capture.js      (PNG rasterization via html-to-image, bounds via geometry)
-frontend/src/schema.svelte.js(store: model state, mutations, undo, fetch glue)
+frontend/src/download.js     (download + clipboard helpers)         (pure)
+frontend/src/history.js      (undo stack, JSON snapshots)           (pure)
+frontend/src/autosave.js     (debounced lint/save/sql, dirty flag) (pure)
+frontend/src/schema.svelte.js(store: model state, mutations, fetch glue)
+frontend/src/Toolbar.svelte  (header bar, file/dialect actions)
 frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
 grammar.go              model + mysql/mariadb parse/lint + inserts
 grammar_postgres.go     postgres parse (reads buildPostgres output)
 grammar_sqlite.go       sqlite parse (reads buildSqlite output)
-validate.go             trust boundary: schema + output validation
+validate.go             trust boundary: schema + output validation (+ type helpers)
 security.go             HTTP hardening: headers, Host/Origin guards, timeouts
-files.go                working-dir .sql store (GET/PUT/DELETE)
-export.go               dialect emitters: mysql|mariadb|postgres|sqlite
+files.go                working-dir .sql store (GET/PUT/DELETE) (+ path helpers)
+export.go               dialect emitters: mysql|mariadb|postgres|sqlite (+ col helpers, registry)
 main.go                 embed.FS server + API route wiring
 ```
 
