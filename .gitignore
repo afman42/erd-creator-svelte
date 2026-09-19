@@ -5,3 +5,5 @@ schemas/
 schemas-e2e/
 graphify-out/
 frontend/test-results/
+*.html
+.opencode/
