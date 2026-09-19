@@ -63,7 +63,7 @@ func TestFilesCRUD(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"users"`) {
 		t.Fatalf("read: %d %s", rec.Code, rec.Body)
 	}
-	got, err := ParseDDL(sampleSchema().GenSQL()) // same source text
+	got, err := ParseDDL(mustGenSQL(sampleSchema())) // same source text
 	if err != nil {
 		t.Fatal(err)
 	}

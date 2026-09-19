@@ -23,7 +23,7 @@ func sampleSchema() *Schema {
 }
 
 func TestGenSQLShapes(t *testing.T) {
-	sql := sampleSchema().GenSQL()
+	sql := mustGenSQL(sampleSchema())
 	for _, want := range []string{
 		"`id` INT NOT NULL AUTO_INCREMENT",
 		"`email` VARCHAR(190) NOT NULL UNIQUE",
@@ -39,12 +39,12 @@ func TestGenSQLShapes(t *testing.T) {
 
 func TestRoundTripStable(t *testing.T) {
 	s := sampleSchema()
-	sql1 := s.GenSQL()
+	sql1 := mustGenSQL(s)
 	s2, err := ParseDDL(sql1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sql2 := s2.GenSQL(); sql1 != sql2 {
+	if sql2 := mustGenSQL(s2); sql1 != sql2 {
 		t.Errorf("round-trip drift:\n%s\n----\n%s", sql1, sql2)
 	}
 	// refs survived
@@ -59,12 +59,12 @@ func TestRoundTripEscaping(t *testing.T) {
 		{Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""},
 		{Name: "e", Type: "ENUM('a''b','c,d')"},
 	}}}}
-	sql := s.GenSQL()
+	sql := mustGenSQL(s)
 	s2, err := ParseDDL(sql)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := s2.GenSQL(); got != sql {
+	if got := mustGenSQL(s2); got != sql {
 		t.Errorf("escaping drift:\n%s\n----\n%s", sql, got)
 	}
 	c := s2.Tables[0].Columns[1]
@@ -108,7 +108,7 @@ func TestCompositePKRoundTrip(t *testing.T) {
 		{Name: "b", Type: "INT", Pk: true},
 		{Name: "x", Type: "INT", Ref: &Ref{TableId: "t1"}},
 	}}}}
-	sql := s.GenSQL()
+	sql := mustGenSQL(s)
 	if strings.Contains(sql, "CONSTRAINT `fk_m_x`") {
 		t.Error("FK onto composite PK must not be emitted")
 	}
@@ -152,7 +152,7 @@ func TestGenInserts(t *testing.T) {
 
 func TestEmptyTableSkipped(t *testing.T) {
 	s := &Schema{Tables: []Table{{Id: "t1", Name: "empty"}}}
-	if strings.Contains(s.GenSQL(), "CREATE TABLE") {
+	if strings.Contains(mustGenSQL(s), "CREATE TABLE") {
 		t.Error("empty table emitted")
 	}
 }
@@ -183,7 +183,7 @@ CREATE TABLE ~posts~ (
   CONSTRAINT ~fk_posts_user_id~ FOREIGN KEY (~user_id~) REFERENCES ~users~ (~id~) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 `
-	got := sampleSchema().GenSQL()
+	got := mustGenSQL(sampleSchema())
 	if got != strings.ReplaceAll(want, "~", "`") {
 		t.Errorf("saved-file format drifted.\n--- got ---\n%s\n--- want ---\n%s",
 			got, strings.ReplaceAll(want, "~", "`"))

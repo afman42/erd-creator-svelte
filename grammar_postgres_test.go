@@ -41,7 +41,7 @@ CREATE TABLE "posts" (
 );
 CREATE INDEX "idx_posts_tag" ON "posts" ("tag");
 `
-	if got := pgSchema().GenSQL(); got != want {
+	if got := mustGenSQL(pgSchema()); got != want {
 		t.Errorf("postgres saved-file format drifted.\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
@@ -50,7 +50,7 @@ CREATE INDEX "idx_posts_tag" ON "posts" ("tag");
 // model itself is NOT expected to survive unchanged (see TestPostgresTypeMapping
 // below); what must hold is that the second emit matches the first.
 func TestPostgresRoundTripStable(t *testing.T) {
-	sql1 := pgSchema().GenSQL()
+	sql1 := mustGenSQL(pgSchema())
 	s2, err := ParseDDL(sql1)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestPostgresRoundTripStable(t *testing.T) {
 	if s2.Dialect != DialectPostgres {
 		t.Errorf("dialect lost on parse: got %q", s2.Dialect)
 	}
-	if sql2 := s2.GenSQL(); sql1 != sql2 {
+	if sql2 := mustGenSQL(s2); sql1 != sql2 {
 		t.Errorf("round-trip drift:\n%s\n----\n%s", sql1, sql2)
 	}
 	// FK survived with its action intact — this regressed once when the extra
@@ -89,7 +89,7 @@ func TestPostgresTypeMapping(t *testing.T) {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
 			{Id: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
 		}}
-		parsed, err := ParseDDL(s.GenSQL())
+		parsed, err := ParseDDL(mustGenSQL(s))
 		if err != nil {
 			t.Fatalf("%s: %v", in, err)
 		}
@@ -104,7 +104,7 @@ func TestPostgresTypeMapping(t *testing.T) {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
 			{Id: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
 		}}
-		parsed, err := ParseDDL(s.GenSQL())
+		parsed, err := ParseDDL(mustGenSQL(s))
 		if err != nil {
 			t.Fatalf("%s: %v", in, err)
 		}
@@ -123,7 +123,7 @@ func TestPostgresReopenIsPortable(t *testing.T) {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
 			{Id: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
 		}}
-		reopened, err := ParseDDL(s.GenSQL())
+		reopened, err := ParseDDL(mustGenSQL(s))
 		if err != nil {
 			t.Fatalf("%s: %v", in, err)
 		}
@@ -153,7 +153,7 @@ func TestPostgresJSONBInput(t *testing.T) {
 	if got := parsed.Tables[0].Columns[0].Type; got != "JSON" {
 		t.Errorf("JSONB should normalize to JSON in the model, got %q", got)
 	}
-	if got := parsed.GenSQL(); got != hand {
+	if got := mustGenSQL(parsed); got != hand {
 		t.Errorf("hand-written JSONB file did not re-emit unchanged:\n%s\n----\n%s", hand, got)
 	}
 }
@@ -166,12 +166,12 @@ func TestPostgresRoundTripEscaping(t *testing.T) {
 		{Name: "c", Type: "VARCHAR(10)", Comment: `it's "quoted"`},
 		{Name: "e", Type: "ENUM('a''b','c,d')"},
 	}}}}
-	sql := s.GenSQL()
+	sql := mustGenSQL(s)
 	parsed, err := ParseDDL(sql)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := parsed.GenSQL(); got != sql {
+	if got := mustGenSQL(parsed); got != sql {
 		t.Errorf("escaping drift:\n%s\n----\n%s", sql, got)
 	}
 	if parsed.Tables[0].Name != `we"ird` || parsed.Tables[0].Columns[0].Name != `a"b` {
@@ -189,7 +189,7 @@ func TestPostgresEdgeCases(t *testing.T) {
 			{Id: "t1", Name: "m", Columns: []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}},
 			{Id: "t2", Name: "c", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "mid", Type: "INT", Ref: &Ref{TableId: "t1"}}}},
 		}}
-		sql := s.GenSQL()
+		sql := mustGenSQL(s)
 		if strings.Contains(sql, "FOREIGN KEY") {
 			t.Errorf("FK onto composite PK must not be emitted:\n%s", sql)
 		}
@@ -207,14 +207,14 @@ func TestPostgresEdgeCases(t *testing.T) {
 			{Id: "t1", Name: "p", Columns: []Col{{Name: "email", Type: "VARCHAR(9)"}}},
 			{Id: "t2", Name: "c", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "pid", Type: "VARCHAR(9)", Ref: &Ref{TableId: "t1"}}}},
 		}}
-		if strings.Contains(s.GenSQL(), "FOREIGN KEY") {
-			t.Errorf("FK onto PK-less parent must not be emitted:\n%s", s.GenSQL())
+		if strings.Contains(mustGenSQL(s), "FOREIGN KEY") {
+			t.Errorf("FK onto PK-less parent must not be emitted:\n%s", mustGenSQL(s))
 		}
 	})
 
 	t.Run("empty table skipped", func(t *testing.T) {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{{Id: "t1", Name: "empty"}}}
-		if strings.Contains(s.GenSQL(), "CREATE TABLE") {
+		if strings.Contains(mustGenSQL(s), "CREATE TABLE") {
 			t.Error("empty table emitted")
 		}
 	})
@@ -223,7 +223,7 @@ func TestPostgresEdgeCases(t *testing.T) {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
 			{Id: "t1", Name: "n", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "parent_id", Type: "INT", Ref: &Ref{TableId: "t1"}}}},
 		}}
-		sql := s.GenSQL()
+		sql := mustGenSQL(s)
 		if !strings.Contains(sql, "FOREIGN KEY") {
 			t.Errorf("self-referencing FK missing:\n%s", sql)
 		}
@@ -329,7 +329,7 @@ func TestNormalizeDialect(t *testing.T) {
 // (pre-dialect) file emits, or every existing .sql would churn on save.
 func TestMysqlFilesUnaffected(t *testing.T) {
 	legacy := sampleSchema() // Dialect is "" — as every existing file is
-	sql := legacy.GenSQL()
+	sql := mustGenSQL(legacy)
 	if strings.Contains(sql, "(PostgreSQL)") {
 		t.Errorf("unmarked schema emitted postgres:\n%s", sql)
 	}
@@ -341,7 +341,7 @@ func TestMysqlFilesUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.GenSQL() != sql {
+	if mustGenSQL(parsed) != sql {
 		t.Error("legacy file round-trip drifted")
 	}
 	if parsed.Dialect != DialectMysql {

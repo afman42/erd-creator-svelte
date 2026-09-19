@@ -30,12 +30,12 @@ func sqliteSample() *Schema {
 
 func TestSqliteRoundTripStable(t *testing.T) {
 	s := sqliteSample()
-	sql1 := s.GenSQL()
+	sql1 := mustGenSQL(s)
 	s2, err := ParseDDL(sql1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sql2 := s2.GenSQL(); sql1 != sql2 {
+	if sql2 := mustGenSQL(s2); sql1 != sql2 {
 		t.Errorf("round-trip drift:\n%s\n----\n%s", sql1, sql2)
 	}
 	// identity: a sqlite file must reopen as sqlite, not silently become mysql
@@ -45,7 +45,7 @@ func TestSqliteRoundTripStable(t *testing.T) {
 }
 
 func TestSqliteDetectDialect(t *testing.T) {
-	if got := detectDialect(sqliteSample().GenSQL()); got != DialectSqlite {
+	if got := detectDialect(mustGenSQL(sqliteSample())); got != DialectSqlite {
 		t.Errorf("detectDialect = %q, want sqlite", got)
 	}
 	// the sqlite header contains the generic marker too, so ordering matters:
@@ -57,7 +57,7 @@ func TestSqliteDetectDialect(t *testing.T) {
 
 // TestSqliteShapes pins the constructs that differ from MySQL's rendering.
 func TestSqliteShapes(t *testing.T) {
-	sql := sqliteSample().GenSQL()
+	sql := mustGenSQL(sqliteSample())
 	for _, want := range []string{
 		"INTEGER PRIMARY KEY",                      // rowid alias instead of AUTO_INCREMENT
 		"CHECK (`status` IN ('active', 'banned'))", // ENUM → TEXT + CHECK
@@ -88,7 +88,7 @@ func TestSqliteTypeModes(t *testing.T) {
 
 	t.Run("native keeps the model type", func(t *testing.T) {
 		s := sqliteSample() // SqliteTypes empty → native
-		sql := s.GenSQL()
+		sql := mustGenSQL(s)
 		for col, want := range types {
 			if !strings.Contains(sql, "`"+col+"` "+want) {
 				t.Errorf("native mode should emit %s as %s:\n%s", col, want, sql)
@@ -109,7 +109,7 @@ func TestSqliteTypeModes(t *testing.T) {
 		}
 		// the whole point: reopen+save is byte-identical, so an export to
 		// another dialect is not silently downgraded to INTEGER/TEXT
-		if got := s2.GenSQL(); got != sql {
+		if got := mustGenSQL(s2); got != sql {
 			t.Errorf("native mode drift:\n%s\n----\n%s", sql, got)
 		}
 	})
@@ -117,7 +117,7 @@ func TestSqliteTypeModes(t *testing.T) {
 	t.Run("portable rewrites to the storage class", func(t *testing.T) {
 		s := sqliteSample()
 		s.SqliteTypes = SqliteTypesPortable
-		sql := s.GenSQL()
+		sql := mustGenSQL(s)
 		for _, want := range []string{"`active` INTEGER", "`seen_at` TEXT", "`stamp` TEXT"} {
 			if !strings.Contains(sql, want) {
 				t.Errorf("portable mode missing %q:\n%s", want, sql)
@@ -139,7 +139,7 @@ func TestSqliteTypeModes(t *testing.T) {
 			t.Errorf("portable DATETIME → %q, want TEXT", got)
 		}
 		// but it is stable: re-emitting the reopened schema does not keep changing
-		if got := s2.GenSQL(); got != sql {
+		if got := mustGenSQL(s2); got != sql {
 			t.Errorf("portable mode drift:\n%s\n----\n%s", sql, got)
 		}
 	})
@@ -150,7 +150,7 @@ func TestSqliteTypeModes(t *testing.T) {
 		for _, mode := range []string{SqliteTypesNative, SqliteTypesPortable} {
 			s := sqliteSample()
 			s.SqliteTypes = mode
-			sql := s.GenSQL()
+			sql := mustGenSQL(s)
 			if !strings.Contains(sql, "CHECK (`status` IN ('active', 'banned'))") {
 				t.Errorf("%s: ENUM CHECK missing:\n%s", mode, sql)
 			}
@@ -171,7 +171,7 @@ func TestSqliteTypeModes(t *testing.T) {
 		s := sqliteSample()
 		s.SqliteTypes = SqliteTypesPortable
 		s.Dialect = DialectMysql
-		if got := s.GenSQL(); !strings.Contains(got, "`active` BOOLEAN") {
+		if got := mustGenSQL(s); !strings.Contains(got, "`active` BOOLEAN") {
 			t.Errorf("mysql must still emit BOOLEAN:\n%s", got)
 		}
 	})
@@ -185,7 +185,7 @@ func TestSqliteCommentRoundTrip(t *testing.T) {
 		{Name: "id", Type: "INT", Pk: true, Ai: true, Comment: "pk"},
 		{Name: "note", Type: "VARCHAR(10)", Comment: "no trailing comma"},
 	}}}}
-	sql := s.GenSQL()
+	sql := mustGenSQL(s)
 	if strings.Contains(sql, "pk,") {
 		t.Errorf("comment picked up the join comma:\n%s", sql)
 	}
@@ -209,7 +209,7 @@ func TestSqliteCommentWithColon(t *testing.T) {
 		{Name: "a:b", Type: "INT", Pk: true, Ai: true, Comment: "has: colon"},
 		{Name: "plain", Type: "INT", Comment: "x:y:z"},
 	}}}}
-	sql := s.GenSQL()
+	sql := mustGenSQL(s)
 	s2, err := ParseDDL(sql)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, sql)
@@ -231,7 +231,7 @@ func TestSqliteIndexedPkKeepsIndex(t *testing.T) {
 	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
 		{Name: "id", Type: "INT", Pk: true, Ai: true, Ix: true},
 	}}}}
-	sql := s.GenSQL()
+	sql := mustGenSQL(s)
 	if !strings.Contains(sql, "CREATE INDEX IF NOT EXISTS `idx_t_id`") {
 		t.Errorf("indexed PK lost its index:\n%s", sql)
 	}
@@ -242,7 +242,7 @@ func TestSqliteIndexedPkKeepsIndex(t *testing.T) {
 	if !s2.Tables[0].Columns[0].Ix {
 		t.Error("index flag lost on round-trip")
 	}
-	if got := s2.GenSQL(); got != sql {
+	if got := mustGenSQL(s2); got != sql {
 		t.Errorf("drift:\n%s\n----\n%s", sql, got)
 	}
 }
@@ -252,7 +252,7 @@ func TestSqliteCompositePK(t *testing.T) {
 		{Name: "a", Type: "INT", Pk: true},
 		{Name: "b", Type: "INT", Pk: true},
 	}}}}
-	sql := s.GenSQL()
+	sql := mustGenSQL(s)
 	if !strings.Contains(sql, "PRIMARY KEY (`a`, `b`)") {
 		t.Errorf("composite PK not emitted as a table constraint:\n%s", sql)
 	}
@@ -273,7 +273,7 @@ func TestSqliteEscaping(t *testing.T) {
 		{Name: "e", Type: "ENUM('a''b','c,d')"},
 		{Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""},
 	}}}}
-	sql := s.GenSQL()
+	sql := mustGenSQL(s)
 	s2, err := ParseDDL(sql)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, sql)
@@ -287,7 +287,7 @@ func TestSqliteEscaping(t *testing.T) {
 	if got := s2.Tables[0].Columns[2].Comment; got != `it's "quoted"` {
 		t.Errorf("comment mangled: %q", got)
 	}
-	if got := s2.GenSQL(); got != sql {
+	if got := mustGenSQL(s2); got != sql {
 		t.Errorf("escaping drift:\n%s\n----\n%s", sql, got)
 	}
 }
@@ -299,10 +299,10 @@ func TestSqliteTypesModeSurvivesReopen(t *testing.T) {
 	// native is the default and is NOT written into the header, so files from
 	// before the setting existed keep their exact bytes
 	native := sqliteSample()
-	if got := native.GenSQL(); !strings.HasPrefix(got, "-- Generated by erd-creator (SQLite)\n") {
+	if got := mustGenSQL(native); !strings.HasPrefix(got, "-- Generated by erd-creator (SQLite)\n") {
 		t.Errorf("native header must stay unchanged, got %q", firstLine(got))
 	}
-	s2, err := ParseDDL(native.GenSQL())
+	s2, err := ParseDDL(mustGenSQL(native))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestSqliteTypesModeSurvivesReopen(t *testing.T) {
 	// portable is recorded, and survives
 	portable := sqliteSample()
 	portable.SqliteTypes = SqliteTypesPortable
-	sql := portable.GenSQL()
+	sql := mustGenSQL(portable)
 	if !strings.Contains(firstLine(sql), SqliteTypesPortable) {
 		t.Errorf("portable header must record the mode, got %q", firstLine(sql))
 	}
@@ -325,7 +325,7 @@ func TestSqliteTypesModeSurvivesReopen(t *testing.T) {
 		t.Errorf("portable reopen = %q, want portable", s3.sqliteTypesMode())
 	}
 	// and the reopened schema re-emits identically, mode included
-	if got := s3.GenSQL(); got != sql {
+	if got := mustGenSQL(s3); got != sql {
 		t.Errorf("portable mode lost on reopen:\n%s\n----\n%s", sql, got)
 	}
 }
@@ -337,7 +337,7 @@ func TestSqliteTypesModeIsSqliteOnly(t *testing.T) {
 		s := sqliteSample()
 		s.Dialect = d
 		s.SqliteTypes = SqliteTypesPortable
-		sql := s.GenSQL()
+		sql := mustGenSQL(s)
 		if strings.Contains(strings.ToLower(sql), "types:") {
 			t.Errorf("%s header must not mention sqlite types:\n%s", d, sql)
 		}
@@ -387,7 +387,7 @@ func TestSqliteSaveable(t *testing.T) {
 	if !s.saveable() {
 		t.Error("sqlite must be saveable")
 	}
-	if got := s.GenSQL(); !strings.Contains(got, "SQLite") {
+	if got := mustGenSQL(s); !strings.Contains(got, "SQLite") {
 		t.Errorf("GenSQL must emit sqlite DDL:\n%s", got)
 	}
 }

@@ -41,7 +41,7 @@ CREATE TABLE ~posts~ (
   CONSTRAINT ~fk_posts_user_id~ FOREIGN KEY (~user_id~) REFERENCES ~users~ (~id~) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 `
-	got := mariadbSchema().GenSQL()
+	got := mustGenSQL(mariadbSchema())
 	if got != strings.ReplaceAll(want, "~", "`") {
 		t.Errorf("mariadb saved-file format drifted.\n--- got ---\n%s\n--- want ---\n%s",
 			got, strings.ReplaceAll(want, "~", "`"))
@@ -85,7 +85,7 @@ func TestMariaDBMatchesMysql(t *testing.T) {
 // collapsed it to mysql, so saving dropped the identity and reopening reported
 // the wrong dialect.
 func TestMariaDBRoundTripStable(t *testing.T) {
-	sql1 := mariadbSchema().GenSQL()
+	sql1 := mustGenSQL(mariadbSchema())
 	s2, err := ParseDDL(sql1)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestMariaDBRoundTripStable(t *testing.T) {
 	if s2.Dialect != DialectMariaDB {
 		t.Errorf("dialect lost on parse: got %q, want %q", s2.Dialect, DialectMariaDB)
 	}
-	if sql2 := s2.GenSQL(); sql1 != sql2 {
+	if sql2 := mustGenSQL(s2); sql1 != sql2 {
 		t.Errorf("round-trip drift:\n%s\n----\n%s", sql1, sql2)
 	}
 	// the schema itself survived, not just the header
@@ -149,7 +149,7 @@ func TestMariaDBIsSaveable(t *testing.T) {
 // TestMariaDBReopenIsPortable: a reopened mariadb schema must export cleanly to
 // every other dialect, since it shares the mysql grammar.
 func TestMariaDBReopenIsPortable(t *testing.T) {
-	reopened, err := ParseDDL(mariadbSchema().GenSQL())
+	reopened, err := ParseDDL(mustGenSQL(mariadbSchema()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestMariaDBReopenIsPortable(t *testing.T) {
 // the original save/export drift.
 func TestMariaDBSaveAndExportAgree(t *testing.T) {
 	s := mariadbSchema()
-	saved := s.GenSQL()
+	saved := mustGenSQL(s)
 	exported, err := exportSQL("mariadb", s.Tables)
 	if err != nil {
 		t.Fatal(err)
