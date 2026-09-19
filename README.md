@@ -9,6 +9,28 @@ the store; re-open a file and the diagram comes back exactly.
 make run        # → http://127.0.0.1:8731  (Go + Node/pnpm; builds dist/ first)
 ```
 
+## Configuration
+
+```
+./erd-creator -dir schemas -host 127.0.0.1 -port 8731
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-dir` | `schemas` | directory holding the `.sql` files (created if missing) |
+| `-host` | `127.0.0.1` | interface to bind; `""` binds every interface |
+| `-port` | `8731` | TCP port; `0` asks the OS for a free one |
+
+The default binds **loopback only**. `-host ""` (or `-host 0.0.0.0`) exposes the
+server on every interface — there is no authentication, so anything that can
+reach the port can read and write your schemas. Use it on a trusted network only.
+
+`-port 0` is useful for running several instances at once; the chosen port is
+printed on startup, since that is the only way to learn it.
+
+The frontend is served from the same origin and uses relative paths, so changing
+host or port needs no frontend rebuild — open the printed URL.
+
 ## Features
 
 - **Canvas** — add/rename/delete/duplicate tables (⧉), drag by header, `Del`
@@ -145,4 +167,5 @@ just `index.html`, so a changed asset does trigger a rebuild.
 
 Reverse-engineering live databases · Chen notation / M:N diamonds · stored box
 positions (auto-layout instead) · ALTER/migration diffs · non-emitted SQL
-dialects as input files · multi-user/auth (single local user, 127.0.0.1).
+dialects as input files · authentication (single local user; `-host` can bind
+beyond loopback, but there is no auth, so that is a trusted-network choice).
