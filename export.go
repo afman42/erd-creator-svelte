@@ -27,9 +27,20 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Untrusted input becomes SQL text here, so it is validated before any
+	// emitter sees it. A type is emitted as raw text (the type grammar is
+	// open-ended), so an unvalidated one is SQL injection in the pasted output.
+	if err := req.schema().Validate(); err != nil {
+		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	sql, err := schemaExportSQL(req.schema(), req.Dialect)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateOutput(sql); err != nil {
+		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

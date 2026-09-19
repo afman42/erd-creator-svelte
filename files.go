@@ -24,6 +24,51 @@ func safeName(name string) error {
 	return nil
 }
 
+// storePath resolves name inside dir and refuses if the result is not a real
+// file within it.
+//
+// safeName already rejects traversal in the NAME, but a symlink planted in the
+// store defeats a name check: the name is legal, yet the path it names leads
+// out. Verified before this guard existed — a symlink to /etc/hostname was read
+// through the API, and a symlink named .<file>.sql.tmp redirected a save so it
+// overwrote a file outside the store.
+//
+// The check is on the RESOLVED path: EvalSymlinks collapses every link in the
+// chain, and the result must still be inside the store. For a path that does
+// not exist yet (the temp file on save) resolution fails, so its parent
+// directory is resolved instead — that is what an attacker would have to
+// control to redirect the write.
+//
+// This is not a substitute for the ownership checks the security guidance
+// describes for destructive operations; it is the narrower guarantee this store
+// needs, since every target is derived from a validated single-segment name.
+func storePath(dir, name string) (string, error) {
+	if err := safeName(name); err != nil {
+		return "", err
+	}
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("store dir: %w", err)
+	}
+	full := filepath.Join(root, name)
+	resolved, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		// target does not exist yet: the parent must resolve inside the store
+		parent, perr := filepath.EvalSymlinks(filepath.Dir(full))
+		if perr != nil {
+			return "", fmt.Errorf("cannot resolve %q", name)
+		}
+		if parent != root {
+			return "", fmt.Errorf("invalid file name %q", name)
+		}
+		return full, nil
+	}
+	if resolved == root || !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid file name %q", name)
+	}
+	return resolved, nil
+}
+
 func handleFiles(dir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/api/files")
@@ -36,17 +81,23 @@ func handleFiles(dir string) http.Handler {
 			return
 		}
 		name = strings.TrimPrefix(name, "/")
-		if err := safeName(name); err != nil {
+		// Resolve through symlinks before acting: a legal name can still point
+		// outside the store via a planted link.
+		full, err := storePath(dir, name)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		switch r.Method {
 		case http.MethodGet:
-			openFile(w, dir, name)
+			openFile(w, full, name)
 		case http.MethodPut:
-			saveFile(w, dir, name, r)
+			saveFile(w, dir, full, name, r)
 		case http.MethodDelete:
-			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			// Remove the link itself, never what it points at: os.Remove is
+			// already unlink(2), but the resolved path is used so a link to
+			// outside the store is rejected above rather than deleted.
+			if err := os.Remove(full); err != nil {
 				http.Error(w, err.Error(), http.StatusNotFound)
 				return
 			}
@@ -87,8 +138,8 @@ func listFiles(w http.ResponseWriter, dir string) {
 	json.NewEncoder(w).Encode(out)
 }
 
-func openFile(w http.ResponseWriter, dir, name string) {
-	b, err := os.ReadFile(filepath.Join(dir, name))
+func openFile(w http.ResponseWriter, full, name string) {
+	b, err := os.ReadFile(full)
 	if err != nil {
 		http.Error(w, "file not found: "+name, http.StatusNotFound)
 		return
@@ -102,7 +153,16 @@ func openFile(w http.ResponseWriter, dir, name string) {
 	json.NewEncoder(w).Encode(s)
 }
 
-func saveFile(w http.ResponseWriter, dir, name string, r *http.Request) {
+// saveFile writes a schema to an already-resolved path inside the store.
+//
+// The temp file is created with O_CREATE|O_EXCL so a pre-planted symlink at
+// that name cannot redirect the write: O_EXCL fails if the path exists at all,
+// including as a dangling link, and O_NOFOLLOW would only cover the last
+// component. Verified before this: a symlink named .<file>.sql.tmp redirected
+// the save so it overwrote a file outside the store. On collision the name is
+// retried with a random suffix rather than reused, so a legitimate leftover
+// temp file does not block saving.
+func saveFile(w http.ResponseWriter, dir, full, name string, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var s Schema
 	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
@@ -113,6 +173,13 @@ func saveFile(w http.ResponseWriter, dir, name string, r *http.Request) {
 		http.Error(w, "schema has no tables", http.StatusBadRequest)
 		return
 	}
+	// The saved file is DDL this program will later parse back, so refuse to
+	// write anything that cannot be represented safely. Validating here means a
+	// malicious value never reaches disk in the first place.
+	if err := s.Validate(); err != nil {
+		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	// Refuse to write a dialect we cannot read back: saving one would produce a
 	// file that fails to reopen — silent data loss. Every dialect the UI offers
 	// now has a parser, so this only fires on an unknown/unset dialect string.
@@ -120,17 +187,46 @@ func saveFile(w http.ResponseWriter, dir, name string, r *http.Request) {
 		http.Error(w, "dialect "+s.Dialect+" is export-only; cannot save", http.StatusBadRequest)
 		return
 	}
-	tmp := filepath.Join(dir, "."+name+".tmp")
-	if err := os.WriteFile(tmp, []byte(s.GenSQL()), 0o644); err != nil {
+	// GenSQL validates and can fail; the schema was checked above, so an error
+	// here is a bug, but it is handled rather than ignored.
+	ddl, err := s.GenSQL()
+	if err != nil {
+		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	tmp, err := createTemp(dir)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
-		os.Remove(tmp)
+	if _, err := tmp.WriteString(ddl); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := os.Rename(tmp.Name(), full); err != nil {
+		os.Remove(tmp.Name())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// createTemp opens a new temp file inside the store for the atomic save.
+// os.CreateTemp already uses a random name and O_EXCL, so it cannot follow a
+// planted symlink and two concurrent saves cannot collide.
+func createTemp(dir string) (*os.File, error) {
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	return os.CreateTemp(root, ".save-*.tmp")
 }
 
 // ensureDir creates the schema store; refuses to run without it.

@@ -36,20 +36,33 @@ func main() {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/export", handleExport)
-	http.HandleFunc("/api/lint", handleSchemaAPI)
-	http.HandleFunc("/api/inserts", handleSchemaAPI)
+	// A dedicated mux rather than http.DefaultServeMux so the hardening wraps
+	// every route including the embedded file server, and so tests can build
+	// the same handler without touching global state.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/export", handleExport)
+	mux.HandleFunc("/api/lint", handleSchemaAPI)
+	mux.HandleFunc("/api/inserts", handleSchemaAPI)
 	fileAPI := handleFiles(*dir)
-	http.Handle("/api/files", fileAPI)
-	http.Handle("/api/files/", fileAPI)
+	mux.Handle("/api/files", fileAPI)
+	mux.Handle("/api/files/", fileAPI)
 	fileServer := http.FileServer(http.FS(sub))
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// SPA fallback: unknown paths serve index.html.
 		if _, err := fs.Stat(sub, r.URL.Path[1:]); err != nil {
 			r.URL.Path = "/"
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+
+	// Order matters: the Host allowlist runs first so a rebinding request is
+	// refused before it reaches any handler, then the same-origin check, then
+	// the response headers (set on the way out, including on those refusals).
+	var h http.Handler = mux
+	h = securityHeaders(h)
+	h = sameOriginGuard(h)
+	h = hostGuard(*host)(h)
+
 	// Listen explicitly rather than http.ListenAndServe so the log line can
 	// report the port actually bound — with -port 0 that is the only way to
 	// learn it — and so a bind failure is reported once, with the address.
@@ -58,7 +71,10 @@ func main() {
 		log.Fatalf("cannot listen on %s: %v", addr, err)
 	}
 	log.Printf("erd-creator on %s (schemas: %s)", displayURL(ln.Addr()), *dir)
-	log.Fatal(http.Serve(ln, nil))
+	srv := newServer(h)
+	// Serve rather than ListenAndServe: the listener is already bound, so the
+	// resolved port is known and logged before the first request is accepted.
+	log.Fatal(srv.Serve(ln))
 }
 
 // listenAddr joins the -host and -port flags into an address net.Listen
@@ -110,6 +126,13 @@ var schemaAPI = map[string]func(http.ResponseWriter, *Schema){
 func handleSchemaAPI(w http.ResponseWriter, r *http.Request) {
 	s, ok := decodeSchema(w, r)
 	if !ok {
+		return
+	}
+	// /api/inserts emits SQL text from this schema, so it is a generation
+	// boundary just like /export. /api/lint only reads, but validating both
+	// keeps one rule for every schema-accepting endpoint.
+	if err := s.Validate(); err != nil {
+		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	render, ok := schemaAPI[r.URL.Path]
