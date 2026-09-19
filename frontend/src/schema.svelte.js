@@ -8,6 +8,7 @@ import {
 	adoptIds,
 	cloneTable,
 	DEFAULT_DIALECT,
+	DEFAULT_SQLITE_TYPES,
 	DEFAULT_TYPE,
 	isInt,
 	layout,
@@ -275,6 +276,16 @@ export function setDialect(d) {
 	store.schema.dialect = d;
 	if (store.sqlText) refreshSql();
 }
+
+// setSqliteTypes switches how SQLite renders the types it has no storage class
+// for. Like setDialect this is a real mutation — the saved bytes change — so it
+// snapshots for undo and refreshes the SQL panel when it is open.
+export function setSqliteTypes(mode) {
+	if (store.schema.sqliteTypes === mode) return;
+	snap();
+	store.schema.sqliteTypes = mode;
+	if (store.sqlText) refreshSql();
+}
 function flashLint() {
 	refreshLint().then(() => {
 		if (store.lint.length) flash(`lint: ${store.lint.join("; ")}`, "warn");
@@ -305,8 +316,11 @@ export async function openFile(name) {
 		skipTouch = true;
 		const loaded = await res.json();
 		// The server always sets dialect (both parsers do), but default rather
-		// than leave the dropdown blank if an older payload omits it.
+		// than leave the dropdown blank if an older payload omits it. Same for
+		// sqliteTypes: absent means the lossless default, and every file written
+		// before the setting existed has it absent.
 		if (!loaded.dialect) loaded.dialect = DEFAULT_DIALECT;
+		if (!loaded.sqliteTypes) loaded.sqliteTypes = DEFAULT_SQLITE_TYPES;
 		store.schema = adoptIds(loaded);
 		layout(store.schema);
 		store.currentFile = name;

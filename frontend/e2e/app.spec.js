@@ -401,6 +401,43 @@ test("every offered dialect is saveable and drives the panel", async ({
 	await expect(page.getByTestId("sql-dialect")).toHaveText("sqlite");
 });
 
+// The sqlite types control only applies to sqlite, so it must not be offered
+// while another dialect is selected — it would imply a setting that has no
+// effect. And it must actually change the emitted DDL.
+test("sqlite types control appears only for sqlite and drives the DDL", async ({
+	page,
+}) => {
+	await page.goto("/");
+	// default dialect is mysql: no control
+	await expect(page.getByTestId("dialect")).toHaveValue("mysql");
+	await expect(page.getByTestId("sqlite-types")).toHaveCount(0);
+
+	// add a BOOLEAN column so the two modes are distinguishable
+	await page.getByRole("button", { name: "+ column" }).click();
+	const lastRow = page.locator(".row").last();
+	await lastRow.locator("select").first().selectOption("BOOLEAN");
+
+	// still mysql: no control, and the panel keeps BOOLEAN
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.getByTestId("sqlite-types")).toHaveCount(0);
+	await expect(page.locator("aside pre")).toContainText("BOOLEAN");
+
+	// switching to sqlite reveals it, defaulting to the lossless native mode
+	await page.getByTestId("dialect").selectOption("sqlite");
+	await expect(page.getByTestId("sqlite-types")).toBeVisible();
+	await expect(page.getByTestId("sqlite-types")).toHaveValue("native");
+	await expect(page.locator("aside pre")).toContainText("BOOLEAN");
+
+	// portable rewrites to the storage class SQLite would pick anyway
+	await page.getByTestId("sqlite-types").selectOption("portable");
+	await expect(page.locator("aside pre")).toContainText("INTEGER");
+	await expect(page.locator("aside pre")).not.toContainText("BOOLEAN");
+
+	// and going back to native restores it
+	await page.getByTestId("sqlite-types").selectOption("native");
+	await expect(page.locator("aside pre")).toContainText("BOOLEAN");
+});
+
 // The column row is dense: name, type, five flag checkboxes, FK select, action
 // select and the remove button — ten flex children in a 280px card. They used
 // to spill outside the card's right border, because box-sizing was left at

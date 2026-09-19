@@ -1,5 +1,5 @@
 <script>
-import { DIALECTS, isSaveable } from "./erd.js";
+import { DEFAULT_SQLITE_TYPES, DIALECTS, isSaveable } from "./erd.js";
 import {
 	addTable,
 	copyInserts,
@@ -10,6 +10,7 @@ import {
 	openFile,
 	saveCurrent,
 	setDialect,
+	setSqliteTypes,
 	store,
 } from "./schema.svelte.js";
 
@@ -51,6 +52,22 @@ const LABELS = {
 			<option value={d}>{LABELS[d]}{isSaveable(d) ? "" : " (export only)"}</option>
 		{/each}
 	</select>
+	{#if store.schema.dialect === "sqlite"}
+		<!-- SQLite has no BOOLEAN/DATETIME storage class, so the declared type is
+		     a real choice: keep the model's name (lossless) or write the storage
+		     class it would pick anyway. Only shown for sqlite — it changes nothing
+		     for the other dialects. -->
+		<select
+			class="dialect"
+			value={store.schema.sqliteTypes ?? DEFAULT_SQLITE_TYPES}
+			onchange={(e) => setSqliteTypes(e.currentTarget.value)}
+			title="how SQLite renders BOOLEAN / DATETIME / TIMESTAMP"
+			data-testid="sqlite-types"
+		>
+			<option value="native">types: native</option>
+			<option value="portable">types: portable</option>
+		</select>
+	{/if}
 	<button onclick={exportDdl} disabled={store.exporting}>
 		{store.exporting ? "..." : "Export"}
 	</button>

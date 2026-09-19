@@ -9,14 +9,17 @@ import {
 	baseType,
 	cloneTable,
 	DEFAULT_DIALECT,
+	DEFAULT_SQLITE_TYPES,
 	DEFAULT_TYPE,
 	DIALECTS,
 	isInt,
 	isSaveable,
 	layout,
 	newColumn,
+	newSchema,
 	newTable,
 	SAVEABLE_DIALECTS,
+	SQLITE_TYPES,
 	TYPES,
 	uniqName,
 } from "../src/erd.js";
@@ -126,6 +129,25 @@ test("newColumn defaults: no flags, no ref", () => {
 		{ pk: c.pk, nn: c.nn, ai: c.ai, ux: c.ux, ix: c.ix, ref: c.ref },
 		{ pk: false, nn: false, ai: false, ux: false, ix: false, ref: null },
 	);
+});
+
+test("newSchema defaults to mysql + native sqlite types", () => {
+	// The sqliteTypes default matters: it selects the lossless rendering, and it
+	// must be present on a fresh schema or the server would have to guess.
+	const s = newSchema();
+	assert.equal(s.dialect, DEFAULT_DIALECT);
+	assert.equal(s.sqliteTypes, DEFAULT_SQLITE_TYPES);
+	assert.equal(s.sqliteTypes, "native");
+	assert.deepEqual(s.tables, []);
+	// both are carried through explicitly
+	const t = newTable("t");
+	const s2 = newSchema("sqlite", [t], "portable");
+	assert.equal(s2.dialect, "sqlite");
+	assert.equal(s2.sqliteTypes, "portable");
+	assert.deepEqual(s2.tables, [t]);
+	// every mode the UI offers is a real value
+	assert.deepEqual(SQLITE_TYPES, ["native", "portable"]);
+	assert.ok(SQLITE_TYPES.includes(DEFAULT_SQLITE_TYPES));
 });
 
 test("adoptIds keeps table ids, allocates column ids, bumps counters", () => {

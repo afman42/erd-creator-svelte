@@ -37,11 +37,31 @@ export const baseType = (t) => t.split("(")[0];
 const INT_RE = /^(INT|BIGINT|SMALLINT|TINYINT)/;
 export const isInt = (t) => INT_RE.test(baseType(t));
 
+// SQLite renders the types it has no storage class for (BOOLEAN, DATETIME,
+// TIMESTAMP) in one of two ways. Both are defensible, so it is a schema
+// setting rather than a hardcoded choice:
+//
+//   native (default) — keep the model's type name. SQLite accepts it and stores
+//     it verbatim, so reopening returns the same type and an export to another
+//     dialect is not silently downgraded.
+//   portable — rewrite to the storage class SQLite would pick anyway
+//     (BOOLEAN → INTEGER, DATETIME/TIMESTAMP → TEXT). What the emitter did
+//     before the choice existed. LOSSY: the model type is gone on reopen.
+//
+// ENUM is unaffected either way (TEXT + CHECK), since SQLite has no enum type.
+export const SQLITE_TYPES = ["native", "portable"];
+export const DEFAULT_SQLITE_TYPES = "native";
+
 // newSchema: the client's schema envelope. The dialect travels with the model
 // so one dropdown drives save, the SQL panel, copy and export, and so a saved
-// file remembers which grammar it is written in.
-export function newSchema(dialect = DEFAULT_DIALECT, tables = []) {
-	return { dialect, tables };
+// file remembers which grammar it is written in. sqliteTypes rides along for the
+// same reason: it changes the saved bytes, so the file must remember it.
+export function newSchema(
+	dialect = DEFAULT_DIALECT,
+	tables = [],
+	sqliteTypes = DEFAULT_SQLITE_TYPES,
+) {
+	return { dialect, sqliteTypes, tables };
 }
 
 export let nextTableId = 1;
