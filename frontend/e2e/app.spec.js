@@ -479,3 +479,46 @@ test("column controls stay inside the table box, even with an FK set", async ({
 		).toBeLessThanOrEqual(0);
 	}
 });
+
+// Copy INSERTs and Export were the two header buttons with no e2e coverage.
+// Both POST the current schema and copy the response, so a regression in either
+// would have shipped silently.
+test("Copy INSERTs copies seed-row templates for the current schema", async ({
+	page,
+}) => {
+	await page.goto("/");
+	// Playwright grants no clipboard permission, so this exercises the same
+	// textarea/execCommand fallback path as Copy SQL.
+	await page.getByRole("button", { name: "Copy INSERTs" }).click();
+	await expect(page.getByText("copied INSERT templates")).toBeVisible();
+	await expect(page.getByText(/INSERTs failed/)).toHaveCount(0);
+});
+
+// Export copies DDL for the selected dialect (it does not download — the button
+// label and the "copied <dialect> DDL" banner are the contract).
+test("Export copies the selected dialect's DDL", async ({ page }) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "Export" }).click();
+	await expect(page.getByText("copied mysql DDL")).toBeVisible();
+	await expect(page.getByText(/export failed/)).toHaveCount(0);
+
+	// the copied text must follow the dropdown, not be hardcoded mysql
+	await page.getByTestId("dialect").selectOption("postgres");
+	await page.getByRole("button", { name: "Export" }).click();
+	await expect(page.getByText("copied postgres DDL")).toBeVisible();
+});
+
+// An empty schema has nothing to export: the server answers 400 and the UI must
+// surface it as an error rather than a false "copied" banner.
+test("Export on an empty schema surfaces the server error", async ({
+	page,
+}) => {
+	await page.goto("/");
+	// remove the only table so the schema has no tables
+	await page.getByTitle("delete table (Del)").click();
+	await expect(page.locator("section.table")).toHaveCount(0);
+
+	await page.getByRole("button", { name: "Export" }).click();
+	await expect(page.locator("header .err")).toBeVisible();
+	await expect(page.getByText(/copied .* DDL/)).toHaveCount(0);
+});
