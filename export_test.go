@@ -233,3 +233,111 @@ func TestSchemaEnvelopeShapes(t *testing.T) {
 		}
 	}
 }
+
+// TestSaveableIsTotal: normalizeDialect maps every input onto one of the four
+// known dialects, and all four have parsers, so saveable() is always true. The
+// `return false` branch is therefore unreachable today.
+//
+// This is pinned rather than deleted because the guard is a safety net for the
+// case that matters: a future dialect added to normalizeDialect without an
+// emitter or parser would be saveable()==false and refused by saveFile, instead
+// of silently writing a file that cannot be read back. If this test fails
+// because saveable() returned false for something, the new dialect needs an
+// emitter and parser — or the switch needs it explicitly.
+func TestSaveableIsTotal(t *testing.T) {
+	// anything normalizeDialect can produce must be saveable
+	for _, d := range []string{"", "mysql", "mariadb", "postgres", "postgresql", "pg", "sqlite", "SQLITE", " MariaDB ", "oracle", "unknown", "mysql; DROP"} {
+		s := &Schema{Dialect: d}
+		if !s.saveable() {
+			t.Errorf("saveable(%q) = false (normalized %q) — every dialect needs an emitter and parser", d, s.dialect())
+		}
+		// and the normalized name must be one the emitters know
+		switch s.dialect() {
+		case DialectMysql, DialectMariaDB, DialectPostgres, DialectSqlite:
+		default:
+			t.Errorf("normalizeDialect(%q) = %q, which no emitter handles", d, s.dialect())
+		}
+	}
+	// every dialect constant must round-trip through normalization unchanged,
+	// or a saved file would reopen under a different grammar
+	for _, d := range []string{DialectMysql, DialectMariaDB, DialectPostgres, DialectSqlite} {
+		if got := normalizeDialect(d); got != d {
+			t.Errorf("normalizeDialect(%q) = %q, want identity", d, got)
+		}
+	}
+}
+
+// TestSchemaExportSQL: the schema-aware export path must read the dialect AND
+// the sqlite types mode off the schema. The handler uses it, so a regression
+// here would make the panel/Copy/Export disagree with Save.
+func TestSchemaExportSQL(t *testing.T) {
+	base := func() *Schema {
+		return &Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+			{Name: "id", Type: "INT", Pk: true},
+			{Name: "flag", Type: "BOOLEAN"},
+		}}}}
+	}
+
+	t.Run("uses the schema's sqlite types mode", func(t *testing.T) {
+		s := base()
+		s.Dialect = DialectSqlite
+		s.SqliteTypes = SqliteTypesPortable
+		sql, err := schemaExportSQL(s, DialectSqlite)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(sql, "`flag` INTEGER") {
+			t.Errorf("portable mode ignored:\n%s", sql)
+		}
+
+		s.SqliteTypes = SqliteTypesNative
+		sql, err = schemaExportSQL(s, DialectSqlite)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(sql, "`flag` BOOLEAN") {
+			t.Errorf("native mode ignored:\n%s", sql)
+		}
+	})
+
+	t.Run("mode is ignored for other dialects", func(t *testing.T) {
+		s := base()
+		s.Dialect = DialectSqlite
+		s.SqliteTypes = SqliteTypesPortable
+		for _, d := range []string{DialectMysql, DialectMariaDB, DialectPostgres} {
+			sql, err := schemaExportSQL(s, d)
+			if err != nil {
+				t.Fatalf("%s: %v", d, err)
+			}
+			if !strings.Contains(sql, "BOOLEAN") {
+				t.Errorf("%s: sqlite mode leaked into the output:\n%s", d, sql)
+			}
+		}
+	})
+
+	t.Run("agrees with exportSQL for the default mode", func(t *testing.T) {
+		// the two entry points must not diverge: exportSQL is the free-function
+		// form, schemaExportSQL the schema-aware one
+		for _, d := range []string{DialectMysql, DialectMariaDB, DialectPostgres, DialectSqlite} {
+			s := base()
+			s.Dialect = d
+			viaSchema, err := schemaExportSQL(s, d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			viaFree, err := exportSQL(d, s.Tables)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if viaSchema != viaFree {
+				t.Errorf("%s: schema and free export paths disagree:\n%s\n----\n%s", d, viaSchema, viaFree)
+			}
+		}
+	})
+
+	t.Run("empty schema errors", func(t *testing.T) {
+		if _, err := schemaExportSQL(&Schema{}, DialectMysql); err == nil {
+			t.Error("empty schema must error")
+		}
+	})
+}
