@@ -18,6 +18,7 @@ func sqliteSample() *Schema {
 			{Name: "status", Type: "ENUM('active','banned')"},
 			{Name: "active", Type: "BOOLEAN"},
 			{Name: "seen_at", Type: "DATETIME", Comment: "last login"},
+			{Name: "stamp", Type: "TIMESTAMP"},
 		}},
 		{Id: "t2", Name: "posts", Columns: []Col{
 			{Name: "id", Type: "BIGINT", Pk: true, Nn: true, Ai: true},
@@ -74,34 +75,106 @@ func TestSqliteShapes(t *testing.T) {
 	}
 }
 
-// TestSqliteTypeMappingIsStable: SQLite has no BOOLEAN or datetime type, so the
-// emitter writes INTEGER/TEXT. Those are valid model types, so the mapping is
-// one-way on purpose — re-emitting a reopened file must not keep rewriting the
-// type (BOOLEAN→INTEGER→INTEGER), which is what a lossy round-trip would do.
-func TestSqliteTypeMappingIsStable(t *testing.T) {
-	s := sqliteSample()
-	s2, err := ParseDDL(s.GenSQL())
-	if err != nil {
-		t.Fatal(err)
+// TestSqliteTypeModes covers both renderings of the types SQLite has no storage
+// class for. The default (native) keeps the model's type name, so the schema
+// survives a round-trip unchanged; portable rewrites to INTEGER/TEXT, which is
+// what the emitter did before the choice existed, and is lossy on purpose.
+func TestSqliteTypeModes(t *testing.T) {
+	types := map[string]string{
+		"active":  "BOOLEAN",
+		"seen_at": "DATETIME",
+		"stamp":   "TIMESTAMP",
 	}
-	if got := s2.GenSQL(); got != s.GenSQL() {
-		t.Errorf("type mapping not stable:\n%s\n----\n%s", s.GenSQL(), got)
-	}
-	byName := map[string]Col{}
-	for _, c := range s2.Tables[0].Columns {
-		byName[c.Name] = c
-	}
-	if byName["active"].Type != "INTEGER" {
-		t.Errorf("BOOLEAN should read back as INTEGER, got %q", byName["active"].Type)
-	}
-	if byName["seen_at"].Type != "TEXT" {
-		t.Errorf("DATETIME should read back as TEXT, got %q", byName["seen_at"].Type)
-	}
-	// ENUM is the exception: its values live in the CHECK constraint, so they
-	// must be recovered exactly or the schema would change on reopen.
-	if got := byName["status"].Type; got != "ENUM('active','banned')" {
-		t.Errorf("ENUM not recovered from CHECK: %q", got)
-	}
+
+	t.Run("native keeps the model type", func(t *testing.T) {
+		s := sqliteSample() // SqliteTypes empty → native
+		sql := s.GenSQL()
+		for col, want := range types {
+			if !strings.Contains(sql, "`"+col+"` "+want) {
+				t.Errorf("native mode should emit %s as %s:\n%s", col, want, sql)
+			}
+		}
+		s2, err := ParseDDL(sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		byName := map[string]Col{}
+		for _, c := range s2.Tables[0].Columns {
+			byName[c.Name] = c
+		}
+		for col, want := range types {
+			if got := byName[col].Type; got != want {
+				t.Errorf("native round-trip changed %s: %q → %q", col, want, got)
+			}
+		}
+		// the whole point: reopen+save is byte-identical, so an export to
+		// another dialect is not silently downgraded to INTEGER/TEXT
+		if got := s2.GenSQL(); got != sql {
+			t.Errorf("native mode drift:\n%s\n----\n%s", sql, got)
+		}
+	})
+
+	t.Run("portable rewrites to the storage class", func(t *testing.T) {
+		s := sqliteSample()
+		s.SqliteTypes = SqliteTypesPortable
+		sql := s.GenSQL()
+		for _, want := range []string{"`active` INTEGER", "`seen_at` TEXT", "`stamp` TEXT"} {
+			if !strings.Contains(sql, want) {
+				t.Errorf("portable mode missing %q:\n%s", want, sql)
+			}
+		}
+		s2, err := ParseDDL(sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		byName := map[string]Col{}
+		for _, c := range s2.Tables[0].Columns {
+			byName[c.Name] = c
+		}
+		// documented loss: the model type is gone after a reopen
+		if got := byName["active"].Type; got != "INTEGER" {
+			t.Errorf("portable BOOLEAN → %q, want INTEGER", got)
+		}
+		if got := byName["seen_at"].Type; got != "TEXT" {
+			t.Errorf("portable DATETIME → %q, want TEXT", got)
+		}
+		// but it is stable: re-emitting the reopened schema does not keep changing
+		if got := s2.GenSQL(); got != sql {
+			t.Errorf("portable mode drift:\n%s\n----\n%s", sql, got)
+		}
+	})
+
+	// ENUM is unaffected by the mode: SQLite has no enum type at all, so both
+	// render TEXT + CHECK and both must recover the values.
+	t.Run("ENUM is mode-independent", func(t *testing.T) {
+		for _, mode := range []string{SqliteTypesNative, SqliteTypesPortable} {
+			s := sqliteSample()
+			s.SqliteTypes = mode
+			sql := s.GenSQL()
+			if !strings.Contains(sql, "CHECK (`status` IN ('active', 'banned'))") {
+				t.Errorf("%s: ENUM CHECK missing:\n%s", mode, sql)
+			}
+			s2, err := ParseDDL(sql)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range s2.Tables[0].Columns {
+				if c.Name == "status" && c.Type != "ENUM('active','banned')" {
+					t.Errorf("%s: ENUM not recovered: %q", mode, c.Type)
+				}
+			}
+		}
+	})
+
+	// the mode must not leak into the other dialects
+	t.Run("other dialects unaffected", func(t *testing.T) {
+		s := sqliteSample()
+		s.SqliteTypes = SqliteTypesPortable
+		s.Dialect = DialectMysql
+		if got := s.GenSQL(); !strings.Contains(got, "`active` BOOLEAN") {
+			t.Errorf("mysql must still emit BOOLEAN:\n%s", got)
+		}
+	})
 }
 
 // TestSqliteCommentRoundTrip: the comment rides in the same comma-joined entry
@@ -216,6 +289,65 @@ func TestSqliteEscaping(t *testing.T) {
 	}
 	if got := s2.GenSQL(); got != sql {
 		t.Errorf("escaping drift:\n%s\n----\n%s", sql, got)
+	}
+}
+
+// TestSqliteTypesModeSurvivesReopen: the mode changes the bytes, so it must be
+// recoverable from the file. Otherwise a portable file reopens as native and the
+// UI would claim a convention the file does not follow.
+func TestSqliteTypesModeSurvivesReopen(t *testing.T) {
+	// native is the default and is NOT written into the header, so files from
+	// before the setting existed keep their exact bytes
+	native := sqliteSample()
+	if got := native.GenSQL(); !strings.HasPrefix(got, "-- Generated by erd-creator (SQLite)\n") {
+		t.Errorf("native header must stay unchanged, got %q", firstLine(got))
+	}
+	s2, err := ParseDDL(native.GenSQL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2.sqliteTypesMode() != SqliteTypesNative {
+		t.Errorf("native reopen = %q, want native", s2.sqliteTypesMode())
+	}
+
+	// portable is recorded, and survives
+	portable := sqliteSample()
+	portable.SqliteTypes = SqliteTypesPortable
+	sql := portable.GenSQL()
+	if !strings.Contains(firstLine(sql), SqliteTypesPortable) {
+		t.Errorf("portable header must record the mode, got %q", firstLine(sql))
+	}
+	s3, err := ParseDDL(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s3.sqliteTypesMode() != SqliteTypesPortable {
+		t.Errorf("portable reopen = %q, want portable", s3.sqliteTypesMode())
+	}
+	// and the reopened schema re-emits identically, mode included
+	if got := s3.GenSQL(); got != sql {
+		t.Errorf("portable mode lost on reopen:\n%s\n----\n%s", sql, got)
+	}
+}
+
+// TestSqliteTypesModeIsSqliteOnly: the field must not leak into the other
+// dialects' output or headers.
+func TestSqliteTypesModeIsSqliteOnly(t *testing.T) {
+	for _, d := range []string{DialectMysql, DialectMariaDB, DialectPostgres} {
+		s := sqliteSample()
+		s.Dialect = d
+		s.SqliteTypes = SqliteTypesPortable
+		sql := s.GenSQL()
+		if strings.Contains(strings.ToLower(sql), "types:") {
+			t.Errorf("%s header must not mention sqlite types:\n%s", d, sql)
+		}
+		reopened, err := ParseDDL(sql)
+		if err != nil {
+			t.Fatalf("%s: %v", d, err)
+		}
+		if reopened.sqliteTypesMode() != SqliteTypesNative {
+			t.Errorf("%s reopened with sqlite mode %q", d, reopened.sqliteTypesMode())
+		}
 	}
 }
 

@@ -68,9 +68,29 @@ func stripCommentName(line, colName string) string {
 	return line
 }
 
+// sqliteTypesFromHeader recovers the type-rendering mode buildSqlite recorded
+// in the header. Only the non-default (portable) mode is written, so a header
+// without the marker means native — which is also what every file written before
+// the setting existed means.
+func sqliteTypesFromHeader(sql string) string {
+	for _, line := range strings.Split(sql, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "--") {
+			break // past the header block
+		}
+		if strings.Contains(strings.ToLower(line), "types: "+SqliteTypesPortable) {
+			return SqliteTypesPortable
+		}
+	}
+	return SqliteTypesNative
+}
+
 // parseSqlite reads the grammar buildSqlite emits.
 func parseSqlite(sql string) (*Schema, error) {
-	s := &Schema{Dialect: DialectSqlite}
+	s := &Schema{Dialect: DialectSqlite, SqliteTypes: sqliteTypesFromHeader(sql)}
 	byName := map[string]int{} // name → index in s.Tables
 	var pending []pendingFK
 	cur := -1
