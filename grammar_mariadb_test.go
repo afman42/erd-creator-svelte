@@ -124,19 +124,25 @@ func TestMariaDBDetectedFromHeader(t *testing.T) {
 
 // TestMariaDBIsSaveable: the server must accept what the UI offers. The two
 // disagreed before — the UI labelled MariaDB "export only" while the server
-// would have saved it as mysql.
+// would have saved it as mysql. The same class of bug applied to sqlite, which
+// was refused until it gained a parser.
 func TestMariaDBIsSaveable(t *testing.T) {
 	saveable := map[string]bool{
 		DialectMysql:    true,
 		DialectMariaDB:  true,
 		DialectPostgres: true,
-		"sqlite":        false, // export-only: no parser
+		DialectSqlite:   true,
 	}
 	for dialect, want := range saveable {
 		s := &Schema{Dialect: dialect}
 		if got := s.saveable(); got != want {
 			t.Errorf("saveable(%q) = %v, want %v", dialect, got, want)
 		}
+	}
+	// an unrecognized dialect normalizes to mysql, so it stays saveable; this
+	// pins that the guard is about "can we read it back", not about the string
+	if !(&Schema{Dialect: "oracle"}).saveable() {
+		t.Error("unknown dialect normalizes to mysql and must be saveable")
 	}
 }
 

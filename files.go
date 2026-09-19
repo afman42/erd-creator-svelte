@@ -113,8 +113,9 @@ func saveFile(w http.ResponseWriter, dir, name string, r *http.Request) {
 		http.Error(w, "schema has no tables", http.StatusBadRequest)
 		return
 	}
-	// Refuse to write a dialect we cannot read back. sqlite is export-only, so
-	// saving it would produce a file that fails to reopen — silent data loss.
+	// Refuse to write a dialect we cannot read back: saving one would produce a
+	// file that fails to reopen — silent data loss. Every dialect the UI offers
+	// now has a parser, so this only fires on an unknown/unset dialect string.
 	if !s.saveable() {
 		http.Error(w, "dialect "+s.Dialect+" is export-only; cannot save", http.StatusBadRequest)
 		return

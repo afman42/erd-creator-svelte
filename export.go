@@ -419,9 +419,6 @@ func buildSqlite(tables []Table) string {
 		// rowid alias: single integer PK → inline INTEGER PRIMARY KEY, auto-assign for free
 		aiPk := len(pks) == 1 && pks[0].Ai && isInt(baseOf(pks[0].Type))
 		for _, c := range t.Columns {
-			if c.Comment != "" {
-				lines = append(lines, "  -- "+c.Name+": "+c.Comment)
-			}
 			base, args := splitType(c.Type)
 			ty, check := base, ""
 			switch base {
@@ -438,19 +435,27 @@ func buildSqlite(tables []Table) string {
 			if args != "" && ty == base {
 				ty = base + "(" + args + ")"
 			}
+			var s string
 			if aiPk && c.Pk {
-				lines = append(lines, "  "+quoteTick(c.Name)+" INTEGER PRIMARY KEY")
-				continue
+				s = "  " + quoteTick(c.Name) + " INTEGER PRIMARY KEY"
+			} else {
+				s = "  " + quoteTick(c.Name) + " " + ty
+				if c.Nn || c.Pk {
+					s += " NOT NULL"
+				}
+				if c.Ux {
+					s += " UNIQUE"
+				}
+				if check != "" {
+					s += " " + check
+				}
 			}
-			s := "  " + quoteTick(c.Name) + " " + ty
-			if c.Nn || c.Pk {
-				s += " NOT NULL"
-			}
-			if c.Ux {
-				s += " UNIQUE"
-			}
-			if check != "" {
-				s += " " + check
+			if c.Comment != "" {
+				// The comment rides along in the SAME list entry as its column.
+				// As a separate entry it would pick up the comma the join adds,
+				// and the parser would read that comma back as part of the
+				// comment text ("pk" → "pk,"), so the file stopped round-tripping.
+				s = "  -- " + c.Name + ": " + c.Comment + "\n" + s
 			}
 			lines = append(lines, s)
 			if c.Ix {
