@@ -26,11 +26,9 @@ make run        # → http://127.0.0.1:8731  (Go + Node/pnpm; builds dist/ first
   parses the file's DDL in its own dialect; `Copy INSERTs` emits seed-row
   templates (MySQL syntax)
 - **Dialects** — one dropdown selects the DDL flavor, and it drives everything:
-  what Save writes, the SQL panel, Copy SQL and Export. `mysql`, `mariadb` and
-  `postgres` are saveable (each has a parser, so a saved file reopens and keeps
-  its dialect); `sqlite` is export-only — it has no parser, so saving it would
-  write a file that cannot be loaded. It is the only entry labelled
-  "(export only)", and the server refuses to save it.
+  what Save writes, the SQL panel, Copy SQL and Export. All four dialects are
+  saveable: each has a parser, so a saved file reopens and keeps its own
+  dialect rather than silently becoming MySQL.
 
   `mariadb` shares the MySQL grammar: every construct we emit is valid in both,
   so the two files differ only in the header comment. It is nonetheless its own
@@ -39,6 +37,24 @@ make run        # → http://127.0.0.1:8731  (Go + Node/pnpm; builds dist/ first
   (`buildMysql`, `buildMariaDB`) so MariaDB-specific syntax has somewhere to go;
   `TestMariaDBMatchesMysql` pins them to identical output so the moment they
   diverge — deliberately or by accident — the test fails and forces a decision.
+
+  `postgres` and `sqlite` each have their own emitter *and* parser, because
+  their grammars differ structurally rather than in quoting — see the dialect
+  map below. `sqlite` additionally exposes a **types** control, shown only while
+  sqlite is selected, choosing how the types SQLite has no storage class for are
+  written (`sqliteTypes`, default `native`):
+
+  - `native` — keep the model's type name (`BOOLEAN`, `DATETIME`). SQLite
+    accepts these and stores them verbatim, so reopening returns the same type
+    and a later export to MySQL/Postgres is not silently downgraded. **Lossless.**
+  - `portable` — rewrite to the storage class SQLite would pick anyway
+    (`BOOLEAN` → `INTEGER`, `DATETIME`/`TIMESTAMP` → `TEXT`). For readers that
+    key off the declared type name. **Lossy**: the model type is gone on reopen.
+
+  The mode changes the saved bytes, so it is recorded in the file's header
+  (`(SQLite, types: portable)`) and travels with the schema — otherwise a
+  portable file would reopen as native and the next added `BOOLEAN` column would
+  contradict the file's own contents. `ENUM` is unaffected either way.
 
 ## Architecture
 
@@ -49,6 +65,7 @@ frontend/src/schema.svelte.js(store: model state, mutations, undo, fetch glue)
 frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
 grammar.go              model + mysql/mariadb parse/lint + inserts
 grammar_postgres.go     postgres parse (reads buildPostgres output)
+grammar_sqlite.go       sqlite parse (reads buildSqlite output)
 files.go                working-dir .sql store (GET/PUT/DELETE)
 export.go               dialect emitters: mysql|mariadb|postgres|sqlite
 main.go                 embed.FS server + API route wiring
@@ -81,6 +98,14 @@ main.go                 embed.FS server + API route wiring
   — round-trips unchanged, and `ENUM` is recovered from the `TEXT + CHECK`
   shape. A reopened postgres file is therefore safe to re-export to any
   dialect; `TestPostgresReopenIsPortable` pins that.
+
+  SQLite is lossless in the default `native` mode: `BOOLEAN`, `DATETIME` and
+  `TIMESTAMP` are written under their own names and read straight back, because
+  SQLite accepts them and stores them verbatim (verified against sqlite3
+  3.53.4). Only `ENUM` is transformed — SQLite has no enum type — into
+  `TEXT + CHECK`, and the values are recovered from the constraint. `portable`
+  mode is the lossy alternative described above; either way reopen → save is a
+  byte-identical fixed point.
 
 ## Development
 
