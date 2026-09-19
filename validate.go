@@ -67,44 +67,47 @@ func hasControlChar(s string) bool {
 	return false
 }
 
+func isTypeStart(c byte) bool { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' }
+func isTypeNameChar(c byte) bool { return isTypeStart(c) || (c >= '0' && c <= '9') || c == ' ' }
+func isTypeArgChar(c byte) bool {
+	return isTypeNameChar(c) || c == ',' || c == '\'' || c == '"' || c == '(' || c == ')' || c == '.' || c == '+' || c == '-'
+}
+
 // isValidTypeExpr reports whether v matches `^[A-Za-z_][A-Za-z0-9_ ]*(\([A-Za-z0-9_ ,'"().+\-]*\))?$`.
 // Manual parser replaces the previous regexp — ~28× faster, zero allocations.
 // The shape is a bare name, or a name with one parenthesised argument list.
-// Inside the parens only characters that appear in real type arguments are
-// allowed so a statement separator or comment marker cannot hide there.
 func isValidTypeExpr(v string) bool {
 	if len(v) == 0 {
 		return false
 	}
-	c := v[0]
-	if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_') {
+	if !isTypeStart(v[0]) {
 		return false
 	}
 	parenIdx := strings.IndexByte(v, '(')
-	if parenIdx == -1 {
+	isBareName := parenIdx == -1
+	if isBareName {
 		for i := 1; i < len(v); i++ {
-			ch := v[i]
-			if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == ' ') {
+			if !isTypeNameChar(v[i]) {
 				return false
 			}
 		}
 		return true
 	}
-	for i := 1; i < parenIdx; i++ {
-		ch := v[i]
-		if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == ' ') {
+	typeName := v[1:parenIdx]
+	for i := 0; i < len(typeName); i++ {
+		if !isTypeNameChar(typeName[i]) {
 			return false
 		}
 	}
-	if v[len(v)-1] != ')' {
+	hasClosingParen := v[len(v)-1] == ')'
+	if !hasClosingParen {
 		return false
 	}
-	for i := parenIdx + 1; i < len(v)-1; i++ {
-		ch := v[i]
-		if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == ' ' || ch == ',' || ch == '\'' || ch == '"' || ch == '(' || ch == ')' || ch == '.' || ch == '+' || ch == '-' {
-			continue
+	argsContent := v[parenIdx+1 : len(v)-1]
+	for i := 0; i < len(argsContent); i++ {
+		if !isTypeArgChar(argsContent[i]) {
+			return false
 		}
-		return false
 	}
 	return true
 }
@@ -163,22 +166,31 @@ func (s *Schema) Validate() error {
 	return nil
 }
 
+func checkBasicString(what, v string, max int) error {
+	if !utf8.ValidString(v) {
+		return fmt.Errorf("%s is not valid UTF-8", what)
+	}
+	if len(v) > max {
+		return fmt.Errorf("%s too long: %d bytes (max %d)", what, len(v), max)
+	}
+	if hasControlChar(v) {
+		return fmt.Errorf("%s contains a control character", what)
+	}
+	return nil
+}
+
 func validateIdent(what, v string) error {
 	if v == "" {
 		return fmt.Errorf("empty %s", what)
 	}
-	if !utf8.ValidString(v) {
-		return fmt.Errorf("%s is not valid UTF-8", what)
-	}
-	if len(v) > maxNameLen {
-		return fmt.Errorf("%s too long: %d bytes (max %d)", what, len(v), maxNameLen)
-	}
-	if hasControlChar(v) {
-		// A newline here would split one statement into two lines in the emitted
-		// DDL, and the parser reads line by line — so the file would no longer
-		// describe the model. Rejected rather than stripped: silently changing a
-		// user's identifier is worse than refusing it.
-		return fmt.Errorf("%s %q contains a control character", what, v)
+	if err := checkBasicString(what, v, maxNameLen); err != nil {
+		// checkBasicString reports "contains a control character" without quoting;
+		// for identifiers we include the value (quoted) so the user sees which
+		// name failed, with the newline-risk comment preserved here.
+		if hasControlChar(v) {
+			return fmt.Errorf("%s %q contains a control character", what, v)
+		}
+		return err
 	}
 	return nil
 }
@@ -187,17 +199,8 @@ func validateType(v string) error {
 	if v == "" {
 		return fmt.Errorf("empty type")
 	}
-	if !utf8.ValidString(v) {
-		return fmt.Errorf("type is not valid UTF-8")
-	}
-	if len(v) > maxTypeLen {
-		return fmt.Errorf("type too long: %d bytes (max %d)", len(v), maxTypeLen)
-	}
-	if hasControlChar(v) {
-		// Deliberately does not echo the value: it is attacker-controlled, and
-		// reflecting it into an error that a UI displays (or a user pastes into
-		// a bug report) spreads the payload. The column is already named.
-		return fmt.Errorf("type contains a control character")
+	if err := checkBasicString("type", v, maxTypeLen); err != nil {
+		return err
 	}
 	if !isValidTypeExpr(v) {
 		// Same reasoning, plus a bounded excerpt so a legitimate typo is still
@@ -239,16 +242,7 @@ func excerpt(v string) string {
 }
 
 func validateText(what, v string, max int) error {
-	if !utf8.ValidString(v) {
-		return fmt.Errorf("%s is not valid UTF-8", what)
-	}
-	if len(v) > max {
-		return fmt.Errorf("%s too long: %d bytes (max %d)", what, len(v), max)
-	}
-	if hasControlChar(v) {
-		return fmt.Errorf("%s contains a control character", what)
-	}
-	return nil
+	return checkBasicString(what, v, max)
 }
 
 // validateOutput is the last line of defence: it re-checks the text an emitter

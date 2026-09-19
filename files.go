@@ -42,28 +42,46 @@ func safeName(name string) error {
 // This is not a substitute for the ownership checks the security guidance
 // describes for destructive operations; it is the narrower guarantee this store
 // needs, since every target is derived from a validated single-segment name.
-func storePath(dir, name string) (string, error) {
-	if err := safeName(name); err != nil {
-		return "", err
-	}
+func resolveStoreRoot(dir string) (string, error) {
 	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return "", fmt.Errorf("store dir: %w", err)
 	}
+	return root, nil
+}
+
+func isInsideStore(resolved, root string) bool {
+	if resolved == root {
+		return false
+	}
+	return strings.HasPrefix(resolved, root+string(filepath.Separator))
+}
+
+func handleMissingTarget(full, root, name string) (string, error) {
+	parent, perr := filepath.EvalSymlinks(filepath.Dir(full))
+	if perr != nil {
+		return "", fmt.Errorf("cannot resolve %q", name)
+	}
+	if parent != root {
+		return "", fmt.Errorf("invalid file name %q", name)
+	}
+	return full, nil
+}
+
+func storePath(dir, name string) (string, error) {
+	if err := safeName(name); err != nil {
+		return "", err
+	}
+	root, err := resolveStoreRoot(dir)
+	if err != nil {
+		return "", err
+	}
 	full := filepath.Join(root, name)
 	resolved, err := filepath.EvalSymlinks(full)
 	if err != nil {
-		// target does not exist yet: the parent must resolve inside the store
-		parent, perr := filepath.EvalSymlinks(filepath.Dir(full))
-		if perr != nil {
-			return "", fmt.Errorf("cannot resolve %q", name)
-		}
-		if parent != root {
-			return "", fmt.Errorf("invalid file name %q", name)
-		}
-		return full, nil
+		return handleMissingTarget(full, root, name)
 	}
-	if resolved == root || !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+	if !isInsideStore(resolved, root) {
 		return "", fmt.Errorf("invalid file name %q", name)
 	}
 	return resolved, nil
