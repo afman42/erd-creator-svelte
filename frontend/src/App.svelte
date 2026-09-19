@@ -66,6 +66,11 @@ function onUp() {
 	if (t && !moved) setSelected(t.id);
 }
 function onKey(ev) {
+	// The column dialog owns the keyboard while it is open. Without this, a
+	// focused <button> inside it is not INPUT/SELECT/TEXTAREA, so `editing` is
+	// false and Delete would delete the whole TABLE out from under the dialog;
+	// Escape would likewise clear the selection on its way to closing it.
+	if (document.querySelector("dialog[open]")) return;
 	const tag = document.activeElement?.tagName;
 	const editing = /INPUT|SELECT|TEXTAREA/.test(tag);
 	if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {

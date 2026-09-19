@@ -402,51 +402,74 @@ test("boxHeight / stackStep match the real rendered card", () => {
 });
 
 test("TableCard column row fits inside BOX_W", () => {
-	// Worst case per row: name, type select, 5 flag labels (PK NN UQ AI IX),
-	// FK select, FK action select, remove button — ten flex children.
+	// The row is a label now — name, type, active-flag badges, FK target, edit
+	// button — five flex children where there used to be ten controls. It is
+	// still a genuine space budget: if the type, flags or FK label grows, the
+	// name is squeezed and the assertion on its resulting width fails.
 	//
-	// This is a genuine space budget, not a formality. Measured in Chromium, the
-	// controls need ~342px to show their longest option against a 280px box, so
-	// something must clip; the name field absorbs it (it scrolls) and the type
-	// select is given a floor that shows all but TIMESTAMP. This test pins that
-	// arrangement: if a control grows, the name field is squeezed and the
-	// assertion on its resulting width fails.
-	const LABEL_W = 19; // measured in Chromium: widest flag label at 9px
+	// The controls themselves moved to ColumnEditModal.svelte, which is sized by
+	// its own dialog rather than by BOX_W; the test below covers that.
 	const GAP = px(decl(".row", "gap"), ".row gap");
 	const PAD = 2 * 2; // .row padding: 1px 2px
-	const NAME_MIN = px(
-		decl("input.cname", "min-width"),
-		"input.cname min-width",
-	);
-	const TYPE_MIN = px(
-		decl(".row select:not(.fk):not(.act)", "min-width"),
-		"type select min-width",
-	);
-	const fixed =
-		NAME_MIN +
-		TYPE_MIN +
-		px(decl(".row select.fk", "width"), ".fk width") +
-		px(decl(".row select.act", "width"), ".act width") +
-		5 * LABEL_W;
+	const NAME_MIN = px(decl(".row .cname", "min-width"), ".cname min-width");
+	const TYPE_MAX = px(decl(".row .ty", "max-width"), ".ty max-width");
+	const FLAGS_MAX = px(decl(".row .flags", "max-width"), ".flags max-width");
+	const FK_MAX = px(decl(".row .fkinfo", "max-width"), ".fkinfo max-width");
+	const EDIT_W = px(decl(".row .edit", "width"), ".edit width");
 
-	// 10 flex children in the widest row => 9 gaps
-	const needed = fixed + 9 * GAP + PAD;
+	const fixed = NAME_MIN + TYPE_MAX + FLAGS_MAX + FK_MAX + EDIT_W;
+
+	// 5 flex children in the widest row => 4 gaps
+	const needed = fixed + 4 * GAP + PAD;
 	assert.ok(
 		needed <= BOX_W,
 		`widest column row needs ${needed}px but the box is ${BOX_W}px ` +
-			`(${needed - BOX_W}px over) — controls would spill outside the card`,
+			`(${needed - BOX_W}px over) — the label would spill outside the card`,
 	);
-	// the name field gets whatever is left; it must stay usable
+	// the name gets whatever is left; it must stay usable
 	const nameActual = NAME_MIN + (BOX_W - needed);
 	assert.ok(
 		nameActual >= 28,
-		`name field would be squeezed to ${nameActual}px — below a usable width`,
+		`name would be squeezed to ${nameActual}px — below a usable width`,
 	);
-	// and the type select must stay wide enough to read the type names
+	// and the type must stay wide enough to read the type names
 	assert.ok(
-		TYPE_MIN >= 60,
-		`type select floor is ${TYPE_MIN}px — too narrow to read the type names`,
+		TYPE_MAX >= 60,
+		`type label is ${TYPE_MAX}px — too narrow to read the type names`,
 	);
+});
+
+// The ten controls that used to live in the 26px row are only actually gone if
+// they are somewhere else. This pins the destination rather than trusting that
+// the row rewrite did not simply delete them.
+const MODAL_SRC = readFileSync(
+	new URL("../src/ColumnEditModal.svelte", import.meta.url),
+	"utf8",
+);
+
+test("ColumnEditModal holds every control the row gave up", () => {
+	// name, type and comment inputs, plus the FK and action selects
+	assert.match(MODAL_SRC, /class="cname"/, "name input missing from modal");
+	assert.match(MODAL_SRC, /class="type"/, "type select missing from modal");
+	assert.match(MODAL_SRC, /class="cmt"/, "comment input missing from modal");
+	assert.match(MODAL_SRC, /class="fk"/, "FK select missing from modal");
+	assert.match(MODAL_SRC, /class="act"/, "ON DELETE select missing from modal");
+	// all five flags still wired to their mutations
+	assert.match(MODAL_SRC, /togglePk/, "PK is not wired in the modal");
+	assert.match(MODAL_SRC, /toggleFlag/, "the flag toggles are not wired");
+	// removing a column is still reachable, or the row lost its delete affordance
+	assert.match(MODAL_SRC, /rmColumn/, "remove-column is not reachable");
+	// the modal must not reintroduce what the row was freed from: it is a
+	// dialog so BOX_W does not bind it, but it must use no inline styles —
+	// the CSP is style-src 'self' and would block them
+	assert.ok(
+		!MODAL_SRC.includes('style="'),
+		"ColumnEditModal uses an inline style attribute, which the CSP blocks",
+	);
+	// and it must be a native <dialog>, which is what provides the top layer,
+	// focus trapping and Escape-to-close without an overlay reimplementation
+	assert.match(MODAL_SRC, /<dialog\b/, "modal is not a native <dialog>");
+	assert.match(MODAL_SRC, /showModal\(\)/, "modal never calls showModal()");
 });
 
 test("BOX_W / HDR_H / ROW_H constants match CSS", () => {
