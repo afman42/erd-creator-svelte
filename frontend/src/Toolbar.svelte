@@ -28,7 +28,7 @@ const LABELS = {
 
 <header aria-label="ERD toolbar">
 	<h1 class="sr-only">ERD Creator</h1>
-	<button onclick={addTable} aria-label="Add new table">+ Table</button>
+	<button onclick={addTable} aria-label="+ Table">+ Table</button>
 	<label class="sr-only" for="file-select">Open schema file</label>
 	<select
 		id="file-select"
@@ -41,11 +41,11 @@ const LABELS = {
 		<option value="">— files —</option>
 		{#each store.files as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
 	</select>
-	<button onclick={newFile} aria-label="Create new schema file">New</button>
-	<button onclick={() => saveCurrent()} disabled={!store.currentFile} aria-label="Save current file">Save</button>
-	<button onclick={deleteFile} disabled={!store.currentFile} aria-label="Delete current file">Del</button>
-	<button onclick={copySql} aria-label="Copy SQL to clipboard">Copy SQL</button>
-	<button onclick={copyInserts} aria-label="Copy INSERT templates">Copy INSERTs</button>
+	<button onclick={newFile} aria-label="New">New</button>
+	<button onclick={() => saveCurrent()} disabled={!store.currentFile} aria-label="Save">Save</button>
+	<button onclick={deleteFile} disabled={!store.currentFile} aria-label="Del">Del</button>
+	<button onclick={copySql} aria-label="Copy SQL">Copy SQL</button>
+	<button onclick={copyInserts} aria-label="Copy INSERTs">Copy INSERTs</button>
 	<label class="sr-only" for="dialect-select">DDL dialect</label>
 	<select
 		id="dialect-select"
@@ -79,10 +79,10 @@ const LABELS = {
 			<option value="portable">types: portable</option>
 		</select>
 	{/if}
-	<button onclick={exportDdl} disabled={store.exporting} aria-label="Export DDL to file">
+	<button onclick={exportDdl} disabled={store.exporting} aria-label="Export">
 		{store.exporting ? "..." : "Export"}
 	</button>
-	<button onclick={exportPng} disabled={store.exporting} aria-label="Export diagram as PNG">Export PNG</button>
+	<button onclick={exportPng} disabled={store.exporting} aria-label="Export PNG">Export PNG</button>
 	<button onclick={onToggleSql} aria-label="{showSql ? 'Hide' : 'Show'} SQL panel" aria-expanded={showSql} aria-controls="sql-panel">{showSql ? "Hide" : "Show"} SQL</button>
 	{#if store.currentFile}
 		<span class="ok" data-testid="current-file" role="status" aria-live="polite">{store.currentFile}</span>

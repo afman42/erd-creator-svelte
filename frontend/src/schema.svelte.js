@@ -18,6 +18,8 @@ import {
 	uniqName,
 } from "./erd.js";
 import { stackStep } from "./geometry.js";
+import { downloadBlob, downloadText, execCopy } from "./download.js";
+import { clearHistory, snap as snapHistory, undo as undoHistory } from "./history.js";
 
 // ---- state ----
 export const store = $state({
@@ -34,10 +36,6 @@ export const store = $state({
 	exporting: false,
 });
 layout(store.schema);
-
-const history = [];
-let dirty = false;
-let lintTimer, saveTimer, sqlTimer;
 
 // ---- server round-trips (debounced; local-first, banner on error) ----
 async function refreshLint() {
@@ -76,71 +74,42 @@ export async function refreshSql() {
 // skipTouch: set right before openFile/newFile swap store.schema; the App
 // $effect fires once on the swap — that is a load, not a user edit, so it must
 // not mark the file dirty or schedule a needless save.
-let skipTouch = false;
+import {
+	clearTimers as clearTimersImpl,
+	flushCurrent as flushAutosave,
+	installFlush,
+	markSkipTouch,
+	setDirty,
+	touch as touchAutosave,
+} from "./autosave.js";
+
 export function touch(showSql) {
-	if (skipTouch) {
-		skipTouch = false;
-		return;
-	}
-	lintTimer ??= setTimeout(() => {
-		lintTimer = null;
-		refreshLint();
-	}, 300);
-	// Schedule on every real edit, first one included — a fresh file is not
-	// dirty until the first touch, but its first edit must still persist.
-	if (store.currentFile) {
-		clearTimeout(saveTimer);
-		saveTimer = setTimeout(() => saveCurrent(true), 800);
-	}
-	dirty = true;
-	if (showSql) {
-		clearTimeout(sqlTimer);
-		sqlTimer = setTimeout(() => refreshSql(), 300);
-	}
+	touchAutosave(showSql, { store, refreshLint, refreshSql, saveCurrent });
 }
 
 // ---- undo (client-only, JSON snapshots) ----
 export function snap() {
-	history.push(JSON.stringify(store.schema));
-	if (history.length > 60) history.shift();
+	snapHistory(store.schema);
 }
 export function undo() {
-	if (!history.length) return;
-	try {
-		store.schema = adoptIds(JSON.parse(history.pop()));
-		store.selected = null;
-	} catch {
-		undo(); // snapshot can only be our own stringify; corrupt → drop it
-	}
+	const prev = undoHistory();
+	if (!prev) return;
+	store.schema = prev;
+	store.selected = null;
 }
 
 // ---- timers / flush ----
 function clearTimers() {
-	if (lintTimer) {
-		clearTimeout(lintTimer);
-		lintTimer = null;
-	}
-	clearTimeout(saveTimer);
-	clearTimeout(sqlTimer);
+	clearTimersImpl();
 }
-// Flush pending debounced writes for the current file before any switch —
-// a pending saveTimer would otherwise fire against the NEXT file (or drop).
 async function flushCurrent() {
-	clearTimers();
-	if (dirty && store.currentFile) {
-		try {
-			await saveCurrent(true);
-		} catch {
-			// saveCurrent flashes itself; the edit is now only in memory
-		}
-	}
+	await flushAutosave({ store, saveCurrent });
 }
 // Unload safety: a pending saveTimer dies with the page, dropping up to 800ms
 // of edits. Flush best-effort on the way out.
 // ponytail: plain fetch may abort mid-unload; keepalive fetch (64KB cap) would
 // harden the final write — add if real tab-closes drop edits.
-window.addEventListener("pagehide", () => void flushCurrent());
-window.addEventListener("beforeunload", () => void flushCurrent());
+installFlush(() => flushCurrent());
 
 // ---- model mutations ----
 // Names come from erd.js's uniqName (pure + unit-tested); it needs the taken
@@ -313,7 +282,7 @@ export async function openFile(name) {
 	try {
 		const res = await fetch(`/api/files/${encodeURIComponent(name)}`);
 		if (!res.ok) throw new Error(await res.text());
-		skipTouch = true;
+		markSkipTouch();
 		const loaded = await res.json();
 		// The server always sets dialect (both parsers do), but default rather
 		// than leave the dropdown blank if an older payload omits it. Same for
@@ -325,11 +294,11 @@ export async function openFile(name) {
 		layout(store.schema);
 		store.currentFile = name;
 		store.error = "";
-		dirty = false;
+		setDirty(false);
 		// Snapshots belong to the file they were taken in. Carrying them across a
 		// switch lets Ctrl+Z restore file A's schema while currentFile is B — and
 		// the App $effect would then autosave A's tables into B.sql (data loss).
-		history.length = 0;
+		clearHistory();
 	} catch (e) {
 		flash(`Open failed: ${e.message}`, "err");
 		refreshFiles();
@@ -345,13 +314,13 @@ export async function newFile() {
 		return;
 	}
 	await flushCurrent();
-	skipTouch = true;
+	markSkipTouch();
 	// Keep the dialect the user is currently working in — switching to postgres
 	// and then hitting New should give a postgres file, not silently reset.
 	store.schema = newSchema(store.schema.dialect, [newTable("users")]);
 	layout(store.schema);
 	store.currentFile = `${name}.sql`;
-	history.length = 0; // new file context → prior snapshots are unreachable
+	clearHistory(); // new file context → prior snapshots are unreachable
 	await saveCurrent();
 	refreshFiles();
 }
@@ -370,7 +339,7 @@ export async function saveCurrent(silent = false) {
 			},
 		);
 		if (!res.ok) throw new Error(await res.text());
-		dirty = false;
+		setDirty(false);
 		if (!silent) flash(`saved ${store.currentFile}`);
 	} catch (e) {
 		if (!silent) flash(`save failed: ${e.message}`, "err");
@@ -389,23 +358,11 @@ export async function deleteFile() {
 	if (!res.ok) flash(`delete failed: ${await res.text()}`, "err");
 	else flash(`deleted ${store.currentFile}`);
 	store.currentFile = "";
-	history.length = 0; // the file these snapshots described no longer exists
+	clearHistory(); // the file these snapshots described no longer exists
 	refreshFiles();
 }
 
 // ---- clipboard + exports ----
-function execCopy(text) {
-	const ta = document.createElement("textarea");
-	ta.value = text;
-	ta.style.cssText = "position:fixed;opacity:0";
-	document.body.appendChild(ta);
-	ta.select();
-	try {
-		return document.execCommand("copy");
-	} finally {
-		ta.remove();
-	}
-}
 async function copyText(text, msg) {
 	try {
 		await navigator.clipboard.writeText(text);
@@ -433,37 +390,6 @@ export async function copyInserts() {
 export async function copySql() {
 	await refreshSql();
 	await copyText(store.sqlText, "copied SQL");
-}
-// downloadText saves `text` as a file. It is what makes Export different from
-// Copy SQL: both POST the same schema to /export and get the same DDL back, but
-// Export must put it on disk rather than in the clipboard.
-//
-// A Blob + a synthetic <a download> is the only mechanism that works here: the
-// CSP is default-src 'self', and while downloads are not governed by
-// default-src (verified against the served page — the blob download fires with
-// no console error), fetch+Content-Disposition is unavailable because the
-// filename is ours to choose and the endpoint is shared with Copy SQL.
-function downloadBlob(blob, filename) {
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement("a");
-	a.href = url;
-	a.download = filename;
-	document.body.appendChild(a);
-	a.click();
-	a.remove();
-	URL.revokeObjectURL(url);
-}
-function downloadText(text, filename) {
-	const url = URL.createObjectURL(
-		new Blob([text], { type: "text/plain;charset=utf-8" }),
-	);
-	const a = document.createElement("a");
-	a.href = url;
-	a.download = filename;
-	document.body.appendChild(a);
-	a.click();
-	a.remove();
-	URL.revokeObjectURL(url);
 }
 // The name to save under. A loaded file keeps its own name (users.sql stays
 // users.sql); an unsaved scratch schema gets a name that says which grammar it
