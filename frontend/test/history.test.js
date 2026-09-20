@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clearHistory, snap, undo } from "../src/history.js";
 import { newSchema, newTable } from "../src/erd.js";
+import { clearHistory, snap, undo } from "../src/history.js";
 
 test("history snap/undo round-trips schema", () => {
 	clearHistory();
@@ -60,7 +60,18 @@ test("clearHistory drops all", () => {
 test("snap preserves dialect and columns", () => {
 	clearHistory();
 	const s = newSchema("postgres", [newTable("t")]);
-	s.tables[0].columns.push({ id: "c999", name: "flag", type: "BOOLEAN", pk: false, nn: false, ai: false, ux: false, ix: false, comment: "", ref: null });
+	s.tables[0].columns.push({
+		id: "c999",
+		name: "flag",
+		type: "BOOLEAN",
+		pk: false,
+		nn: false,
+		ai: false,
+		ux: false,
+		ix: false,
+		comment: "",
+		ref: null,
+	});
 	snap(s);
 	const prev = undo();
 	assert.equal(prev.dialect, "postgres");

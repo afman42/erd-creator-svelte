@@ -29,16 +29,26 @@ function mockDOM() {
 				value: "",
 				selectCalled: false,
 				clickCalled: false,
-				select() { this.selectCalled = true; },
-				click() { this.clickCalled = true; },
-				remove() { this.removed = true; },
+				select() {
+					this.selectCalled = true;
+				},
+				click() {
+					this.clickCalled = true;
+				},
+				remove() {
+					this.removed = true;
+				},
 			};
 			created.push(el);
 			return el;
 		},
 		body: {
-			appendChild(el) { el.appended = true; },
-			removeChild(el) { el.removed = true; },
+			appendChild(el) {
+				el.appended = true;
+			},
+			removeChild(el) {
+				el.removed = true;
+			},
 		},
 	};
 	// execCommand mock
@@ -89,7 +99,9 @@ test("execCopy creates textarea and copies", () => {
 				value: "",
 				style: {},
 				selectCalled: false,
-				select() { this.selectCalled = true; },
+				select() {
+					this.selectCalled = true;
+				},
 				remove() {},
 			};
 			taMock.push(el);
@@ -97,10 +109,15 @@ test("execCopy creates textarea and copies", () => {
 		}
 		return origCreate(tag);
 	};
-	global.document.body.appendChild = (el) => { el.appended = true; };
+	global.document.body.appendChild = (el) => {
+		el.appended = true;
+	};
 	// mock execCommand
 	let cmd = null;
-	global.document.execCommand = (c) => { cmd = c; return true; };
+	global.document.execCommand = (c) => {
+		cmd = c;
+		return true;
+	};
 
 	const ok = execCopy("copy me");
 	assert.equal(ok, true);

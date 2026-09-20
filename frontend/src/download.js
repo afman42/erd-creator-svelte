@@ -12,7 +12,10 @@ export function downloadBlob(blob, filename) {
 }
 
 export function downloadText(text, filename) {
-	downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), filename);
+	downloadBlob(
+		new Blob([text], { type: "text/plain;charset=utf-8" }),
+		filename,
+	);
 }
 
 export function execCopy(text) {

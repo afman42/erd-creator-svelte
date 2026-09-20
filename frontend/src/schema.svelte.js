@@ -4,6 +4,8 @@
 // Single exported $state object: Svelte forbids exporting a $state binding
 // that is reassigned, so all state lives on `store` and mutations assign
 // properties (allowed) — never the exported binding itself.
+
+import { downloadBlob, downloadText, execCopy } from "./download.js";
 import {
 	adoptIds,
 	cloneTable,
@@ -18,8 +20,11 @@ import {
 	uniqName,
 } from "./erd.js";
 import { stackStep } from "./geometry.js";
-import { downloadBlob, downloadText, execCopy } from "./download.js";
-import { clearHistory, snap as snapHistory, undo as undoHistory } from "./history.js";
+import {
+	clearHistory,
+	snap as snapHistory,
+	undo as undoHistory,
+} from "./history.js";
 
 // ---- state ----
 export const store = $state({

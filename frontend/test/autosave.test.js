@@ -162,7 +162,7 @@ test("installFlush registers listeners", () => {
 	const origWindow = global.window;
 	const events = [];
 	global.window = {
-		addEventListener: (ev, fn) => events.push(ev),
+		addEventListener: (ev, _fn) => events.push(ev),
 	};
 	installFlush(() => {});
 	assert.ok(events.includes("pagehide"));

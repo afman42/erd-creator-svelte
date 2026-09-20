@@ -1,1 +1,0 @@
-import{t as e}from"./index-DxalpBJg.js";var t=`#101418`;async function n(n){if(!n)throw Error(`canvas not found`);let{toBlob:r}=await e(async()=>{let{toBlob:e}=await import(`./es-DIDZppIF.js`);return{toBlob:e}},[]),i=await r(n,{backgroundColor:t,pixelRatio:1,cacheBust:!1});if(!i)throw Error(`png capture returned empty`);return i}export{n as capturePng};

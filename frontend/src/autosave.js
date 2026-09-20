@@ -15,7 +15,10 @@ export function markSkipTouch() {
 	skipNextTouch = true;
 }
 
-export function touch(showSql, { store, refreshLint, refreshSql, saveCurrent }) {
+export function touch(
+	showSql,
+	{ store, refreshLint, refreshSql, saveCurrent },
+) {
 	if (skipNextTouch) {
 		skipNextTouch = false;
 		return;
