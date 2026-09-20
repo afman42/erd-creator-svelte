@@ -286,7 +286,10 @@ func pkLine(t Table, q func(string) string) string {
 func mysqlColDef(c Col) string {
 	base, args := splitType(c.Type)
 	ty := base
-	if args != "" && !(c.Ai && isInt(base)) {
+	// Render the argument list only when the type takes one, except for an
+	// auto-increment integer: MySQL writes that as a bare AUTO_INCREMENT and
+	// rejects INT(11) spelled alongside it.
+	if args != "" && (!c.Ai || !isInt(base)) {
 		ty = base + "(" + args + ")"
 	}
 	s := quoteTick(c.Name) + " " + ty
