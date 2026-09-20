@@ -12,7 +12,7 @@ import (
 // BOOLEAN and DATETIME (no native type), an indexed column, and an FK action.
 func sqliteSample() *Schema {
 	return &Schema{Dialect: DialectSqlite, Tables: []Table{
-		{Id: "t1", Name: "users", Columns: []Col{
+		{ID: "t1", Name: "users", Columns: []Col{
 			{Name: "id", Type: "INT", Pk: true, Nn: true, Ai: true, Comment: "pk"},
 			{Name: "email", Type: "VARCHAR(190)", Nn: true, Ux: true},
 			{Name: "status", Type: "ENUM('active','banned')"},
@@ -20,9 +20,9 @@ func sqliteSample() *Schema {
 			{Name: "seen_at", Type: "DATETIME", Comment: "last login"},
 			{Name: "stamp", Type: "TIMESTAMP"},
 		}},
-		{Id: "t2", Name: "posts", Columns: []Col{
+		{ID: "t2", Name: "posts", Columns: []Col{
 			{Name: "id", Type: "BIGINT", Pk: true, Nn: true, Ai: true},
-			{Name: "user_id", Type: "INT", Ref: &Ref{TableId: "t1", Action: "SET NULL"}},
+			{Name: "user_id", Type: "INT", Ref: &Ref{TableID: "t1", Action: "SET NULL"}},
 			{Name: "tag", Type: "VARCHAR(40)", Ix: true},
 		}},
 	}}
@@ -181,7 +181,7 @@ func TestSqliteTypeModes(t *testing.T) {
 // as its column. As a separate entry it picked up the join's comma and the
 // parser read it back as part of the text ("pk" → "pk,").
 func TestSqliteCommentRoundTrip(t *testing.T) {
-	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 		{Name: "id", Type: "INT", Pk: true, Ai: true, Comment: "pk"},
 		{Name: "note", Type: "VARCHAR(10)", Comment: "no trailing comma"},
 	}}}}
@@ -205,7 +205,7 @@ func TestSqliteCommentRoundTrip(t *testing.T) {
 // the KNOWN column name, not by splitting on the first ": ", so a colon in
 // either the name or the text survives.
 func TestSqliteCommentWithColon(t *testing.T) {
-	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 		{Name: "a:b", Type: "INT", Pk: true, Ai: true, Comment: "has: colon"},
 		{Name: "plain", Type: "INT", Comment: "x:y:z"},
 	}}}}
@@ -228,7 +228,7 @@ func TestSqliteCommentWithColon(t *testing.T) {
 // TestSqliteIndexedPkKeepsIndex: the rowid-alias branch used to `continue` past
 // the index collection, so an indexed PK column silently lost its CREATE INDEX.
 func TestSqliteIndexedPkKeepsIndex(t *testing.T) {
-	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 		{Name: "id", Type: "INT", Pk: true, Ai: true, Ix: true},
 	}}}}
 	sql := mustGenSQL(s)
@@ -248,7 +248,7 @@ func TestSqliteIndexedPkKeepsIndex(t *testing.T) {
 }
 
 func TestSqliteCompositePK(t *testing.T) {
-	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{Id: "t1", Name: "m", Columns: []Col{
+	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{ID: "t1", Name: "m", Columns: []Col{
 		{Name: "a", Type: "INT", Pk: true},
 		{Name: "b", Type: "INT", Pk: true},
 	}}}}
@@ -268,7 +268,7 @@ func TestSqliteCompositePK(t *testing.T) {
 // TestSqliteEscaping: identifiers are backticked like MySQL's, and enum values
 // containing a comma must not split the CHECK list.
 func TestSqliteEscaping(t *testing.T) {
-	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{Id: "t1", Name: "we`ird", Columns: []Col{
+	s := &Schema{Dialect: DialectSqlite, Tables: []Table{{ID: "t1", Name: "we`ird", Columns: []Col{
 		{Name: "a`b", Type: "INT", Pk: true, Ai: true},
 		{Name: "e", Type: "ENUM('a''b','c,d')"},
 		{Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""},

@@ -16,7 +16,7 @@ import (
 
 // Ref has no JSON tags: on the wire the browser sends {"tableId","action"}.
 type Ref struct {
-	TableId string `json:"tableId"`
+	TableID string `json:"tableId"`
 	Action  string `json:"action"`
 }
 
@@ -32,10 +32,11 @@ type Col struct {
 	Ref     *Ref   `json:"ref"`
 }
 
-// Id is the wire key the browser uses for ref.tableId; on open the client
-// re-allocates ids in its own namespace (adoptIds). X/Y are client-only.
+// Table is one table in the schema. ID is the wire key the browser uses for
+// ref.tableId; on open the client re-allocates ids in its own namespace
+// (adoptIds). X/Y are client-only.
 type Table struct {
-	Id      string `json:"id"`
+	ID      string `json:"id"`
 	Name    string `json:"name"`
 	X       int    `json:"-"`
 	Y       int    `json:"-"`
@@ -143,16 +144,17 @@ func (s *Schema) saveable() bool {
 	return saveableSet[s.dialect()]
 }
 
-// Lint: FK base-type vs referenced PK base-type mismatch; FK onto composite PK.
+// Lint reports FK base-type vs referenced PK base-type mismatch, and an FK
+// pointing at a composite PK.
 func (s *Schema) Lint() []string {
-	byId := tableMap(s.Tables)
+	byID := tableMap(s.Tables)
 	var out []string
 	for _, t := range s.Tables {
 		for _, c := range t.Columns {
 			if c.Ref == nil {
 				continue
 			}
-			p := byId[c.Ref.TableId]
+			p := byID[c.Ref.TableID]
 			if p == nil {
 				continue
 			}
@@ -241,6 +243,9 @@ func mustGenSQL(s *Schema) string {
 }
 
 // ---- seed INSERT templates ----
+
+// GenInserts renders one commented INSERT template per table with columns, for
+// seeding a database by hand.
 func (s *Schema) GenInserts() string {
 	out := []string{"-- Seed row templates (edit values, remove per table as needed)"}
 	for _, t := range s.Tables {
@@ -376,7 +381,7 @@ func detectDialect(sql string) string {
 func parseMysql(sql string, dialect string) (*Schema, error) {
 	s := &Schema{Dialect: dialect}
 	byName := map[string]int{} // name → index in s.Tables
-	byId := map[string]int{}   // id → index, O(1) for pending FK attachment
+	byID := map[string]int{}   // id → index, O(1) for pending FK attachment
 	var pending []pendingFK
 	cur := -1
 	tableID := 0
@@ -395,9 +400,9 @@ func parseMysql(sql string, dialect string) (*Schema, error) {
 			}
 			tableID++
 			id := fmt.Sprintf("t%d", tableID)
-			s.Tables = append(s.Tables, Table{Id: id, Name: name})
+			s.Tables = append(s.Tables, Table{ID: id, Name: name})
 			byName[name] = len(s.Tables) - 1
-			byId[id] = len(s.Tables) - 1
+			byID[id] = len(s.Tables) - 1
 			cur = len(s.Tables) - 1
 			continue
 		}
@@ -412,7 +417,7 @@ func parseMysql(sql string, dialect string) (*Schema, error) {
 			return nil, err
 		}
 	}
-	attachPendingFKs(s, byName, byId, pending)
+	attachPendingFKs(s, byName, byID, pending)
 	if len(s.Tables) == 0 {
 		return nil, fmt.Errorf("no CREATE TABLE found")
 	}
@@ -443,7 +448,7 @@ func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, 
 		if action == "" {
 			action = "CASCADE"
 		}
-		*pending = append(*pending, pendingFK{tbl.Id, unquoteTick(m[1]), unquoteTick(m[2]), action})
+		*pending = append(*pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), action})
 		return nil
 	}
 	if reKeyword.MatchString(body) {
@@ -468,18 +473,18 @@ func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, 
 	return nil
 }
 
-func attachPendingFKs(s *Schema, byName, byId map[string]int, pending []pendingFK) {
+func attachPendingFKs(s *Schema, byName, byID map[string]int, pending []pendingFK) {
 	for _, p := range pending {
 		idx, ok := byName[p.table]
 		if !ok {
 			continue // dangling FK ref → dropped, not crashed on
 		}
-		si, ok := byId[p.tableID]
+		si, ok := byID[p.tableID]
 		if !ok {
 			continue
 		}
 		markCol(&s.Tables[si], p.col, func(c *Col) {
-			c.Ref = &Ref{TableId: s.Tables[idx].Id, Action: p.action}
+			c.Ref = &Ref{TableID: s.Tables[idx].ID, Action: p.action}
 		})
 	}
 }

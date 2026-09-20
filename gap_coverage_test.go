@@ -164,7 +164,7 @@ func TestIsValidTypeExprGaps(t *testing.T) {
 
 func TestGenInsertsBranches(t *testing.T) {
 	s := &Schema{Tables: []Table{
-		{Id: "t1", Name: "t", Columns: []Col{
+		{ID: "t1", Name: "t", Columns: []Col{
 			{Name: "a", Type: "INT", Ai: true},
 			{Name: "b", Type: "BIGINT"},
 			{Name: "c", Type: "DECIMAL(10,2)"},
@@ -186,7 +186,7 @@ func TestGenInsertsBranches(t *testing.T) {
 		}
 	}
 	// empty table skipped
-	s2 := &Schema{Tables: []Table{{Id: "t1", Name: "empty"}}}
+	s2 := &Schema{Tables: []Table{{ID: "t1", Name: "empty"}}}
 	if out2 := s2.GenInserts(); !strings.Contains(out2, "Seed row") {
 		t.Errorf("empty table should still have header")
 	}
@@ -199,7 +199,7 @@ func TestGenInsertsBranches(t *testing.T) {
 // ---- findTable / fkTarget dead code ----
 
 func TestFindTableAndFkTarget(t *testing.T) {
-	tables := []Table{{Id: "t1", Name: "a"}, {Id: "t2", Name: "b"}}
+	tables := []Table{{ID: "t1", Name: "a"}, {ID: "t2", Name: "b"}}
 	if findTable(tables, "t1") == nil || findTable(tables, "nope") != nil {
 		t.Error("findTable")
 	}
@@ -208,22 +208,22 @@ func TestFindTableAndFkTarget(t *testing.T) {
 		t.Error("nil ref should be false")
 	}
 	// fkTarget with missing parent
-	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableId: "missing"}}); ok {
+	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableID: "missing"}}); ok {
 		t.Error("missing parent should be false")
 	}
 	// fkTarget with parent but no PK
 	tables[0].Columns = []Col{{Name: "id", Type: "INT"}}
-	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableId: "t1"}}); ok {
+	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableID: "t1"}}); ok {
 		t.Error("no PK should be false")
 	}
 	// fkTarget with composite PK
 	tables[0].Columns = []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}
-	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableId: "t1"}}); ok {
+	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableID: "t1"}}); ok {
 		t.Error("composite PK should be false")
 	}
 	// success
 	tables[0].Columns = []Col{{Name: "id", Type: "INT", Pk: true}}
-	c := Col{Ref: &Ref{TableId: "t1"}, Name: "fk"}
+	c := Col{Ref: &Ref{TableID: "t1"}, Name: "fk"}
 	if _, _, ok := fkTarget(tables, c); !ok {
 		t.Error("should succeed")
 	}
@@ -244,7 +244,7 @@ func TestUnquoteHelpers(t *testing.T) {
 }
 
 func TestParseMysqlBodyLineBranches(t *testing.T) {
-	tbl := &Table{Id: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "INT"}, {Name: "email", Type: "VARCHAR(10)"}}}
+	tbl := &Table{ID: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "INT"}, {Name: "email", Type: "VARCHAR(10)"}}}
 	var pending []pendingFK
 	// PK
 	if err := parseMysqlBodyLine("PRIMARY KEY (`id`)", "PRIMARY KEY (`id`),", tbl, &pending, 1); err != nil {
@@ -261,7 +261,7 @@ func TestParseMysqlBodyLineBranches(t *testing.T) {
 		t.Error("Ux not marked")
 	}
 	// Index
-	tbl2 := &Table{Id: "t2", Name: "t", Columns: []Col{{Name: "tag", Type: "VARCHAR(10)"}}}
+	tbl2 := &Table{ID: "t2", Name: "t", Columns: []Col{{Name: "tag", Type: "VARCHAR(10)"}}}
 	if err := parseMysqlBodyLine("KEY `idx_t_tag` (`tag`)", "KEY `idx_t_tag` (`tag`),", tbl2, &pending, 3); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestParseMysqlBodyLineBranches(t *testing.T) {
 		t.Error("Ix not marked")
 	}
 	// FK
-	tbl3 := &Table{Id: "t3", Name: "posts", Columns: []Col{{Name: "user_id", Type: "INT"}}}
+	tbl3 := &Table{ID: "t3", Name: "posts", Columns: []Col{{Name: "user_id", Type: "INT"}}}
 	if err := parseMysqlBodyLine("CONSTRAINT `fk_posts_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE", "CONSTRAINT ...", tbl3, &pending, 4); err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestParseMysqlBodyLineBranches(t *testing.T) {
 		t.Error("garbage should error")
 	}
 	// column
-	tbl4 := &Table{Id: "t4", Name: "t", Columns: []Col{}}
+	tbl4 := &Table{ID: "t4", Name: "t", Columns: []Col{}}
 	if err := parseMysqlBodyLine("`name` VARCHAR(255) NOT NULL", "`name` VARCHAR(255) NOT NULL,", tbl4, &pending, 7); err != nil {
 		t.Fatal(err)
 	}
@@ -296,23 +296,23 @@ func TestParseMysqlBodyLineBranches(t *testing.T) {
 
 func TestAttachPendingFKsBranches(t *testing.T) {
 	s := &Schema{Tables: []Table{
-		{Id: "t1", Name: "users", Columns: []Col{{Name: "id", Type: "INT", Pk: true}}},
-		{Id: "t2", Name: "posts", Columns: []Col{{Name: "user_id", Type: "INT"}}},
+		{ID: "t1", Name: "users", Columns: []Col{{Name: "id", Type: "INT", Pk: true}}},
+		{ID: "t2", Name: "posts", Columns: []Col{{Name: "user_id", Type: "INT"}}},
 	}}
 	byName := map[string]int{"users": 0}
-	byId := map[string]int{"t2": 1}
+	byID := map[string]int{"t2": 1}
 	// dangling FK -> dropped
-	attachPendingFKs(s, byName, byId, []pendingFK{{tableID: "t2", col: "user_id", table: "missing", action: "CASCADE"}})
+	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "t2", col: "user_id", table: "missing", action: "CASCADE"}})
 	if s.Tables[1].Columns[0].Ref != nil {
 		t.Error("dangling should be dropped")
 	}
 	// missing tableID
-	attachPendingFKs(s, byName, byId, []pendingFK{{tableID: "nope", col: "user_id", table: "users", action: "CASCADE"}})
+	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "nope", col: "user_id", table: "users", action: "CASCADE"}})
 	if s.Tables[1].Columns[0].Ref != nil {
 		t.Error("missing tableID should be dropped")
 	}
 	// success
-	attachPendingFKs(s, byName, byId, []pendingFK{{tableID: "t2", col: "user_id", table: "users", action: "SET NULL"}})
+	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "t2", col: "user_id", table: "users", action: "SET NULL"}})
 	if s.Tables[1].Columns[0].Ref == nil || s.Tables[1].Columns[0].Ref.Action != "SET NULL" {
 		t.Error("FK attach failed")
 	}
@@ -373,7 +373,7 @@ func (f *fakeAddr) String() string  { return f.s }
 
 func TestHandleSchemaAPIAndDecode(t *testing.T) {
 	// lint path
-	s := Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "INT"}}}}}
+	s := Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "INT"}}}}}
 	body, _ := json.Marshal(map[string]any{"tables": s.Tables})
 	req := httptest.NewRequest("POST", "/api/lint", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -392,7 +392,7 @@ func TestHandleSchemaAPIAndDecode(t *testing.T) {
 		t.Logf("unknown path code %d", rec2.Code)
 	}
 	// invalid schema
-	badS := Schema{Tables: []Table{{Id: "t1", Name: "bad\x01", Columns: []Col{}}}}
+	badS := Schema{Tables: []Table{{ID: "t1", Name: "bad\x01", Columns: []Col{}}}}
 	bad, _ := json.Marshal(map[string]any{"tables": badS.Tables})
 	req3 := httptest.NewRequest("POST", "/api/lint", bytes.NewReader(bad))
 	rec3 := httptest.NewRecorder()
@@ -441,7 +441,7 @@ func TestSaveFileGaps(t *testing.T) {
 	// Instead test saveFile with valid schema but ensure GenSQL error path is exercised via invalid type that Validate catches (already 400)
 	// Create a schema with control char in type that Validate rejects, ensure save leaves no file
 	rec := httptest.NewRecorder()
-	badBody, _ := json.Marshal(Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "VARCHAR(1;DROP)"}}}}})
+	badBody, _ := json.Marshal(Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "VARCHAR(1;DROP)"}}}}})
 	req := httptest.NewRequest("PUT", "/api/files/bad.sql", bytes.NewReader(badBody))
 	h.ServeHTTP(rec, req)
 	if rec.Code != 400 {

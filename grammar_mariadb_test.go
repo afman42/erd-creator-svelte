@@ -60,10 +60,10 @@ func TestMariaDBMatchesMysql(t *testing.T) {
 	schemas := map[string]*Schema{
 		"sample":       sampleSchema(),
 		"no-pk parent": noPKParent(),
-		"composite pk": {Tables: []Table{{Id: "t1", Name: "m", Columns: []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}}}},
-		"empty table":  {Tables: []Table{{Id: "t1", Name: "empty"}}},
-		"escaping":     {Tables: []Table{{Id: "t1", Name: "we`ird", Columns: []Col{{Name: "a`b", Type: "INT", Pk: true}, {Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""}}}}},
-		"all flag combos": {Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+		"composite pk": {Tables: []Table{{ID: "t1", Name: "m", Columns: []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}}}},
+		"empty table":  {Tables: []Table{{ID: "t1", Name: "empty"}}},
+		"escaping":     {Tables: []Table{{ID: "t1", Name: "we`ird", Columns: []Col{{Name: "a`b", Type: "INT", Pk: true}, {Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""}}}}},
+		"all flag combos": {Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 			{Name: "a", Type: "INT", Pk: true, Nn: true, Ai: true, Ux: true, Ix: true, Comment: "c"},
 			{Name: "b", Type: "TINYINT", Ai: true},
 			{Name: "c", Type: "DECIMAL(10,2)"},

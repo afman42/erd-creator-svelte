@@ -8,14 +8,14 @@ import (
 
 func sample() []Table {
 	return []Table{
-		{Id: "t1", Name: "users", Columns: []Col{
+		{ID: "t1", Name: "users", Columns: []Col{
 			{Name: "id", Type: "INT", Pk: true, Nn: true, Ai: true, Comment: "pk"},
 			{Name: "email", Type: "VARCHAR(190)", Nn: true, Ux: true, Ix: true},
 			{Name: "status", Type: "ENUM('active','banned')"},
 		}},
-		{Id: "t2", Name: "posts", Columns: []Col{
+		{ID: "t2", Name: "posts", Columns: []Col{
 			{Name: "id", Type: "BIGINT", Pk: true, Nn: true, Ai: true},
-			{Name: "user_id", Type: "INT", Ref: &Ref{TableId: "t1", Action: "SET NULL"}},
+			{Name: "user_id", Type: "INT", Ref: &Ref{TableID: "t1", Action: "SET NULL"}},
 		}},
 	}
 }
@@ -47,7 +47,7 @@ func TestExportDialects(t *testing.T) {
 
 func TestExportEscaping(t *testing.T) {
 	tables := []Table{
-		{Id: "t1", Name: "we`ird", Columns: []Col{
+		{ID: "t1", Name: "we`ird", Columns: []Col{
 			{Name: "a`b", Type: "INT", Pk: true},
 			{Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""},
 			{Name: "e", Type: "ENUM('a''b','c,d')"},
@@ -81,17 +81,17 @@ func TestExportEdgeCases(t *testing.T) {
 	// dangling ref skipped; composite-PK parent FK skipped (invalid single-col FK);
 	// empty action defaults CASCADE; composite PK itself all emitted
 	tables := []Table{
-		{Id: "t1", Name: "m", Columns: []Col{
+		{ID: "t1", Name: "m", Columns: []Col{
 			{Name: "a", Type: "INT", Pk: true},
 			{Name: "b", Type: "INT", Pk: true},
-			{Name: "g", Type: "INT", Ref: &Ref{TableId: "gone"}},
+			{Name: "g", Type: "INT", Ref: &Ref{TableID: "gone"}},
 		}},
-		{Id: "t2", Name: "n", Columns: []Col{
+		{ID: "t2", Name: "n", Columns: []Col{
 			{Name: "id", Type: "INT", Pk: true},
-			{Name: "m_a", Type: "INT", Ref: &Ref{TableId: "t1", Action: "RESTRICT"}},
-			{Name: "s", Type: "INT", Ref: &Ref{TableId: "t3"}},
+			{Name: "m_a", Type: "INT", Ref: &Ref{TableID: "t1", Action: "RESTRICT"}},
+			{Name: "s", Type: "INT", Ref: &Ref{TableID: "t3"}},
 		}},
-		{Id: "t3", Name: "singles", Columns: []Col{
+		{ID: "t3", Name: "singles", Columns: []Col{
 			{Name: "id", Type: "INT", Pk: true},
 		}},
 	}
@@ -129,9 +129,9 @@ func TestGenSQLMatchesBuildMysql(t *testing.T) {
 	schemas := map[string]*Schema{
 		"sample":       sampleSchema(),
 		"no-pk parent": noPKParent(),
-		"composite pk": {Tables: []Table{{Id: "t1", Name: "m", Columns: []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}}}},
-		"empty table":  {Tables: []Table{{Id: "t1", Name: "empty"}}},
-		"escaping":     {Tables: []Table{{Id: "t1", Name: "we`ird", Columns: []Col{{Name: "a`b", Type: "INT", Pk: true}, {Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""}}}}},
+		"composite pk": {Tables: []Table{{ID: "t1", Name: "m", Columns: []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}}}},
+		"empty table":  {Tables: []Table{{ID: "t1", Name: "empty"}}},
+		"escaping":     {Tables: []Table{{ID: "t1", Name: "we`ird", Columns: []Col{{Name: "a`b", Type: "INT", Pk: true}, {Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""}}}}},
 	}
 	for name, s := range schemas {
 		saved := mustGenSQL(s)
@@ -145,10 +145,10 @@ func TestGenSQLMatchesBuildMysql(t *testing.T) {
 // noPKParent: child.pid → parent.email, but parent has NO primary key.
 func noPKParent() *Schema {
 	return &Schema{Tables: []Table{
-		{Id: "t1", Name: "parent", Columns: []Col{{Name: "email", Type: "VARCHAR(190)", Nn: true}}},
-		{Id: "t2", Name: "child", Columns: []Col{
+		{ID: "t1", Name: "parent", Columns: []Col{{Name: "email", Type: "VARCHAR(190)", Nn: true}}},
+		{ID: "t2", Name: "child", Columns: []Col{
 			{Name: "id", Type: "INT", Pk: true},
-			{Name: "pid", Type: "VARCHAR(190)", Ref: &Ref{TableId: "t1"}},
+			{Name: "pid", Type: "VARCHAR(190)", Ref: &Ref{TableID: "t1"}},
 		}},
 	}}
 }
@@ -272,7 +272,7 @@ func TestSaveableIsTotal(t *testing.T) {
 // here would make the panel/Copy/Export disagree with Save.
 func TestSchemaExportSQL(t *testing.T) {
 	base := func() *Schema {
-		return &Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+		return &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 			{Name: "id", Type: "INT", Pk: true},
 			{Name: "flag", Type: "BOOLEAN"},
 		}}}}

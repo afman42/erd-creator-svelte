@@ -92,7 +92,7 @@ func sqliteTypesFromHeader(sql string) string {
 func parseSqlite(sql string) (*Schema, error) {
 	s := &Schema{Dialect: DialectSqlite, SqliteTypes: sqliteTypesFromHeader(sql)}
 	byName := map[string]int{} // name → index in s.Tables
-	byId := map[string]int{}   // id → index, O(1) for pending FK attachment
+	byID := map[string]int{}   // id → index, O(1) for pending FK attachment
 	var pending []pendingFK
 	cur := -1
 	tableID := 0
@@ -112,9 +112,9 @@ func parseSqlite(sql string) (*Schema, error) {
 			}
 			tableID++
 			id := fmt.Sprintf("t%d", tableID)
-			s.Tables = append(s.Tables, Table{Id: id, Name: name})
+			s.Tables = append(s.Tables, Table{ID: id, Name: name})
 			byName[name] = len(s.Tables) - 1
-			byId[id] = len(s.Tables) - 1
+			byID[id] = len(s.Tables) - 1
 			cur = len(s.Tables) - 1
 			commentLine = ""
 			continue
@@ -156,7 +156,7 @@ func parseSqlite(sql string) (*Schema, error) {
 			continue
 		}
 		if m := reSqliteFK.FindStringSubmatch(body); m != nil {
-			pending = append(pending, pendingFK{tbl.Id, unquoteTick(m[1]), unquoteTick(m[2]), m[4]})
+			pending = append(pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), m[4]})
 			commentLine = ""
 			continue
 		}
@@ -203,12 +203,12 @@ func parseSqlite(sql string) (*Schema, error) {
 		if !ok {
 			continue // dangling FK ref → dropped, not crashed on
 		}
-		si, ok := byId[p.tableID]
+		si, ok := byID[p.tableID]
 		if !ok {
 			continue
 		}
 		markCol(&s.Tables[si], p.col, func(c *Col) {
-			c.Ref = &Ref{TableId: s.Tables[idx].Id, Action: p.action}
+			c.Ref = &Ref{TableID: s.Tables[idx].ID, Action: p.action}
 		})
 	}
 	if len(s.Tables) == 0 {

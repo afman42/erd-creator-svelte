@@ -87,7 +87,7 @@ func TestPostgresTypeMapping(t *testing.T) {
 	}
 	for _, in := range exact {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
-			{Id: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
+			{ID: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
 		}}
 		parsed, err := ParseDDL(mustGenSQL(s))
 		if err != nil {
@@ -102,7 +102,7 @@ func TestPostgresTypeMapping(t *testing.T) {
 	lossy := map[string]string{"TINYINT": "SMALLINT", "DATETIME": "TIMESTAMP"}
 	for in, want := range lossy {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
-			{Id: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
+			{ID: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
 		}}
 		parsed, err := ParseDDL(mustGenSQL(s))
 		if err != nil {
@@ -121,7 +121,7 @@ func TestPostgresTypeMapping(t *testing.T) {
 func TestPostgresReopenIsPortable(t *testing.T) {
 	for _, in := range []string{"JSON", "TINYINT", "DATETIME", "ENUM('a','b')", "INT", "VARCHAR(9)"} {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
-			{Id: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
+			{ID: "t1", Name: "t", Columns: []Col{{Name: "c", Type: in}}},
 		}}
 		reopened, err := ParseDDL(mustGenSQL(s))
 		if err != nil {
@@ -161,7 +161,7 @@ func TestPostgresJSONBInput(t *testing.T) {
 // TestPostgresRoundTripEscaping: identifiers with embedded quotes and comments
 // with embedded single quotes must survive.
 func TestPostgresRoundTripEscaping(t *testing.T) {
-	s := &Schema{Dialect: DialectPostgres, Tables: []Table{{Id: "t1", Name: `we"ird`, Columns: []Col{
+	s := &Schema{Dialect: DialectPostgres, Tables: []Table{{ID: "t1", Name: `we"ird`, Columns: []Col{
 		{Name: `a"b`, Type: "INT", Pk: true},
 		{Name: "c", Type: "VARCHAR(10)", Comment: `it's "quoted"`},
 		{Name: "e", Type: "ENUM('a''b','c,d')"},
@@ -186,8 +186,8 @@ func TestPostgresRoundTripEscaping(t *testing.T) {
 func TestPostgresEdgeCases(t *testing.T) {
 	t.Run("composite PK parent drops FK", func(t *testing.T) {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
-			{Id: "t1", Name: "m", Columns: []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}},
-			{Id: "t2", Name: "c", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "mid", Type: "INT", Ref: &Ref{TableId: "t1"}}}},
+			{ID: "t1", Name: "m", Columns: []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}},
+			{ID: "t2", Name: "c", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "mid", Type: "INT", Ref: &Ref{TableID: "t1"}}}},
 		}}
 		sql := mustGenSQL(s)
 		if strings.Contains(sql, "FOREIGN KEY") {
@@ -204,8 +204,8 @@ func TestPostgresEdgeCases(t *testing.T) {
 
 	t.Run("no-PK parent drops FK", func(t *testing.T) {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
-			{Id: "t1", Name: "p", Columns: []Col{{Name: "email", Type: "VARCHAR(9)"}}},
-			{Id: "t2", Name: "c", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "pid", Type: "VARCHAR(9)", Ref: &Ref{TableId: "t1"}}}},
+			{ID: "t1", Name: "p", Columns: []Col{{Name: "email", Type: "VARCHAR(9)"}}},
+			{ID: "t2", Name: "c", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "pid", Type: "VARCHAR(9)", Ref: &Ref{TableID: "t1"}}}},
 		}}
 		if strings.Contains(mustGenSQL(s), "FOREIGN KEY") {
 			t.Errorf("FK onto PK-less parent must not be emitted:\n%s", mustGenSQL(s))
@@ -213,7 +213,7 @@ func TestPostgresEdgeCases(t *testing.T) {
 	})
 
 	t.Run("empty table skipped", func(t *testing.T) {
-		s := &Schema{Dialect: DialectPostgres, Tables: []Table{{Id: "t1", Name: "empty"}}}
+		s := &Schema{Dialect: DialectPostgres, Tables: []Table{{ID: "t1", Name: "empty"}}}
 		if strings.Contains(mustGenSQL(s), "CREATE TABLE") {
 			t.Error("empty table emitted")
 		}
@@ -221,7 +221,7 @@ func TestPostgresEdgeCases(t *testing.T) {
 
 	t.Run("self reference emits FK", func(t *testing.T) {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{
-			{Id: "t1", Name: "n", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "parent_id", Type: "INT", Ref: &Ref{TableId: "t1"}}}},
+			{ID: "t1", Name: "n", Columns: []Col{{Name: "id", Type: "INT", Pk: true}, {Name: "parent_id", Type: "INT", Ref: &Ref{TableID: "t1"}}}},
 		}}
 		sql := mustGenSQL(s)
 		if !strings.Contains(sql, "FOREIGN KEY") {

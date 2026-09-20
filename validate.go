@@ -67,7 +67,7 @@ func hasControlChar(s string) bool {
 	return false
 }
 
-func isTypeStart(c byte) bool { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' }
+func isTypeStart(c byte) bool    { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' }
 func isTypeNameChar(c byte) bool { return isTypeStart(c) || (c >= '0' && c <= '9') || c == ' ' }
 func isTypeArgChar(c byte) bool {
 	return isTypeNameChar(c) || c == ',' || c == '\'' || c == '"' || c == '(' || c == ')' || c == '.' || c == '+' || c == '-'
@@ -157,7 +157,7 @@ func (s *Schema) Validate() error {
 				if err := validateText("FK action", c.Ref.Action, maxNameLen); err != nil {
 					return fmt.Errorf("%s (%q): %w", where, c.Name, err)
 				}
-				if err := validateIdent("FK target id", c.Ref.TableId); err != nil {
+				if err := validateIdent("FK target id", c.Ref.TableID); err != nil {
 					return fmt.Errorf("%s (%q): %w", where, c.Name, err)
 				}
 			}

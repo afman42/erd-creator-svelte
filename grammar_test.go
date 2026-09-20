@@ -9,14 +9,14 @@ import (
 
 func sampleSchema() *Schema {
 	return &Schema{Tables: []Table{
-		{Id: "t1", Name: "users", Columns: []Col{
+		{ID: "t1", Name: "users", Columns: []Col{
 			{Name: "id", Type: "INT", Pk: true, Nn: true, Ai: true, Comment: "pk"},
 			{Name: "email", Type: "VARCHAR(190)", Nn: true, Ux: true},
 			{Name: "status", Type: "ENUM('active','banned')"},
 		}},
-		{Id: "t2", Name: "posts", Columns: []Col{
+		{ID: "t2", Name: "posts", Columns: []Col{
 			{Name: "id", Type: "BIGINT", Pk: true, Nn: true, Ai: true},
-			{Name: "user_id", Type: "INT", Ref: &Ref{TableId: "t1", Action: "SET NULL"}},
+			{Name: "user_id", Type: "INT", Ref: &Ref{TableID: "t1", Action: "SET NULL"}},
 			{Name: "tag", Type: "VARCHAR(40)", Ix: true},
 		}},
 	}}
@@ -54,7 +54,7 @@ func TestRoundTripStable(t *testing.T) {
 }
 
 func TestRoundTripEscaping(t *testing.T) {
-	s := &Schema{Tables: []Table{{Id: "t1", Name: "we`ird", Columns: []Col{
+	s := &Schema{Tables: []Table{{ID: "t1", Name: "we`ird", Columns: []Col{
 		{Name: "a`b", Type: "INT", Pk: true},
 		{Name: "c", Type: "VARCHAR(10)", Comment: "it's \"quoted\""},
 		{Name: "e", Type: "ENUM('a''b','c,d')"},
@@ -103,10 +103,10 @@ func TestDanglingFKDropped(t *testing.T) {
 }
 
 func TestCompositePKRoundTrip(t *testing.T) {
-	s := &Schema{Tables: []Table{{Id: "t1", Name: "m", Columns: []Col{
+	s := &Schema{Tables: []Table{{ID: "t1", Name: "m", Columns: []Col{
 		{Name: "a", Type: "INT", Pk: true},
 		{Name: "b", Type: "INT", Pk: true},
-		{Name: "x", Type: "INT", Ref: &Ref{TableId: "t1"}},
+		{Name: "x", Type: "INT", Ref: &Ref{TableID: "t1"}},
 	}}}}
 	sql := mustGenSQL(s)
 	if strings.Contains(sql, "CONSTRAINT `fk_m_x`") {
@@ -134,8 +134,8 @@ func TestLint(t *testing.T) {
 
 func TestLintNoPK(t *testing.T) {
 	s := &Schema{Tables: []Table{
-		{Id: "t1", Name: "badref", Columns: []Col{{Name: "email", Type: "VARCHAR(190)", Nn: true}}},
-		{Id: "t2", Name: "posts", Columns: []Col{{Name: "user_id", Type: "INT", Ref: &Ref{TableId: "t1"}}}},
+		{ID: "t1", Name: "badref", Columns: []Col{{Name: "email", Type: "VARCHAR(190)", Nn: true}}},
+		{ID: "t2", Name: "posts", Columns: []Col{{Name: "user_id", Type: "INT", Ref: &Ref{TableID: "t1"}}}},
 	}}
 	l := s.Lint()
 	if len(l) != 1 || !strings.Contains(l[0], "has no PK") {
@@ -151,7 +151,7 @@ func TestGenInserts(t *testing.T) {
 }
 
 func TestEmptyTableSkipped(t *testing.T) {
-	s := &Schema{Tables: []Table{{Id: "t1", Name: "empty"}}}
+	s := &Schema{Tables: []Table{{ID: "t1", Name: "empty"}}}
 	if strings.Contains(mustGenSQL(s), "CREATE TABLE") {
 		t.Error("empty table emitted")
 	}

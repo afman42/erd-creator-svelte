@@ -43,7 +43,7 @@ func TestRejectsTypeInjection(t *testing.T) {
 		"ENUM('a'); DROP TABLE x; --')",
 	}
 	for _, p := range payloads {
-		s := &Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+		s := &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 			{Name: "a", Type: p},
 		}}}}
 		if err := s.Validate(); err == nil {
@@ -71,7 +71,7 @@ func TestAcceptsRealTypes(t *testing.T) {
 		"CHAR(1)", "NUMERIC(8, 2)",
 	}
 	for _, ty := range ok {
-		s := &Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+		s := &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 			{Name: "a", Type: ty},
 		}}}}
 		if err := s.Validate(); err != nil {
@@ -98,20 +98,20 @@ func TestRejectsControlChars(t *testing.T) {
 		"vertical tab": "a\x0bb",
 	}
 	for what, name := range bad {
-		s := &Schema{Tables: []Table{{Id: "t1", Name: name, Columns: []Col{
+		s := &Schema{Tables: []Table{{ID: "t1", Name: name, Columns: []Col{
 			{Name: "c", Type: "INT"},
 		}}}}
 		if err := s.Validate(); err == nil {
 			t.Errorf("%s in a table name accepted", what)
 		}
 		// same for a column name and a comment
-		s2 := &Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+		s2 := &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 			{Name: name, Type: "INT"},
 		}}}}
 		if err := s2.Validate(); err == nil {
 			t.Errorf("%s in a column name accepted", what)
 		}
-		s3 := &Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+		s3 := &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 			{Name: "c", Type: "INT", Comment: name},
 		}}}}
 		if err := s3.Validate(); err == nil {
@@ -130,7 +130,7 @@ func TestRejectsControlChars(t *testing.T) {
 // come back truncated at the newline. A value that cannot survive the format is
 // refused rather than silently mangled.
 func TestStructuralIdentifierRejected(t *testing.T) {
-	s := &Schema{Tables: []Table{{Id: "t1",
+	s := &Schema{Tables: []Table{{ID: "t1",
 		Name:    "a\n) ENGINE=InnoDB;\nCREATE TABLE evil (\n  `id` INT",
 		Columns: []Col{{Name: "x", Type: "INT"}},
 	}}}
@@ -147,12 +147,12 @@ func TestStructuralIdentifierRejected(t *testing.T) {
 
 func TestRejectsOversizedInput(t *testing.T) {
 	long := strings.Repeat("a", maxNameLen+1)
-	s := &Schema{Tables: []Table{{Id: "t1", Name: long, Columns: []Col{{Name: "c", Type: "INT"}}}}}
+	s := &Schema{Tables: []Table{{ID: "t1", Name: long, Columns: []Col{{Name: "c", Type: "INT"}}}}}
 	if err := s.Validate(); err == nil {
 		t.Error("over-long table name accepted")
 	}
 
-	s2 := &Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: []Col{
+	s2 := &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
 		{Name: "c", Type: strings.Repeat("V", maxTypeLen+1)},
 	}}}}
 	if err := s2.Validate(); err == nil {
@@ -162,7 +162,7 @@ func TestRejectsOversizedInput(t *testing.T) {
 	// too many tables
 	var tables []Table
 	for i := 0; i <= maxTables; i++ {
-		tables = append(tables, Table{Id: "t", Name: "t", Columns: []Col{{Name: "c", Type: "INT"}}})
+		tables = append(tables, Table{ID: "t", Name: "t", Columns: []Col{{Name: "c", Type: "INT"}}})
 	}
 	if err := (&Schema{Tables: tables}).Validate(); err == nil {
 		t.Error("table-count bound not enforced")
@@ -173,7 +173,7 @@ func TestRejectsOversizedInput(t *testing.T) {
 	for i := 0; i <= maxColumns; i++ {
 		cols = append(cols, Col{Name: "c", Type: "INT"})
 	}
-	if err := (&Schema{Tables: []Table{{Id: "t1", Name: "t", Columns: cols}}}).Validate(); err == nil {
+	if err := (&Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: cols}}}).Validate(); err == nil {
 		t.Error("column-count bound not enforced")
 	}
 }

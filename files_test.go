@@ -360,7 +360,7 @@ func TestSaveReopenEveryDialect(t *testing.T) {
 	for _, dialect := range []string{DialectMysql, DialectMariaDB, DialectPostgres, DialectSqlite} {
 		name := dialect + ".sql"
 		body, _ := json.Marshal(&Schema{Dialect: dialect, Tables: []Table{
-			{Id: "t1", Name: "t", Columns: []Col{
+			{ID: "t1", Name: "t", Columns: []Col{
 				{Name: "id", Type: "INT", Pk: true, Ai: true},
 				{Name: "flag", Type: "BOOLEAN"},
 			}},
