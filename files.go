@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -110,7 +111,7 @@ func handleFiles(dir string) http.Handler {
 		case http.MethodGet:
 			openFile(w, full, name)
 		case http.MethodPut:
-			saveFile(w, dir, full, name, r)
+			saveFile(w, dir, full, r)
 		case http.MethodDelete:
 			// Remove the link itself, never what it points at: os.Remove is
 			// already unlink(2), but the resolved path is used so a link to
@@ -153,7 +154,7 @@ func listFiles(w http.ResponseWriter, dir string) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	writeJSON(w, out)
 }
 
 func openFile(w http.ResponseWriter, full, name string) {
@@ -168,7 +169,7 @@ func openFile(w http.ResponseWriter, full, name string) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s)
+	writeJSON(w, s)
 }
 
 // saveFile writes a schema to an already-resolved path inside the store.
@@ -180,7 +181,7 @@ func openFile(w http.ResponseWriter, full, name string) {
 // the save so it overwrote a file outside the store. On collision the name is
 // retried with a random suffix rather than reused, so a legitimate leftover
 // temp file does not block saving.
-func saveFile(w http.ResponseWriter, dir, full, name string, r *http.Request) {
+func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var s Schema
 	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
@@ -218,22 +219,41 @@ func saveFile(w http.ResponseWriter, dir, full, name string, r *http.Request) {
 		return
 	}
 	if _, err := tmp.WriteString(ddl); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
+		discardTemp(tmp)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
+		removeTemp(tmp.Name())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := os.Rename(tmp.Name(), full); err != nil {
-		os.Remove(tmp.Name())
+		removeTemp(tmp.Name())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeTemp deletes a temp file left behind by a failed save. Best-effort by
+// design: the save has already failed and the error response is being written,
+// so this cannot change the outcome. It is logged because a leftover temp file
+// is otherwise invisible and would silently accumulate in the store.
+func removeTemp(name string) {
+	if err := os.Remove(name); err != nil {
+		log.Printf("remove temp %s: %v", name, err)
+	}
+}
+
+// discardTemp closes then deletes a temp file whose write failed. Both steps are
+// best-effort for the same reason as removeTemp; the close is attempted because
+// a file still open when the handler returns leaks a descriptor.
+func discardTemp(f *os.File) {
+	if err := f.Close(); err != nil {
+		log.Printf("close temp %s: %v", f.Name(), err)
+	}
+	removeTemp(f.Name())
 }
 
 // createTemp opens a new temp file inside the store for the atomic save.

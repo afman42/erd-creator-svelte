@@ -115,11 +115,11 @@ var schemaAPI = map[string]func(http.ResponseWriter, *Schema){
 			l = []string{}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(l)
+		writeJSON(w, l)
 	},
 	"/api/inserts": func(w http.ResponseWriter, s *Schema) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprint(w, s.GenInserts())
+		writeText(w, s.GenInserts())
 	},
 }
 
@@ -157,6 +157,25 @@ func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 		return nil, false
 	}
 	return b, true
+}
+
+// writeJSON encodes v as the response body. The encode error is reported rather
+// than dropped: by the time Encode runs the status line is already committed, so
+// a failure cannot be turned into an error response — it would reach the client
+// as a truncated body under a 200. The log line is the only record of that.
+func writeJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("write json: %v", err)
+	}
+}
+
+// writeText writes a plain-text response body, logging a failed write for the
+// same reason as writeJSON: the header is already sent, so a short write cannot
+// be surfaced to the client and would otherwise pass silently.
+func writeText(w http.ResponseWriter, body string) {
+	if _, err := fmt.Fprint(w, body); err != nil {
+		log.Printf("write text: %v", err)
+	}
 }
 
 // schemaEnvelope is the accepted POST body shape for every schema endpoint:

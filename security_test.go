@@ -266,7 +266,9 @@ func TestSymlinkWriteBlocked(t *testing.T) {
 	}
 	// the old predictable name, plus a guess at the new prefix
 	for _, n := range []string{".evil.sql.tmp", ".save-evil.sql.tmp"} {
-		os.Symlink(target, filepath.Join(dir, n))
+		if err := os.Symlink(target, filepath.Join(dir, n)); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	h := handleFiles(dir)
@@ -304,8 +306,12 @@ func TestSymlinkDirEscapeBlocked(t *testing.T) {
 	}
 	// but a link INSIDE it that points out is still refused
 	outside := filepath.Join(t.TempDir(), "x.sql")
-	os.WriteFile(outside, []byte("x"), 0o644)
-	os.Symlink(outside, filepath.Join(real, "escape.sql"))
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(real, "escape.sql")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := storePath(link, "escape.sql"); err == nil {
 		t.Error("link escaping the store accepted")
 	}

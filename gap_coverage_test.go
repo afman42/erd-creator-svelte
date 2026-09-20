@@ -49,7 +49,9 @@ func TestHandleMissingTarget(t *testing.T) {
 	}
 	// parent != root: create subdir and use it
 	sub := filepath.Join(dir, "sub")
-	os.Mkdir(sub, 0o755)
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	subRoot, _ := resolveStoreRoot(dir)
 	// full whose parent is sub, not root
 	full2 := filepath.Join(sub, "a.sql")
@@ -76,8 +78,12 @@ func TestCreateTempAndEnsureDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createTemp: %v", err)
 	}
-	f.Close()
-	os.Remove(f.Name())
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(f.Name()); err != nil {
+		t.Fatal(err)
+	}
 	if err := ensureDir(""); err == nil {
 		t.Error("empty dir should error")
 	}

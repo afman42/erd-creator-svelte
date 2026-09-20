@@ -137,14 +137,18 @@ func TestFilesListSorted(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
 	for _, name := range []string{"c.sql", "a.sql", "b.sql"} {
-		os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files", nil))
 	var got []struct {
 		Name string `json:"name"`
 	}
-	json.Unmarshal(rec.Body.Bytes(), &got)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
 	var names []string
 	for _, f := range got {
 		names = append(names, f.Name)
@@ -289,7 +293,11 @@ func TestFilesTraversal(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("SECRET"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(outside)
+	defer func() {
+		if err := os.Remove(outside); err != nil {
+			t.Errorf("cleanup %s: %v", outside, err)
+		}
+	}()
 
 	bad := []string{
 		"/api/files/..%2Fsecret.sql",
