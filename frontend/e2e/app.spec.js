@@ -654,3 +654,53 @@ test("Export PNG on empty schema shows error, no download", async ({
 	await expect(page.locator("header .err")).toContainText("nothing to export");
 	expect(downloaded).toBe(false);
 });
+
+// The PNG must contain the WHOLE diagram, not just the part on screen.
+//
+// The previous coverage here asserted a PNG signature and >1000 bytes, which a
+// cropped image satisfies — so the export shipped cropping every table past the
+// viewport (9 tables in a 1280x800 window produced a 1280x759 image with two
+// tables missing) and the suite stayed green. Size is the observable that
+// actually distinguishes the two behaviours, so this asserts it: with enough
+// stacked tables to overflow the window, the image must be taller than the
+// canvas viewport. PNG dimensions are read from the IHDR chunk (bytes 16-24),
+// which avoids any image-decoding dependency.
+test("Export PNG captures the whole diagram, not just the viewport", async ({
+	page,
+}) => {
+	await page.goto("/");
+	// Stack ~12 tables in one layer; each card is ~139px tall, so the content
+	// runs well past an 800px-tall window.
+	for (let i = 0; i < 11; i++) {
+		await page.getByRole("button", { name: "+ Table" }).click();
+	}
+	await expect(page.locator("section.table")).toHaveCount(12);
+
+	const canvasHeight = await page
+		.locator(".canvas")
+		.evaluate((el) => el.clientHeight);
+	const contentBottom = await page
+		.locator(".canvas")
+		.evaluate((el) =>
+			Math.max(
+				...[...el.querySelectorAll("section.table")].map(
+					(t) =>
+						t.getBoundingClientRect().bottom - el.getBoundingClientRect().top,
+				),
+			),
+		);
+	// precondition: the fixture really does overflow, else the test proves nothing
+	expect(contentBottom).toBeGreaterThan(canvasHeight);
+
+	const download = page.waitForEvent("download");
+	await page.getByRole("button", { name: "Export PNG" }).click();
+	const stream = await (await download).createReadStream();
+	const chunks = [];
+	for await (const c of stream) chunks.push(c);
+	const buf = Buffer.concat(chunks);
+
+	// IHDR: 8-byte signature, 4-byte length, 4-byte "IHDR", then width, height.
+	expect(buf.subarray(12, 16).toString("ascii")).toBe("IHDR");
+	const pngHeight = buf.readUInt32BE(20);
+	expect(pngHeight).toBeGreaterThanOrEqual(Math.ceil(contentBottom));
+});

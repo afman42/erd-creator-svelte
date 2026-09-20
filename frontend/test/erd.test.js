@@ -526,7 +526,7 @@ test("uniqName handles multi-digit suffixes and empty taken sets", () => {
 	assert.equal(uniqName("t1", []), "t1");
 });
 
-import { captureBounds, pngFilename } from "../src/capture.js";
+import { captureSize, pngFilename } from "../src/capture.js";
 
 test("pngFilename mirrors exportFilename with .png", () => {
 	assert.equal(pngFilename("mydb.sql", "mysql"), "mydb.png");
@@ -537,21 +537,33 @@ test("pngFilename mirrors exportFilename with .png", () => {
 	assert.equal(pngFilename("", ""), "erd-schema.png");
 });
 
-test("captureBounds computes padded extents from schema", () => {
+test("captureSize measures the whole diagram, not the viewport", () => {
 	const s = {
 		tables: [
 			{ x: 40, y: 40, columns: [{}, {}] },
 			{ x: 380, y: 200, columns: [{}] },
 		],
 	};
-	const b = captureBounds(s);
-	// first table h = HDR_H(28)+2*ROW_H(42)+ADDCOL_H(25)+BORDER_H(2)=139
-	// second h = 28+42+25+2=97
-	assert.equal(b.x, 0); // 40-40 pad
-	assert.equal(b.y, 0); // 40-40
-	assert.ok(b.width > BOX_W);
-	assert.ok(b.height > 100);
-	// empty
-	assert.equal(captureBounds({ tables: [] }), null);
-	assert.equal(captureBounds(null), null);
+	// widest right edge: 380 + BOX_W(280) = 660, plus 40 pad
+	// lowest bottom edge: 200 + boxHeight(1)=97 = 297, plus 40 pad
+	assert.deepEqual(captureSize(s), { width: 700, height: 337 });
+});
+
+// The bug this pins: html-to-image sized its output from the canvas's
+// clientHeight — the *viewport* — because captureSize() existed but was never
+// passed to it. A 9-table diagram in a 1280x800 window exported 1280x759 with
+// the last two tables cropped off, and the e2e test passed anyway because it
+// only asserted a PNG signature and >1000 bytes. Sizing from the cards makes
+// the result independent of any viewport, so this asserts a card below the fold
+// is still counted.
+test("captureSize includes cards below the fold", () => {
+	const far = { x: 40, y: 5000, columns: [{}, {}] };
+	const size = captureSize({ tables: [far] });
+	assert.equal(size.height, 5000 + 139 + 40);
+	assert.ok(size.height > 800, "a card below the fold must still be counted");
+});
+
+test("captureSize returns null with nothing to draw", () => {
+	assert.equal(captureSize({ tables: [] }), null);
+	assert.equal(captureSize(null), null);
 });

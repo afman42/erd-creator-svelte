@@ -423,10 +423,6 @@ export async function exportDdl() {
 		store.exporting = false;
 	}
 }
-export function pngFilename() {
-	if (store.currentFile) return store.currentFile.replace(/\.sql$/i, ".png");
-	return `${store.schema.dialect || "erd"}-schema.png`;
-}
 export async function exportPng() {
 	if (!store.schema.tables.length) {
 		flash("nothing to export — add a table first", "err");
@@ -434,11 +430,13 @@ export async function exportPng() {
 	}
 	store.exporting = true;
 	try {
+		// The store owns the DOM lookup and the schema; capture.js is handed
+		// both so it stays free of ambient document/store access and can be
+		// driven with a plain element in tests.
 		const el = document.querySelector(".canvas");
-		if (!el) throw new Error("canvas not found");
-		const { capturePng } = await import("./capture.js");
-		const blob = await capturePng(el);
-		const name = pngFilename();
+		const { capturePng, pngFilename } = await import("./capture.js");
+		const blob = await capturePng(el, store.schema);
+		const name = pngFilename(store.currentFile, store.schema.dialect);
 		downloadBlob(blob, name);
 		flash(`downloaded ${name}`);
 	} catch (e) {
