@@ -16,7 +16,7 @@ make run        # → http://127.0.0.1:8731  (Go + Node/pnpm; builds dist/ first
 ```
 
 | Flag | Default | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `-dir` | `schemas` | directory holding the `.sql` files (created if missing) |
 | `-host` | `127.0.0.1` | interface to bind; `""` binds every interface |
 | `-port` | `8731` | TCP port; `0` asks the OS for a free one |
@@ -44,7 +44,7 @@ importantly, the DDL this program generates: a value that escapes its position
 becomes injection in whatever database the user pastes the output into.
 
 | Control | What it stops |
-|---|---|
+| --- | --- |
 | **Schema validation** on every path that reads or emits (`Validate`) | SQL injection through a type, name, or comment; control characters that break the line-oriented file format; oversized input |
 | **`GenSQL` returns an error** instead of emitting invalid input | A caller that forgets to validate gets an error, not a footgun |
 | **Host allowlist** | DNS rebinding — a page whose name resolves to 127.0.0.1 is refused, because its Host is not a name this server answers to |
@@ -89,9 +89,12 @@ string.
 - **Relationships** — per-column `FK→` select + `ON DELETE` action; bezier edge
   renders automatically; type-mismatch lint (server-side) in the header
 - **Export PNG** — `Export PNG` rasterizes the canvas (tables + FK edges) to a
-  `.png` via `html-to-image` (dynamic import, no extra weight on SQL path);
-  filename mirrors Export (`mydb.sql`→`mydb.png`). Empty schema shows error,
-  no download.
+  `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
+  The image covers the **whole diagram**, not just the visible area: the
+  canvas scrolls, so its own size is the viewport, and the export measures the
+  cards instead (`captureSize()` in `capture.js`). Scrolled or offscreen tables
+  are included. Filename mirrors Export (`mydb.sql`→`mydb.png`). Empty schema
+  shows error, no download.
 - **Files** — schema store in `-dir` (default `./schemas`): Files dropdown +
   New/Save/Del; saves debounce-autosave the current file — switching or
   deleting a file flushes the pending save first. The server generates and

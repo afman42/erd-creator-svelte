@@ -5,12 +5,34 @@ git history, not here.
 
 ## Deferred — add when trigger fires
 
+- [ ] **Was CI ever green after `4e088cf`?** The frontend lint step
+      (`pnpm run lint` → `biome check src test e2e`) exited 1 at `4e088cf`,
+      `db91922` and `d0b0f2e` — verified by checking out each commit and
+      running it. CI runs that as a hard step, so either the workflow was red
+      for three commits without anyone noticing, or the CI environment differed
+      in some way. This matters beyond tidiness: the security work in the same
+      branch was reviewed on the premise that CI passes, and lint is the
+      cheapest of those gates. The violations themselves are fixed (see the
+      trail below); this item is the *question* they leave open. Trigger:
+      already fired. Fix is to check the Actions history for those commits and,
+      if CI was in fact red, add a required status check so a red lint cannot
+      merge again.
+
 - [ ] Drive CSS from the JS constants instead of mirroring them. The numbers
       still live in both places (`geometry.js` and `TableCard.svelte`'s
       `<style>`), but a unit test now parses the CSS and asserts it matches, so
-      drift fails at test time. Trigger: a visual bug the test did not catch, or
-      a third consumer of the metrics; the real fix is CSS custom properties set
-      from `geometry.js`, which removes the duplication rather than guarding it.
+      drift fails at test time. **Half the trigger has fired:** `capture.js`'s
+      `captureSize()` is now a third consumer of `BOX_W`/`boxHeight()`, so the
+      metrics have three readers (`TableCard.svelte` CSS, `layout()`/`addTable()`
+      stacking, and PNG bounds). The other half — "a visual bug the test did not
+      catch" — has not: the CSS-drift test covers every metric `captureSize()`
+      reads (`BOX_W` via `section.table width`, `boxHeight()` via
+      `HDR_H`/`ROW_H`/`ADDCOL_H`/`BORDER_H`), so a drift there still fails at
+      test time rather than silently cropping the PNG. Not yet worth the
+      refactor on one of two conditions; the real fix is CSS custom properties
+      set from `geometry.js`, which removes the duplication rather than
+      guarding it. Trigger: a visual bug the test did not catch, or a *fourth*
+      consumer.
 
 - [ ] **Authentication.** There is none — reaching the port is the whole
       authorization model. That is correct for a single local user and is why
@@ -89,6 +111,34 @@ git history, not here.
       remember a committed secret must be rotated, not just deleted.
 
 ## Done elsewhere (trail, not tracking)
+
+- PNG export clipping: `Export PNG` cropped every table past the viewport —
+  `captureBounds()` was written and unit-tested but never passed to
+  `toBlob`, so `html-to-image` sized from `clientWidth/clientHeight` (the
+  viewport, since `.canvas` is `overflow: auto`). A 9-table diagram on a
+  1280x800 window exported 1280×759 with the last two tables missing, plus the
+  browser scrollbars painted in. The plan had predicted this exact risk and
+  described the fix; it still shipped, because no test asserted the output's
+  *size* — the e2e tests checked a PNG signature and a byte count, both of which
+  a cropped image satisfies. Fixed by renaming to `captureSize()` (width/height
+  only — `layout()` clamps coords to ≥0, so the old x/y offsets were
+  unactionable), passing them to `toBlob`, and adding
+  `style:{overflow:"hidden"}`. Guarded by an e2e test that builds a 12-table
+  fixture, asserts it overflows the window, and requires the PNG's IHDR height
+  to cover the content extent — verified to fail (3 passed/1 failed) when the
+  sizing is reverted and pass with it. The store's duplicate `pngFilename` was
+  deleted; `capture.js` now takes the schema from its caller instead of reaching
+  for ambient state.
+
+- Frontend lint was red and is now clean: seven `format` violations plus two
+  `organizeImports` across `src/autosave.js`, `src/download.js`,
+  `src/schema.svelte.js`, `test/download.test.js` and `test/history.test.js`,
+  all from `4e088cf`/`db91922`, plus one `noUnusedFunctionParameters` warning in
+  `test/autosave.test.js`. Fixed with `biome check --write` (formatting only —
+  62 unit tests unchanged) and the underscore rename for the unused parameter.
+  `biome check src test e2e` now exits 0 with zero diagnostics. The open
+  question this leaves — whether CI was actually red on those commits — is
+  tracked above.
 
 - Security review: six exploitable issues found and fixed (commits eb08c9e,
   5b62f65, 77d5fab, d1d8905, a2aeeae). SQL injection through a column type
