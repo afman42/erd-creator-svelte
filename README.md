@@ -89,14 +89,19 @@ string.
   unaffected.)
 - **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
   actions; bezier edge renders automatically; type-mismatch lint (server-side)
-  in the header. The two actions use opposite defaults, deliberately:
-  `ON DELETE` unset means `CASCADE` (what every file written before the field
-  existed already says), while `ON UPDATE` unset means **omit the clause** — so
-  a schema with no `ON UPDATE` action emits exactly the bytes it always did,
-  and adding one never silently rewrites the others. Both are validated against
-  the five known actions (`CASCADE`, `RESTRICT`, `SET NULL`, `SET DEFAULT`,
-  `NO ACTION`), because an action is emitted as raw SQL inside the constraint
-  clause and so is an allowlist rather than free text.
+  in the header. Each edge is labelled with **min-max cardinality** at both
+  ends (`0..1`, `1..1`, `0..N`), always on. The labels are *derived* from flags
+  the column already has, never authored: `UQ` — or a **sole** primary key —
+  makes the child end `0..1`, otherwise `0..N`; `NOT NULL` makes the parent end
+  `1..1`, otherwise `0..1`. Deriving means there is no stored cardinality that
+  could contradict the DDL, so nothing is added to the model or the file format.
+
+  Two subtleties are deliberate. A **composite**-PK member is *not* unique on
+  its own — in a junction table `PK(a, b)` each column repeats freely, which is
+  exactly why it is M:N — so `pk` alone does not mean `0..1`; treating it that
+  way would label every junction table as one-to-one. And the child minimum is
+  always `0`: SQL cannot express "every parent must have at least one child",
+  so printing `1..N` would assert something no database can enforce.
 - **Export PNG / SVG** — `Export PNG` rasterizes the canvas (tables + FK edges)
   to a `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
   The image covers the **whole diagram**, not just the visible area: the
@@ -182,7 +187,7 @@ string.
 ## Architecture
 
 ```
-frontend/src/geometry.js     (canvas box metrics + FK edge paths)   (pure, testable)
+frontend/src/geometry.js     (box metrics + FK edge paths + cardinality) (pure, testable)
 frontend/src/erd.js          (UI helpers + naming + dialects + layout)(pure, testable)
 frontend/src/capture.js      (PNG/SVG capture via html-to-image, bounds via geometry)
 frontend/src/download.js     (download + clipboard helpers)         (pure)

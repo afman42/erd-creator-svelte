@@ -116,6 +116,39 @@ git history, not here.
 
 ## Done elsewhere (trail, not tracking)
 
+- Min-max cardinality labels on FK edges (`0..1`, `1..1`, `0..N`), always on.
+  Derived, never authored — which is the whole design: a stored cardinality
+  field would be a second source of truth that could contradict the flags and
+  would have to round-trip through a `.sql` file that stores no such thing.
+  Deriving means no model change, no format change, and no way for the diagram
+  to disagree with the DDL. `UQ` or a **sole** `PK` → child `0..1`, else `0..N`;
+  `NOT NULL` → parent `1..1`, else `0..1`.
+
+  Two things are worth recording. First, a composite-PK member is NOT unique on
+  its own: in a junction table `PK(a, b)` each column repeats freely, which is
+  precisely why it is M:N. Reading `pk` as unique would label every junction
+  table `0..1` and invert the notation, so the check is `c.pk && pkCount === 1`.
+  Second, the child minimum is always `0` — not a gap in the implementation, but
+  a fact: SQL cannot express "every parent must have at least one child", so
+  `1..N` would assert something no database enforces.
+
+  **The unit tests passed while the feature was visibly broken, and only looking
+  at the render caught it.** Two bugs survived a green suite: (1) the labels
+  were anchored to the *path's* endpoints, and the path picks whichever borders
+  are nearest — so when the child sat to the right the path started at the
+  parent, drawing `0..N` on the parent and `1..1` on the child, inverting the
+  notation; (2) with `text-anchor: middle`, a 22px label centred 6px from a
+  border still reached 5px back over the card, and in the default stacked
+  layout (all cards sharing an x range) one label landed inside the box. The
+  coordinate assertions were all true of the broken code, because I asserted
+  where the labels *were* rather than which card each belonged to. Fixed by
+  anchoring each label to its own card's facing border, pinning the text's near
+  edge (`text-anchor` now comes from the data, not the stylesheet) so clearance
+  is independent of label width, and adding tests that assert the *semantic*
+  attachment — which card each label is beside, in both left and right layouts,
+  plus the stacked case. Verified visually after the fix: labels at x=326 clear
+  of the card at 40..320, zero overlaps. Totals moved 68→80 unit, 49→50 e2e.
+
 - PostgreSQL array types (`INT[]`, `VARCHAR(255)[]`, `JSON[]`). This was
   originally my top recommendation as "a one-file allowlist widening" and I
   withdrew it on finding that was wrong: arrays are PostgreSQL syntax, so
