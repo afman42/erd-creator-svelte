@@ -214,7 +214,32 @@ git history, not here.
   presentation attribute — the exported marker kept the literal string
   `context-stroke` and painted NOTHING, turning a faint arrow into no arrow. The
   colour is therefore written twice (marker attribute + `.edge` rule), and a test
-  fails if the two disagree. Totals moved 81→85 unit, 51 e2e.
+  fails if the two disagree.
+
+  **Then the line and labels were invisible in the export too** — "arrow head is
+  visible but line and relationship cardinality not visible". The asymmetry was
+  the clue: the arrowhead was the ONE element styled by a presentation
+  attribute, while the line and labels were styled by CSS classes. Confirmed by
+  inspecting the export: it contains NO `<style>` element and NO `.edge` rule,
+  so `html-to-image` inlines computed styles for the HTML card divs (34 `style=`
+  attributes) but not for SVG elements, and does not ship the stylesheet. The
+  exported path was `<path class="edge svelte-…">` with no stroke at all.
+
+  Proven rather than assumed: sampling the exported PNG at the curve and at both
+  label positions returned `rgb(16,20,24)` — the background — at every point. The
+  fix applies the paint as presentation attributes (`stroke`, `stroke-width`,
+  `fill`, `font-size`, `text-anchor`, halo `stroke`), with the values as
+  constants in `geometry.js`. Re-sampled after: `rgb(127,163,192)` at all three
+  points. The duplication with `tokens.css` is load-bearing — a CSS custom
+  property does not resolve in the exported document either — so a test asserts
+  the constants and the tokens stay equal.
+
+  The regression test asserts on **pixels**, not attributes: it exports both
+  formats, reads the label positions out of the SVG, then samples the PNG there
+  and requires luminance well above the background. Verified to FAIL on the
+  broken version (`label 0 not painted … luminance 60 ≈ background 60`) and pass
+  on the fixed one, so it is a real guard rather than a vacuous assertion.
+  Totals moved 85→87 unit, 51→52 e2e.
 
 - PostgreSQL array types (`INT[]`, `VARCHAR(255)[]`, `JSON[]`). This was
   originally my top recommendation as "a one-file allowlist widening" and I

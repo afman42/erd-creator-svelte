@@ -116,10 +116,17 @@ string.
   does not inherit the stroke-width of the path that references it, so the
   original 7×7 marker drew at 1px in the same grey as its line and was
   effectively invisible in a PNG (measured: 22 differing pixels, ~6×7). It is
-  now 11×11 with an explicit 1.8px stroke, and the line and arrowhead share
-  `--color-edge` — brighter than the old `#888`, and deliberately distinct from
-  both the self-edge accent and the cardinality-label colour so a label does not
-  merge into the line it sits on.
+  now 11×11 with an explicit 1.8px stroke.
+
+  **The line and its labels are painted with SVG presentation attributes, not
+  CSS classes.** `html-to-image` does not carry the stylesheet into an export —
+  the exported document contains no `<style>` element and no `.edge` rule — so
+  anything styled only by a class loses its paint and renders invisible. That
+  made the PNG show an arrowhead with no line and no cardinality labels. The
+  colours therefore appear twice: once as constants in `geometry.js` (applied as
+  attributes) and once in `tokens.css` (for the on-screen view), with a test
+  asserting the two stay equal, because a CSS custom property does not resolve
+  in the exported document either.
 - **Export PNG / SVG** — `Export PNG` rasterizes the canvas (tables + FK edges)
   to a `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
   The image covers the **whole diagram**, not just the visible area: the
