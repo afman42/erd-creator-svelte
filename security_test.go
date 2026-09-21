@@ -80,6 +80,140 @@ func TestAcceptsRealTypes(t *testing.T) {
 	}
 }
 
+// ---- array types (PostgreSQL-only) ----
+
+// TestAcceptsArrayTypes: the array suffix is a PostgreSQL type modifier, so it
+// is accepted for a postgres schema — including the parameterised and JSON
+// forms, where the suffix has to survive the dialect's own type mapping.
+func TestAcceptsArrayTypes(t *testing.T) {
+	ok := []string{
+		"INT[]", "BIGINT[]", "TEXT[]", "VARCHAR(255)[]", "DECIMAL(10,2)[]",
+		"JSON[]", "BOOLEAN[]", "TIMESTAMP[]", "NUMERIC(8, 2)[]",
+	}
+	for _, ty := range ok {
+		s := &Schema{Dialect: DialectPostgres, Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
+			{Name: "a", Type: ty},
+		}}}}
+		if err := s.Validate(); err != nil {
+			t.Errorf("legitimate postgres array type %q rejected: %v", ty, err)
+		}
+	}
+}
+
+// TestArrayDialectEnforcement is the point of the array feature being
+// dialect-aware: `INT[]` is PostgreSQL syntax, and emitting it into MySQL or
+// SQLite produces DDL the database rejects. Refusing it is better than
+// accepting the type and emitting invalid SQL, because the failure would
+// otherwise surface only when the user pastes the output into a database.
+//
+// It also pins the check to the *target* dialect, since /export takes the
+// dialect as a separate field: a postgres schema exported as mysql must be
+// refused for mysql, not allowed because the schema itself is postgres.
+func TestArrayDialectEnforcement(t *testing.T) {
+	mk := func(dialect string) *Schema {
+		return &Schema{Dialect: dialect, Tables: []Table{
+			{ID: "t1", Name: "p", Columns: []Col{{Name: "id", Type: "INT", Pk: true}}},
+			{ID: "t2", Name: "c", Columns: []Col{
+				{Name: "id", Type: "INT", Pk: true},
+				{Name: "tags", Type: "TEXT[]"},
+			}},
+		}}
+	}
+
+	// postgres is the one dialect that accepts it
+	s := mk(DialectPostgres)
+	if err := s.Validate(); err != nil {
+		t.Fatalf("postgres rejected an array type: %v", err)
+	}
+	sql, err := s.GenSQL()
+	if err != nil {
+		t.Fatalf("postgres failed to emit an array type: %v", err)
+	}
+	if !strings.Contains(sql, `"tags" TEXT[]`) {
+		t.Errorf("array type not emitted:\n%s", sql)
+	}
+
+	// every other dialect refuses it, naming the target
+	for _, d := range []string{DialectMysql, DialectMariaDB, DialectSqlite} {
+		s := mk(d)
+		err := s.Validate()
+		if err == nil {
+			t.Errorf("%s accepted an array type", d)
+			continue
+		}
+		if !strings.Contains(err.Error(), "PostgreSQL-only") {
+			t.Errorf("%s: error does not say why: %v", d, err)
+		}
+		if !strings.Contains(err.Error(), d) {
+			t.Errorf("%s: error does not name the target dialect: %v", d, err)
+		}
+		if sql, err := s.GenSQL(); err == nil {
+			t.Errorf("%s emitted an array type anyway:\n%s", d, sql)
+		}
+	}
+
+	// the export path validates against the REQUESTED dialect, not the stored
+	// one: a postgres schema exported as mysql must fail
+	pg := mk(DialectPostgres)
+	if err := pg.ValidateFor(DialectMysql); err == nil {
+		t.Error("a postgres schema with arrays was allowed to export as mysql")
+	}
+	if err := pg.ValidateFor(DialectPostgres); err != nil {
+		t.Errorf("postgres array rejected when targeting postgres: %v", err)
+	}
+	// and a schema without arrays is unaffected by the dialect switch
+	plain := &Schema{Dialect: DialectPostgres, Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
+		{Name: "a", Type: "INT"},
+	}}}}
+	if err := plain.ValidateFor(DialectMysql); err != nil {
+		t.Errorf("a scalar schema was refused for mysql: %v", err)
+	}
+}
+
+// TestRejectsInvalidArrayForms: combinations that are invalid in PostgreSQL
+// too, so they are refused regardless of dialect rather than emitted as DDL the
+// database would reject.
+func TestRejectsInvalidArrayForms(t *testing.T) {
+	cases := map[string]string{
+		// multi-dimension: no emitter here renders it, so accepting it would
+		// emit something that does not mean what the model says
+		"multi-dimension": "INT[][]",
+		"triple brackets": "INT[][][]",
+		// the ENUM rendering is TEXT + CHECK (col IN (...)), which describes one
+		// value; there is no correct CHECK for an array of them
+		"enum array":        "ENUM('a','b')[]",
+		"empty brackets":    "[]",
+		"brackets in front": "[]INT",
+	}
+	for name, ty := range cases {
+		s := &Schema{Dialect: DialectPostgres, Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
+			{Name: "a", Type: ty},
+		}}}}
+		if err := s.Validate(); err == nil {
+			t.Errorf("%s: %q accepted", name, ty)
+		}
+		if sql, err := s.GenSQL(); err == nil {
+			t.Errorf("%s: %q emitted:\n%s", name, ty, sql)
+		}
+	}
+}
+
+// TestRejectsArrayAsKeyOrIdentity: an array column cannot be a primary key or
+// an identity column in PostgreSQL, so those combinations are refused rather
+// than emitted.
+func TestRejectsArrayAsKeyOrIdentity(t *testing.T) {
+	cases := map[string]Col{
+		"primary key": {Name: "a", Type: "INT[]", Pk: true},
+		"identity":    {Name: "a", Type: "INT[]", Ai: true},
+	}
+	for name, col := range cases {
+		s := &Schema{Dialect: DialectPostgres, Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{col}}}}
+		if err := s.Validate(); err == nil {
+			t.Errorf("array column accepted as %s", name)
+		}
+	}
+}
+
 // ---- control characters in identifiers ----
 
 // TestRejectsControlChars: the emitters produce one statement per line and the

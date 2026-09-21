@@ -84,6 +84,11 @@ func TestPostgresTypeMapping(t *testing.T) {
 		"INT", "BIGINT", "SMALLINT", "DECIMAL(10,2)", "VARCHAR(190)", "TEXT",
 		"BOOLEAN", "DATE", "TIMESTAMP", "JSON",
 		"ENUM('a','b')", "ENUM('x''y','z,w')", "ENUM('a','b','c')",
+		// Array forms round-trip exactly, including the two where the suffix has
+		// to survive the dialect's own mapping (JSON -> JSONB, and a
+		// parameterised base). The suffix is re-attached after the mapping, so
+		// `JSON[]` comes back as `JSON[]` rather than a bare `JSON`.
+		"INT[]", "TEXT[]", "VARCHAR(190)[]", "DECIMAL(10,2)[]", "JSON[]",
 	}
 	for _, in := range exact {
 		s := &Schema{Dialect: DialectPostgres, Tables: []Table{

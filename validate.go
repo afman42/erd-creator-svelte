@@ -43,6 +43,9 @@ const (
 	// these bound the parsed result independently of encoding.
 	maxTables  = 500
 	maxColumns = 500
+	// maxIndexes bounds the per-table index list, same reasoning as maxColumns:
+	// a request cannot allocate unbounded work inside the 1 MiB body cap.
+	maxIndexes = 500
 )
 
 // safeIdent rejects anything that cannot appear in an identifier we emit.
@@ -73,12 +76,27 @@ func isTypeArgChar(c byte) bool {
 	return isTypeNameChar(c) || c == ',' || c == '\'' || c == '"' || c == '(' || c == ')' || c == '.' || c == '+' || c == '-'
 }
 
-// isValidTypeExpr reports whether v matches `^[A-Za-z_][A-Za-z0-9_ ]*(\([A-Za-z0-9_ ,'"().+\-]*\))?$`.
+// isValidTypeExpr reports whether v matches
+// `^[A-Za-z_][A-Za-z0-9_ ]*(\([A-Za-z0-9_ ,'"().+\-]*\))?(\[\])?$`.
 // Manual parser replaces the previous regexp — ~28× faster, zero allocations.
-// The shape is a bare name, or a name with one parenthesised argument list.
+// The shape is a bare name, or a name with one parenthesised argument list,
+// optionally followed by one Postgres array suffix.
+//
+// The array suffix is stripped before the rest of the check, so `INT[]` is a
+// valid type name with a suffix rather than a different grammar. Exactly one
+// suffix is allowed: `INT[][]` is a multi-dimension array, which no emitter
+// here renders, so accepting it would mean emitting something that does not
+// mean what the model says.
 func isValidTypeExpr(v string) bool {
 	if len(v) == 0 {
 		return false
+	}
+	if strings.HasSuffix(v, "[]") {
+		v = strings.TrimSuffix(v, "[]")
+		// a second suffix (INT[][]) leaves another one behind
+		if strings.HasSuffix(v, "[]") || v == "" {
+			return false
+		}
 	}
 	if !isTypeStart(v[0]) {
 		return false
@@ -128,10 +146,55 @@ var validTypeByte = func() [256]bool {
 	return t
 }()
 
-// Validate reports the first reason the schema cannot be emitted safely.
-// It is called on every path that turns input into SQL: the JSON endpoints
-// (save, export, lint, inserts) and the parser that reads a .sql file.
+// isArrayType reports whether a model type carries a Postgres array suffix.
+// The suffix is the only structural difference between `INT` and `INT[]`, so
+// every dialect decision below keys off it rather than parsing the type again.
+func isArrayType(ty string) bool {
+	return strings.HasSuffix(strings.TrimSpace(ty), "[]")
+}
+
+// Validate reports the first reason the schema cannot be emitted safely in its
+// own dialect. See ValidateFor.
 func (s *Schema) Validate() error {
+	return s.ValidateFor(s.dialect())
+}
+
+// ValidateFor is Validate against a specific target dialect.
+//
+// The dialect matters because not every construct the model can hold is valid
+// in every grammar. Array types are the case that made this necessary: `INT[]`
+// is PostgreSQL syntax, and emitting it into MySQL or SQLite produces DDL the
+// database rejects. Accepting the type in the grammar and then emitting invalid
+// SQL elsewhere would be worse than rejecting it — the user would only find out
+// when they pasted it into a database.
+//
+// It is parameterised rather than reading s.Dialect because /export takes the
+// dialect as a separate request field, so the schema's stored dialect and the
+// requested one can differ. Save and GenSQL pass the schema's own dialect via
+// Validate; the export handler passes what the caller asked for.
+func (s *Schema) ValidateFor(dialect string) error {
+	if err := s.validateShape(); err != nil {
+		return err
+	}
+	if normalizeDialect(dialect) == DialectPostgres {
+		return nil
+	}
+	// Everything below is a construct the target dialect cannot render.
+	for ti, t := range s.Tables {
+		for ci, c := range t.Columns {
+			if isArrayType(c.Type) {
+				return fmt.Errorf(
+					"table %d column %d (%q): array type %q is PostgreSQL-only; it cannot be emitted as %s",
+					ti+1, ci+1, c.Name, c.Type, normalizeDialect(dialect))
+			}
+		}
+	}
+	return nil
+}
+
+// validateShape is the dialect-independent half of validation: the checks that
+// hold no matter which grammar the schema will be written in.
+func (s *Schema) validateShape() error {
 	if len(s.Tables) > maxTables {
 		return fmt.Errorf("too many tables: %d (max %d)", len(s.Tables), maxTables)
 	}
@@ -142,6 +205,30 @@ func (s *Schema) Validate() error {
 		if len(t.Columns) > maxColumns {
 			return fmt.Errorf("table %q: too many columns: %d (max %d)", t.Name, len(t.Columns), maxColumns)
 		}
+		// Index names and column lists are emitted as identifiers, so they go
+		// through the same allowlist as table/column names — an index name is
+		// the same injection surface as any other identifier.
+		if len(t.Indexes) > maxIndexes {
+			return fmt.Errorf("table %q: too many indexes: %d (max %d)", t.Name, len(t.Indexes), maxIndexes)
+		}
+		for ii, ix := range t.Indexes {
+			if len(ix.Cols) == 0 {
+				return fmt.Errorf("table %q: index %d has no columns", t.Name, ii+1)
+			}
+			if len(ix.Cols) > maxColumns {
+				return fmt.Errorf("table %q: index %d has too many columns: %d (max %d)", t.Name, ii+1, len(ix.Cols), maxColumns)
+			}
+			if ix.Name != "" {
+				if err := validateIdent("index name", ix.Name); err != nil {
+					return fmt.Errorf("table %q: %w", t.Name, err)
+				}
+			}
+			for ci, col := range ix.Cols {
+				if err := validateIdent("index column", col); err != nil {
+					return fmt.Errorf("table %q index %d column %d: %w", t.Name, ii+1, ci+1, err)
+				}
+			}
+		}
 		for ci, c := range t.Columns {
 			where := fmt.Sprintf("table %q column %d", t.Name, ci+1)
 			if err := validateIdent("column name", c.Name); err != nil {
@@ -150,11 +237,36 @@ func (s *Schema) Validate() error {
 			if err := validateType(c.Type); err != nil {
 				return fmt.Errorf("%s (%q): %w", where, c.Name, err)
 			}
+			// Array types are PostgreSQL-only (enforced in ValidateFor), but
+			// these three combinations are invalid in PostgreSQL too, so they
+			// are rejected here — independently of the target dialect — rather
+			// than emitted as DDL the database refuses.
+			if isArrayType(c.Type) {
+				base, _ := splitType(strings.TrimSuffix(strings.TrimSpace(c.Type), "[]"))
+				switch {
+				case base == "ENUM":
+					// The ENUM rendering is `TEXT + CHECK (col IN (...))`, which
+					// describes one value, not an array of them; there is no
+					// correct CHECK for ENUM[] here, so it is refused rather
+					// than emitted as a constraint that means something else.
+					return fmt.Errorf("%s (%q): ENUM arrays are not supported", where, c.Name)
+				case c.Ai:
+					return fmt.Errorf("%s (%q): an array column cannot be AUTO_INCREMENT/IDENTITY", where, c.Name)
+				case c.Pk:
+					return fmt.Errorf("%s (%q): an array column cannot be a PRIMARY KEY", where, c.Name)
+				}
+			}
 			if err := validateText("comment", c.Comment, maxCommentLen); err != nil {
 				return fmt.Errorf("%s (%q): %w", where, c.Name, err)
 			}
 			if c.Ref != nil {
 				if err := validateText("FK action", c.Ref.Action, maxNameLen); err != nil {
+					return fmt.Errorf("%s (%q): %w", where, c.Name, err)
+				}
+				if err := validateFKAction("FK action", c.Ref.Action); err != nil {
+					return fmt.Errorf("%s (%q): %w", where, c.Name, err)
+				}
+				if err := validateFKAction("FK on-update action", c.Ref.OnUpdate); err != nil {
 					return fmt.Errorf("%s (%q): %w", where, c.Name, err)
 				}
 				if err := validateIdent("FK target id", c.Ref.TableID); err != nil {

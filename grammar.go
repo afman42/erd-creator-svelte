@@ -14,10 +14,45 @@ import (
 
 // ---- model ----
 
-// Ref has no JSON tags: on the wire the browser sends {"tableId","action"}.
+// Ref is a column's foreign key. On the wire the browser sends
+// {"tableId","action","onUpdate"}.
+//
+// Action is ON DELETE. It defaults to CASCADE when empty, because that is what
+// every file written before the field existed means — the emitters have always
+// written "ON DELETE CASCADE" for an unset action, so an empty value cannot
+// mean "omit the clause" without changing those files.
+//
+// OnUpdate is ON UPDATE, and empty means OMIT the clause — the opposite
+// convention, deliberately. ON DELETE had to keep its historical default; ON
+// UPDATE is new, so an unset value can mean "let the database decide"
+// (NO ACTION / RESTRICT) instead of silently emitting a clause nobody chose.
+// That is also what keeps every existing .sql byte-identical: no schema written
+// before this field existed carries an ON UPDATE clause.
 type Ref struct {
-	TableID string `json:"tableId"`
-	Action  string `json:"action"`
+	TableID  string `json:"tableId"`
+	Action   string `json:"action"`
+	OnUpdate string `json:"onUpdate,omitempty"`
+}
+
+// Index is a table-level index over one or more columns.
+//
+// Composite indexes cannot be represented on Col: `Ix bool` says "this column
+// is indexed", which cannot express (a, b) as one index — three columns each
+// marked Ix are three separate indexes, a different thing. So a multi-column
+// index is a property of the table.
+//
+// Name is optional. Empty means "derive one" (idx_<table>_<col1>_<col2>…),
+// which is the same convention the single-column path already uses
+// (idx_<table>_<col>), so the common case needs no naming UI. A name is stored
+// explicitly once it is set, because deriving on every emit would rename an
+// index the user had chosen.
+//
+// A single-column index does NOT go here: it stays on Col.Ix. That keeps every
+// existing file's bytes and JSON unchanged, and the parsers route by column
+// count (one → Col.Ix, many → Index) so both shapes round-trip.
+type Index struct {
+	Name string   `json:"name,omitempty"`
+	Cols []string `json:"cols"`
 }
 
 type Col struct {
@@ -35,12 +70,18 @@ type Col struct {
 // Table is one table in the schema. ID is the wire key the browser uses for
 // ref.tableId; on open the client re-allocates ids in its own namespace
 // (adoptIds). X/Y are client-only.
+//
+// Indexes is omitempty so a schema without composite indexes serializes to
+// exactly the JSON it did before the field existed — the model travels to the
+// browser, and an added `"indexes":null` would be a wire change for every
+// existing client and test.
 type Table struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	X       int    `json:"-"`
-	Y       int    `json:"-"`
-	Columns []Col  `json:"columns"`
+	ID      string  `json:"id"`
+	Name    string  `json:"name"`
+	X       int     `json:"-"`
+	Y       int     `json:"-"`
+	Columns []Col   `json:"columns"`
+	Indexes []Index `json:"indexes,omitempty"`
 }
 
 type Schema struct {
@@ -289,8 +330,8 @@ var (
 	reEndTable = regexp.MustCompile(`(?i)^\) ENGINE=InnoDB;?$`)
 	rePK       = regexp.MustCompile(`(?i)^PRIMARY KEY \((.+)\)$`)
 	reUKey     = regexp.MustCompile(`(?i)^UNIQUE KEY (\S+) \((.+)\)$`)
-	reIndex    = regexp.MustCompile(`(?i)^(KEY|INDEX) \S+ \(.+\)$`)
-	reFK       = regexp.MustCompile(`(?i)^CONSTRAINT \S+ FOREIGN KEY \((\S+)\) REFERENCES (\S+) \((\S+)\)( ON DELETE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?$`)
+	reIndex    = regexp.MustCompile(`(?i)^(?:KEY|INDEX) (\S+) \((.+)\)$`)
+	reFK       = regexp.MustCompile(`(?i)^CONSTRAINT \S+ FOREIGN KEY \((\S+)\) REFERENCES (\S+) \((\S+)\)( ON DELETE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?( ON UPDATE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?$`)
 	reColumn   = regexp.MustCompile(`(?i)^(\S+) ([A-Z]+(?:\([^)]*\))?)( NOT NULL)?( AUTO_INCREMENT)?( UNIQUE)?( COMMENT '((?:[^']|'')*)')?$`)
 	reKeyword  = regexp.MustCompile(`(?i)^(PRIMARY KEY|UNIQUE KEY|CONSTRAINT|KEY|INDEX|FOREIGN KEY)\b`)
 	reTypeNorm = regexp.MustCompile(`(?i)^([A-Za-z]+)(\(.*\))?$`)
@@ -304,8 +345,67 @@ func unquoteTick(s string) string {
 	return s
 }
 
+// splitIndexCols splits an emitted index column list into unquoted names.
+//
+// It exists so all three parsers share one implementation: they emit the list
+// the same way (comma-space separated, each column quoted) and differ only in
+// which quote to strip. Three copies is how the FK attach loop drifted, so this
+// is written once and parameterised by the unquote function.
+//
+// Empty entries are dropped rather than kept: a trailing comma or a stray space
+// would otherwise become a phantom column name that validates fine and then
+// fails to match any real column.
+func splitIndexCols(list string, unquote func(string) string) []string {
+	var out []string
+	for _, part := range splitTop(list) {
+		if name := unquote(part); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// fkActions is the set of referential actions this tool emits and accepts.
+//
+// This is an allowlist rather than a free-text field for the same reason the
+// type field is pattern-matched (validate.go): the action is emitted as raw
+// SQL text inside a constraint clause, so "SET NULL; DROP TABLE users;--" would
+// be injection if it were copied through. Validating it here means the value
+// that reaches the emitter is one of five known-good tokens.
+//
+// The file parser applies the same check, so a hand-written .sql cannot persist
+// an action that re-emits on every save — the same reasoning as the type check.
+var fkActions = map[string]bool{
+	"CASCADE":     true,
+	"RESTRICT":    true,
+	"SET NULL":    true,
+	"SET DEFAULT": true,
+	"NO ACTION":   true,
+}
+
+// validateFKAction checks one referential action. Empty is allowed for ON
+// UPDATE (it means "omit the clause"); ON DELETE resolves its default before
+// this is called, so empty is rejected there by the caller's own normalization.
+func validateFKAction(what, v string) error {
+	if v == "" {
+		return nil
+	}
+	if !fkActions[v] {
+		return fmt.Errorf("%s is not a known referential action", what)
+	}
+	return nil
+}
+
+// normalizeFKAction canonicalizes an action read from a file. The parser
+// uppercases type names the same way (reTypeNorm), so a hand-written
+// "on delete cascade" loads as the canonical "CASCADE" the emitters write
+// rather than failing the allowlist on save.
+func normalizeFKAction(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
+}
+
 type pendingFK struct {
-	tableID, col, table, action string
+	tableID, col, table, action, onUpdate string
 }
 
 // ParseDDL rebuilds a schema from DDL this tool emitted, detecting the dialect
@@ -439,16 +539,28 @@ func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, 
 		markCol(tbl, unquoteTick(m[2]), func(c *Col) { c.Ux = true })
 		return nil
 	}
-	if reIndex.MatchString(body) {
-		markCol(tbl, unquoteTick(body[strings.Index(body, "(")+1:strings.LastIndex(body, ")")]), func(c *Col) { c.Ix = true })
+	if m := reIndex.FindStringSubmatch(body); m != nil {
+		// Split the column list and route by arity: one column is the existing
+		// per-column Ix flag (so old files round-trip byte-identically), more
+		// than one is a composite Index on the table. Before this, the pattern
+		// matched but the index was silently dropped — a hand-written
+		// `KEY idx (a, b)` parsed without error and lost the index entirely.
+		cols := splitIndexCols(m[2], unquoteTick)
+		if len(cols) == 1 {
+			markCol(tbl, cols[0], func(c *Col) { c.Ix = true })
+		} else if len(cols) > 1 {
+			tbl.Indexes = append(tbl.Indexes, Index{Name: unquoteTick(m[1]), Cols: cols})
+		}
 		return nil
 	}
 	if m := reFK.FindStringSubmatch(body); m != nil {
-		action := m[5]
+		action := normalizeFKAction(m[5])
 		if action == "" {
 			action = "CASCADE"
 		}
-		*pending = append(*pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), action})
+		// m[7] is the ON UPDATE action; empty means the clause was absent, which
+		// is how the model represents "no ON UPDATE" — see the Ref comment.
+		*pending = append(*pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), action, normalizeFKAction(m[7])})
 		return nil
 	}
 	if reKeyword.MatchString(body) {
@@ -484,7 +596,7 @@ func attachPendingFKs(s *Schema, byName, byID map[string]int, pending []pendingF
 			continue
 		}
 		markCol(&s.Tables[si], p.col, func(c *Col) {
-			c.Ref = &Ref{TableID: s.Tables[idx].ID, Action: p.action}
+			c.Ref = &Ref{TableID: s.Tables[idx].ID, Action: p.action, OnUpdate: p.onUpdate}
 		})
 	}
 }

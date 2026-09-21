@@ -30,7 +30,12 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 	// Untrusted input becomes SQL text here, so it is validated before any
 	// emitter sees it. A type is emitted as raw text (the type grammar is
 	// open-ended), so an unvalidated one is SQL injection in the pasted output.
-	if err := req.schema().Validate(); err != nil {
+	//
+	// Validated against the REQUESTED dialect, not the schema's own: this path
+	// takes the dialect as a separate field, so a schema stored as postgres can
+	// be exported as mysql, and a postgres-only construct (an array type) must
+	// be refused for that target rather than emitted as invalid MySQL.
+	if err := req.schema().ValidateFor(req.Dialect); err != nil {
 		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -270,6 +275,19 @@ func fkAction(c Col) string {
 	return c.Ref.Action
 }
 
+// fkUpdateClause renders the ON UPDATE clause, or "" when no action is set.
+//
+// Empty means omit — see the Ref comment for why ON UPDATE and ON DELETE use
+// opposite conventions. Returning "" rather than a default is what keeps a
+// schema without an ON UPDATE action byte-identical to the files this tool
+// wrote before the field existed.
+func fkUpdateClause(c Col) string {
+	if c.Ref.OnUpdate == "" {
+		return ""
+	}
+	return " ON UPDATE " + c.Ref.OnUpdate
+}
+
 func pkLine(t Table, q func(string) string) string {
 	var pks []string
 	for _, c := range pkCols(t) {
@@ -279,6 +297,26 @@ func pkLine(t Table, q func(string) string) string {
 		return ""
 	}
 	return "  PRIMARY KEY (" + strings.Join(pks, ", ") + ")"
+}
+
+// indexName returns an index's name, deriving one when unset. The derived form
+// matches the single-column convention the emitters already use
+// (idx_<table>_<col>), so a composite index on (a, b) becomes idx_<table>_a_b
+// and needs no naming UI for the common case.
+func indexName(t Table, ix Index) string {
+	if ix.Name != "" {
+		return ix.Name
+	}
+	return "idx_" + t.Name + "_" + strings.Join(ix.Cols, "_")
+}
+
+// quotedCols quotes an index's column list for the given dialect.
+func quotedCols(ix Index, q func(string) string) string {
+	out := make([]string, len(ix.Cols))
+	for i, c := range ix.Cols {
+		out[i] = q(c)
+	}
+	return strings.Join(out, ", ")
 }
 
 // ---- MySQL / MariaDB ----
@@ -327,14 +365,18 @@ func buildMysql(tables []Table, header string) string {
 				lines = append(lines, "  KEY "+quoteTick("idx_"+t.Name+"_"+c.Name)+" ("+quoteTick(c.Name)+")")
 			}
 		}
+		// Composite indexes follow the single-column ones, in model order.
+		for _, ix := range t.Indexes {
+			lines = append(lines, "  KEY "+quoteTick(indexName(t, ix))+" ("+quotedCols(ix, quoteTick)+")")
+		}
 		for _, c := range refCols(t) {
 			rt, rp, ok := fkTargetMap(byID, c)
 			if !ok {
 				continue
 			}
 			lines = append(lines, fmt.Sprintf(
-				"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s",
-				quoteTick("fk_"+t.Name+"_"+c.Name), quoteTick(c.Name), quoteTick(rt.Name), quoteTick(rp.Name), fkAction(c)))
+				"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
+				quoteTick("fk_"+t.Name+"_"+c.Name), quoteTick(c.Name), quoteTick(rt.Name), quoteTick(rp.Name), fkAction(c), fkUpdateClause(c)))
 		}
 		out = append(out, "CREATE TABLE "+quoteTick(t.Name)+" (\n"+strings.Join(lines, ",\n")+"\n) ENGINE=InnoDB;")
 	}
@@ -359,7 +401,17 @@ func buildMariaDB(tables []Table) string {
 // ---- PostgreSQL ----
 
 func pgType(c Col) (string, string) { // type + inline extra (CHECK for ENUM)
-	base, args := splitType(c.Type)
+	// The array suffix is split off before the base is mapped and re-attached
+	// after, so `JSON[]` becomes `JSONB[]` rather than `JSONB` with the suffix
+	// lost. splitType cannot do this: it uppercases and splits on "(", and
+	// `INT[]` has neither.
+	array := ""
+	ty := c.Type
+	if isArrayType(ty) {
+		array = "[]"
+		ty = strings.TrimSuffix(strings.TrimSpace(ty), "[]")
+	}
+	base, args := splitType(ty)
 	switch base {
 	case "TINYINT":
 		base = "SMALLINT"
@@ -368,15 +420,17 @@ func pgType(c Col) (string, string) { // type + inline extra (CHECK for ENUM)
 	case "JSON":
 		base = "JSONB"
 	case "ENUM":
+		// ENUM[] is refused by validation, so it cannot reach here; the CHECK
+		// form below is only correct for a scalar column.
 		if check, ok := enumCheck(c.Name, c.Type, quoteDQ); ok {
-			return "TEXT", check
+			return "TEXT" + array, check
 		}
 		base = "TEXT"
 	}
 	if args != "" && base != "TEXT" {
-		return base + "(" + args + ")", ""
+		return base + "(" + args + ")" + array, ""
 	}
-	return base, ""
+	return base + array, ""
 }
 
 func postgresColDef(c Col) string {
@@ -416,6 +470,12 @@ func buildPostgres(tables []Table) string {
 					quoteDQ("idx_"+t.Name+"_"+c.Name), quoteDQ(t.Name), quoteDQ(c.Name)))
 			}
 		}
+		// Composite indexes are separate statements after the table, like the
+		// single-column ones above — Postgres has no inline KEY clause.
+		for _, ix := range t.Indexes {
+			post = append(post, fmt.Sprintf("CREATE INDEX %s ON %s (%s);",
+				quoteDQ(indexName(t, ix)), quoteDQ(t.Name), quotedCols(ix, quoteDQ)))
+		}
 		if l := pkLine(t, quoteDQ); l != "" {
 			lines = append(lines, l)
 		}
@@ -425,8 +485,8 @@ func buildPostgres(tables []Table) string {
 				continue
 			}
 			lines = append(lines, fmt.Sprintf(
-				"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s",
-				quoteDQ("fk_"+t.Name+"_"+c.Name), quoteDQ(c.Name), quoteDQ(rt.Name), quoteDQ(rp.Name), fkAction(c)))
+				"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
+				quoteDQ("fk_"+t.Name+"_"+c.Name), quoteDQ(c.Name), quoteDQ(rt.Name), quoteDQ(rp.Name), fkAction(c), fkUpdateClause(c)))
 		}
 		out = append(out, "CREATE TABLE "+quoteDQ(t.Name)+" (\n"+strings.Join(lines, ",\n")+"\n);")
 		out = append(out, post...)
@@ -521,6 +581,12 @@ func buildSqlite(tables []Table, typesMode string) string {
 					quoteTick("idx_"+t.Name+"_"+c.Name), quoteTick(t.Name), quoteTick(c.Name)))
 			}
 		}
+		// Composite indexes: separate statements after the table, like the
+		// single-column ones above.
+		for _, ix := range t.Indexes {
+			post = append(post, fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s);",
+				quoteTick(indexName(t, ix)), quoteTick(t.Name), quotedCols(ix, quoteTick)))
+		}
 		if !aiPk {
 			if l := pkLine(t, quoteTick); l != "" {
 				lines = append(lines, l)
@@ -532,8 +598,8 @@ func buildSqlite(tables []Table, typesMode string) string {
 				continue
 			}
 			lines = append(lines, fmt.Sprintf(
-				"  FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s",
-				quoteTick(c.Name), quoteTick(rt.Name), quoteTick(rp.Name), fkAction(c)))
+				"  FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
+				quoteTick(c.Name), quoteTick(rt.Name), quoteTick(rp.Name), fkAction(c), fkUpdateClause(c)))
 		}
 		out = append(out, "CREATE TABLE "+quoteTick(t.Name)+" (\n"+strings.Join(lines, ",\n")+"\n);")
 		out = append(out, post...)

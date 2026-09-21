@@ -34,8 +34,8 @@ var (
 	reSqliteCommentLine = regexp.MustCompile(`^-- (.*)$`)
 	reSqliteRowidPk     = regexp.MustCompile(`(?i)^(\S+) INTEGER PRIMARY KEY$`)
 	reSqlitePK          = regexp.MustCompile(`(?i)^PRIMARY KEY \((.+)\)$`)
-	reSqliteFK          = regexp.MustCompile(`(?i)^FOREIGN KEY \((\S+)\) REFERENCES (\S+) \((\S+)\) ON DELETE (.+)$`)
-	reSqliteIndex       = regexp.MustCompile(`(?i)^CREATE INDEX IF NOT EXISTS \S+ ON (\S+) \((\S+)\);$`)
+	reSqliteFK          = regexp.MustCompile(`(?i)^FOREIGN KEY \((\S+)\) REFERENCES (\S+) \((\S+)\) ON DELETE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE)( ON UPDATE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?$`)
+	reSqliteIndex       = regexp.MustCompile(`(?i)^CREATE INDEX IF NOT EXISTS \S+ ON (\S+) \((.+)\);$`)
 	reSqliteCol         = regexp.MustCompile(`(?i)^(\S+) ([A-Z]+(?:\([^)]*\))?)( NOT NULL)?( UNIQUE)?$`)
 	reSqliteEnumChk     = regexp.MustCompile(`(?i)^CHECK \(.*? IN \((.*)\)\)$`)
 )
@@ -128,7 +128,14 @@ func parseSqlite(sql string) (*Schema, error) {
 		// while cur is -1 and must be handled before the inside-a-table guard
 		if m := reSqliteIndex.FindStringSubmatch(line); m != nil {
 			if idx, ok := byName[unquoteTick(m[1])]; ok {
-				markCol(&s.Tables[idx], unquoteTick(m[2]), func(c *Col) { c.Ix = true })
+				// Same arity routing as the other two parsers.
+				cols := splitIndexCols(m[2], unquoteTick)
+				switch {
+				case len(cols) == 1:
+					markCol(&s.Tables[idx], cols[0], func(c *Col) { c.Ix = true })
+				case len(cols) > 1:
+					s.Tables[idx].Indexes = append(s.Tables[idx].Indexes, Index{Cols: cols})
+				}
 			}
 			continue
 		}
@@ -156,7 +163,9 @@ func parseSqlite(sql string) (*Schema, error) {
 			continue
 		}
 		if m := reSqliteFK.FindStringSubmatch(body); m != nil {
-			pending = append(pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), m[4]})
+			// m[4] is the ON DELETE action, m[6] the ON UPDATE action (absent
+			// clause → empty → no ON UPDATE in the model).
+			pending = append(pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), m[4], m[6]})
 			commentLine = ""
 			continue
 		}
@@ -197,20 +206,13 @@ func parseSqlite(sql string) (*Schema, error) {
 		})
 		commentLine = ""
 	}
-	// attach FKs now that every table exists (parents may be defined later)
-	for _, p := range pending {
-		idx, ok := byName[p.table]
-		if !ok {
-			continue // dangling FK ref → dropped, not crashed on
-		}
-		si, ok := byID[p.tableID]
-		if !ok {
-			continue
-		}
-		markCol(&s.Tables[si], p.col, func(c *Col) {
-			c.Ref = &Ref{TableID: s.Tables[idx].ID, Action: p.action}
-		})
-	}
+	// Attach FKs now that every table exists (parents may be defined later).
+	// Delegates to the shared helper: this loop was a copy of it, and the copy
+	// silently dropped a new Ref field while the shared one carried it — the
+	// exact drift that made the ON UPDATE round-trip test fail for sqlite and
+	// postgres only. One implementation, so a field added to Ref cannot reach
+	// one dialect's parser and miss another's.
+	attachPendingFKs(s, byName, byID, pending)
 	if len(s.Tables) == 0 {
 		return nil, fmt.Errorf("no CREATE TABLE found")
 	}
