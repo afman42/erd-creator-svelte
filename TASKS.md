@@ -191,8 +191,30 @@ git history, not here.
   Both are covered: the self-loop test asserts the curve bows outside the card
   and neither label is inside it, the overlap test asserts both ends leave the
   rightmost border, and an e2e loads a self-referencing schema through the API
-  and asserts no label overlaps any card in the real DOM. Totals moved 81 unit,
-  50→51 e2e.
+  and asserts no label overlaps any card in the real DOM.
+
+  **The arrowhead was present but invisible** — reported as "i cannot see arrow
+  in two tables in reference or not". The diagnosis is worth recording because
+  the obvious reading was wrong: the marker was NOT missing from the export. The
+  exported SVG contained `<marker id="crow">` and `marker-end="url(#crow)"`, and
+  diffing a render with and without `marker-end` showed 22 differing pixels —
+  it painted. It was simply unseeable: a 7×7 marker whose path had no
+  `stroke-width` (a marker's contents do NOT inherit the referencing path's, so
+  it drew at 1px while its line was 1.5px) in the same `#888` grey as that line.
+
+  Fixed by enlarging to 11×11 with an explicit 1.8px stroke and moving line and
+  marker onto a shared `--color-edge` token, brighter than `#888` and distinct
+  from both the self-edge accent (`#bb5588`, which stays the self colour) and the
+  label colour. Measured after: 64 differing pixels in a 10×11 box, ~3× the ink.
+
+  One wrong turn is worth keeping: the first attempt used
+  `stroke="context-stroke"` so the marker would inherit its path's colour and a
+  self-edge would keep its accent. That is the documented mechanism, but it does
+  NOT resolve when the path's stroke comes from a CSS class rather than a
+  presentation attribute — the exported marker kept the literal string
+  `context-stroke` and painted NOTHING, turning a faint arrow into no arrow. The
+  colour is therefore written twice (marker attribute + `.edge` rule), and a test
+  fails if the two disagree. Totals moved 81→85 unit, 51 e2e.
 
 - PostgreSQL array types (`INT[]`, `VARCHAR(255)[]`, `JSON[]`). This was
   originally my top recommendation as "a one-file allowlist widening" and I

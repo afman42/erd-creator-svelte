@@ -111,6 +111,15 @@ string.
   border rather than through its body. Without both, the curve degenerated to a
   vertical line lying on the border — invisible — or ran through the card, with
   its labels drawn inside the table.
+
+  The crow's-foot arrowhead is sized and stroked to survive an export: a marker
+  does not inherit the stroke-width of the path that references it, so the
+  original 7×7 marker drew at 1px in the same grey as its line and was
+  effectively invisible in a PNG (measured: 22 differing pixels, ~6×7). It is
+  now 11×11 with an explicit 1.8px stroke, and the line and arrowhead share
+  `--color-edge` — brighter than the old `#888`, and deliberately distinct from
+  both the self-edge accent and the cardinality-label colour so a label does not
+  merge into the line it sits on.
 - **Export PNG / SVG** — `Export PNG` rasterizes the canvas (tables + FK edges)
   to a `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
   The image covers the **whole diagram**, not just the visible area: the
