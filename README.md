@@ -90,9 +90,10 @@ string.
 - **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
   actions; bezier edge renders automatically; type-mismatch lint (server-side)
   in the header. Each edge is labelled with **min-max cardinality** at both
-  ends (`0..1`, `1..1`, `0..N`), always on. The labels are *derived* from flags
-  the column already has, never authored: `UQ` — or a **sole** primary key —
-  makes the child end `0..1`, otherwise `0..N`; `NOT NULL` makes the parent end
+  ends (`0..1`, `1..1`, `0..N`), always on, with each symbol sitting **on the
+  curve** near the card it describes. The labels are *derived* from flags the
+  column already has, never authored: `UQ` — or a **sole** primary key — makes
+  the child end `0..1`, otherwise `0..N`; `NOT NULL` makes the parent end
   `1..1`, otherwise `0..1`. Deriving means there is no stored cardinality that
   could contradict the DDL, so nothing is added to the model or the file format.
 
@@ -102,6 +103,10 @@ string.
   way would label every junction table as one-to-one. And the child minimum is
   always `0`: SQL cannot express "every parent must have at least one child",
   so printing `1..N` would assert something no database can enforce.
+
+  Edges whose two cards overlap in x (the default stacked layout) are **bowed**
+  clear of the card border. Without the bow the curve degenerates to a vertical
+  line lying exactly on the border — invisible, with its labels adrift.
 - **Export PNG / SVG** — `Export PNG` rasterizes the canvas (tables + FK edges)
   to a `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
   The image covers the **whole diagram**, not just the visible area: the

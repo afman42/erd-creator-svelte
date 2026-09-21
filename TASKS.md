@@ -133,21 +133,42 @@ git history, not here.
   `1..N` would assert something no database enforces.
 
   **The unit tests passed while the feature was visibly broken, and only looking
-  at the render caught it.** Two bugs survived a green suite: (1) the labels
-  were anchored to the *path's* endpoints, and the path picks whichever borders
-  are nearest — so when the child sat to the right the path started at the
-  parent, drawing `0..N` on the parent and `1..1` on the child, inverting the
-  notation; (2) with `text-anchor: middle`, a 22px label centred 6px from a
-  border still reached 5px back over the card, and in the default stacked
-  layout (all cards sharing an x range) one label landed inside the box. The
-  coordinate assertions were all true of the broken code, because I asserted
-  where the labels *were* rather than which card each belonged to. Fixed by
-  anchoring each label to its own card's facing border, pinning the text's near
-  edge (`text-anchor` now comes from the data, not the stylesheet) so clearance
-  is independent of label width, and adding tests that assert the *semantic*
-  attachment — which card each label is beside, in both left and right layouts,
-  plus the stacked case. Verified visually after the fix: labels at x=326 clear
-  of the card at 40..320, zero overlaps. Totals moved 68→80 unit, 49→50 e2e.
+  at the render caught it.** Three bugs survived a green suite:
+
+  (1) The labels were anchored to the *path's* endpoints, and the path picks
+  whichever borders are nearest — so when the child sat to the right the path
+  started at the parent, drawing `0..N` on the parent and `1..1` on the child,
+  inverting the notation.
+
+  (2) With `text-anchor: middle`, a 22px label centred 6px from a border still
+  reached 5px back over the card, and in the default stacked layout (all cards
+  sharing an x range) one label landed inside the box.
+
+  (3) In that same stacked layout the curve itself degenerated to a vertical
+  line lying exactly on the card border — the edge was invisible, so its labels
+  floated in empty space with nothing to attach to. The user spotted this one
+  ("add it in arrow") and it was the real defect: fixing the label position
+  while leaving the line invisible would have fixed nothing.
+
+  The coordinate assertions were all true of the broken code, because they
+  asserted where the labels *were* rather than which card each belonged to.
+
+  The fix, in the end, was to stop positioning labels relative to cards at all:
+  each label is evaluated **on the curve** with `pointOnCubic()` at t=0.25/0.75,
+  so it cannot drift off its own line, and the curve **bows** (`EDGE_BOW`) when
+  the cards overlap in x so there is a visible line to ride. Which end of the
+  curve belongs to the child is tracked explicitly (`childAtStart`), because the
+  routing starts at the *parent's* border when the child is to the right — the
+  same inversion as (1), which is why a fixed fraction alone was not enough.
+
+  Two more things the visual check caught after that. The fractions were 0.18/
+  0.82 at first, and since every FK into one table terminates at the same point
+  (its header centre) two such edges converge there — their parent-end labels
+  landed 9px apart with 10px-tall text and overlapped. Pulling them back to
+  0.25/0.75 uses the part of the curve where the edges are still apart, measured
+  at 17px for the same fixture; a regression test now asserts ≥10px separation.
+  And the labels carry a `paint-order: stroke` halo so the line does not strike
+  through the text. Totals moved 68→81 unit, 49→50 e2e.
 
 - PostgreSQL array types (`INT[]`, `VARCHAR(255)[]`, `JSON[]`). This was
   originally my top recommendation as "a one-file allowlist widening" and I
