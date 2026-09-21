@@ -69,12 +69,16 @@ git history, not here.
       that cannot concatenate raw input, making the check unnecessary.
 
 - [ ] **The accepted type grammar is a narrow allowlist.** `typeExpr` permits a
-      name plus one parenthesised argument list, which covers every type the UI
-      offers (verified against all 13, including `ENUM('a b','c,d')` and
-      `NUMERIC(8, 2)`). Trigger: a legitimate type rejected — e.g. array or
-      nested-parameter syntax (`VARCHAR(255)[]`). Widen the pattern deliberately
-      and add the case to `TestAcceptsRealTypes`; do not loosen it to "anything
-      without a semicolon", which is what made the original injection possible.
+      name plus one parenthesised argument list, optionally followed by one
+      array suffix. **Half the trigger has fired:** array syntax
+      (`VARCHAR(255)[]`) was accepted deliberately, because it is a legitimate
+      PostgreSQL type modifier — see the F8 entry in the trail. The other half —
+      *nested-parameter* syntax, e.g. `NUMERIC(8,2) UNSIGNED` or a second
+      argument list — has not, and multi-dimension (`INT[][]`) is refused on
+      purpose rather than widened to. Widen further only for a concrete type a
+      real dialect needs, and add it to `TestAcceptsRealTypes`; do not loosen
+      the pattern to "anything without a semicolon", which is what made the
+      original injection possible.
 
 - [ ] **The CSP has no nonce path.** It is strict (`script-src 'self'`, no
       `unsafe-inline`) and the built app satisfies it because vite emits an
@@ -111,6 +115,129 @@ git history, not here.
       remember a committed secret must be rotated, not just deleted.
 
 ## Done elsewhere (trail, not tracking)
+
+- PostgreSQL array types (`INT[]`, `VARCHAR(255)[]`, `JSON[]`). This was
+  originally my top recommendation as "a one-file allowlist widening" and I
+  withdrew it on finding that was wrong: arrays are PostgreSQL syntax, so
+  accepting the type in the model meant the MySQL/MariaDB/SQLite emitters would
+  produce DDL the database rejects. Doing it properly required making validation
+  **dialect-aware**, which is the substantive part of this change:
+
+  `Validate` now delegates to `ValidateFor(dialect)`, split into a
+  dialect-independent `validateShape` plus a dialect-specific layer that refuses
+  an array for any non-postgres target. The parameter is not cosmetic:
+  `/export` takes the dialect as a **separate request field**, so a schema
+  stored as postgres can be exported as mysql, and the check must run against
+  the *requested* dialect rather than the stored one. Save/`GenSQL` pass the
+  schema's own dialect; the export handler passes what the caller asked for. The
+  refusal names the target dialect, so the error says what to do.
+
+  Three combinations are invalid in PostgreSQL too and are refused regardless of
+  dialect: `INT[][]` (no emitter here renders multi-dimension, so accepting it
+  would emit something that does not mean what the model says), `ENUM[]` (the
+  ENUM rendering is `TEXT + CHECK (col IN (…))`, which describes one value —
+  there is no correct CHECK for an array of them), and an array column as `PK`
+  or `AI`. The modal's toggle clears PK/AI when switched on rather than leaving
+  them for the server to reject.
+
+  The suffix had to survive the dialect's own type mapping: `JSON[]` → `JSONB[]`
+  → `JSON[]`. `pgType`/`pgToModelType` now split the suffix off before the
+  mapping and re-attach it after, because `splitType` uppercases and splits on
+  `(` and `INT[]` has neither — so a naive change would have emitted `JSONB` and
+  silently dropped the dimension.
+
+  One bug was mine and worth recording because it was invisible in review: I
+  wrote the regex suffix as `\[\]?`, which means "literal `[` then an *optional*
+  `]`" — not "optional `[]`". It therefore required a `[` character, and every
+  plain `INT` column stopped parsing. The existing suite caught it immediately
+  (5 failures across 3 files); the fix is the grouped `(?:\[\])?`. Test
+  coverage: 4 new Go tests including dialect enforcement and invalid forms, the
+  array cases added to the postgres type-mapping round-trip, 3 assertions in the
+  frontend modal test, and 2 e2e tests (round-trip + the mysql refusal, and the
+  PK/AI clearing). Totals moved 158→162 Go, 68 unit, 47→49 e2e.
+
+- Composite indexes: an index over two or more columns is now a table-level
+  `Index{Name, Cols}`, emitted as an inline `KEY name (a, b)` for
+  MySQL/MariaDB and a separate `CREATE INDEX` for Postgres/SQLite — matching how
+  each dialect already emits single-column indexes. A **one-column** index
+  deliberately still uses `Col.Ix`: that keeps every existing file's bytes and
+  every schema's JSON unchanged (`Indexes` is `omitempty`), and the three
+  parsers route by column count (one → `Col.Ix`, several → `Index`), which is
+  what lets both shapes round-trip. The UI is a dialog reached from `⌗` in the
+  card header rather than a card control, for the same reason the column
+  controls moved out: a column-list control does not fit a 280px card, and
+  keeping it out of the card leaves `boxHeight()` — and therefore every FK edge
+  anchor and the CSS-drift test — untouched.
+
+  This also fixed a real pre-existing bug. `reIndex` matched
+  `KEY idx (a, b)` but the handler pulled a *single* name out of the line, so a
+  hand-written composite index parsed **without error and was silently
+  dropped**: both columns came back `ix=false` and the index vanished. Silent
+  because the line was recognised and simply mis-read — the worst shape for a
+  parser. `TestCompositeIndexArityRouting` pins it.
+
+  One test expectation was corrected rather than the code: a `;` in an index
+  name is *not* rejected by `Validate`, and should not be — it is safe inside a
+  quoted identifier, exactly as in a table name (`a;b` is legal here). It is
+  `validateOutput` that catches it at the last gate. The test now pins which
+  layer rejects what instead of asserting a stricter contract than the
+  table-name path has. `cloneTable` also needed an explicit index copy: the
+  `...t` spread shares the array by reference, so a duplicated table would have
+  silently shared its original's indexes. Totals moved 151→158 Go, 66→68 unit,
+  46→47 e2e.
+
+- `Export SVG`: the vector twin of `Export PNG` — same `captureSize()` bounds,
+  same empty-schema guard, same filename rule with a `.svg` extension. Two
+  details worth recording, because both are silent failure modes:
+
+  `toSvg` rather than `toPng`. `toPng`/`toBlob` build a canvas from an `<img>`
+  whose `src` is a data URL, and the CSP's `connect-src 'self'` blocks that —
+  `toSvg` serializes the clone directly and never creates an image, so it stays
+  inside the policy the security work established.
+
+  The unwrapping. `toSvg` returns a **data URL**, not markup
+  (`data:image/svg+xml;charset=utf-8,` + `encodeURIComponent(svg)`). Writing it
+  to a `.svg` verbatim produces a file that begins `data:image/svg+xml…`, which
+  no viewer opens — and which an extension check, a byte count or a "contains
+  `<svg`" assertion all pass, because the payload really is in there. So
+  `decodeSvgDataUrl` is exported and unit-tested for exactly that (both
+  percent-encoded and base64 forms, plus rejection of a non-SVG payload), and
+  the e2e test asserts the file *starts with* `<svg` rather than merely
+  containing one. Verified beyond the suite by parsing a real export with
+  `DOMParser`: root `svg`, `width="360" height="286"`, table names present.
+  The dynamic import is preserved — `capture.js` is its own chunk and
+  `html-to-image` stays a separate 12.9 kB one, so the SQL path still pays
+  nothing. Totals moved 63→66 unit, 42→46 e2e.
+
+- FK `ON UPDATE`: `Ref` gained `OnUpdate`, all three emitters render it, and all
+  three parsers read it back. The two referential actions use **opposite**
+  defaults on purpose. `ON DELETE` unset still means `CASCADE`, because that is
+  what every file already on disk says and changing it would rewrite them;
+  `ON UPDATE` unset means **omit the clause**, so a schema with no ON UPDATE
+  action emits byte-identical output and `TestGenSQLGolden`/`TestPostgresGolden`
+  did not move. Both fields are now an allowlist (`fkActions`, five values) at
+  the `Validate` boundary, not free text — an action is emitted as raw SQL
+  inside the constraint clause, so it is the same injection class as the type
+  field, and `TestRejectsFKActionInjection` pins it. The parser canonicalizes
+  case (`normalizeFKAction`) the way it already uppercases type names, or a
+  hand-written `on delete cascade` would load and then be rejected on save.
+
+  The interesting part is the bug the round-trip test caught. `parsePostgres`
+  and `parseSqlite` each carried their own **copy** of `attachPendingFKs` —
+  postgres's with a stale comment about submatch indices, sqlite's inline —
+  while only the mysql path called the shared function. Adding `OnUpdate` to the
+  shared helper therefore reached mysql and silently missed postgres and sqlite,
+  and the two hand-written literals would not even compile, which is what
+  exposed them. Fixed by deleting both copies and calling `attachPendingFKs`
+  from all three parsers, so a field added to `Ref` cannot reach one dialect's
+  parser and miss another's. This is the same failure mode as the save/export
+  drift the repo already documents ("two emitters for one grammar drifted
+  before"), one layer down: two parsers for one grammar drift the same way.
+  Coverage: 7 Go tests (round-trip across all four dialects, absent-means-omit,
+  clause order, defaults, injection rejects, accepts-real-actions, lowercase
+  normalization), 1 frontend unit test on `cloneTable`, and 1 e2e that drives
+  the dialog through save, reload and the SQL panel. Totals moved 144→151 Go,
+  62→63 unit, 41→42 e2e.
 
 - PNG export clipping: `Export PNG` cropped every table past the viewport —
   `captureBounds()` was written and unit-tested but never passed to

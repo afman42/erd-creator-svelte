@@ -81,20 +81,65 @@ string.
 - **Columns** — each column is a read-only row: name, type, active flag badges,
   the FK target, and a ✎ button that opens the edit dialog. The dialog holds
   name, type (`INT…JSON`, `ENUM` with editable values), the `PK` (composite
-  supported) `NN` `UQ` `AI` `IX` flags, the FK and its `ON DELETE` action, the
-  comment, and Remove. It is a native `<dialog>`, so Escape closes it and focus
-  is trapped while it is open. (The ten controls used to sit inline in a 280px
-  row, where they needed ~342px and clipped; the row's 26px height and the
-  comment line's 16px are unchanged, so FK edge anchors are unaffected.)
-- **Relationships** — per-column `FK→` select + `ON DELETE` action; bezier edge
-  renders automatically; type-mismatch lint (server-side) in the header
-- **Export PNG** — `Export PNG` rasterizes the canvas (tables + FK edges) to a
-  `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
+  supported) `NN` `UQ` `AI` `IX` flags, the FK with its `ON DELETE` and
+  `ON UPDATE` actions, the comment, and Remove. It is a native `<dialog>`, so
+  Escape closes it and focus is trapped while it is open. (The ten controls used
+  to sit inline in a 280px row, where they needed ~342px and clipped; the row's
+  26px height and the comment line's 16px are unchanged, so FK edge anchors are
+  unaffected.)
+- **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
+  actions; bezier edge renders automatically; type-mismatch lint (server-side)
+  in the header. The two actions use opposite defaults, deliberately:
+  `ON DELETE` unset means `CASCADE` (what every file written before the field
+  existed already says), while `ON UPDATE` unset means **omit the clause** — so
+  a schema with no `ON UPDATE` action emits exactly the bytes it always did,
+  and adding one never silently rewrites the others. Both are validated against
+  the five known actions (`CASCADE`, `RESTRICT`, `SET NULL`, `SET DEFAULT`,
+  `NO ACTION`), because an action is emitted as raw SQL inside the constraint
+  clause and so is an allowlist rather than free text.
+- **Export PNG / SVG** — `Export PNG` rasterizes the canvas (tables + FK edges)
+  to a `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
   The image covers the **whole diagram**, not just the visible area: the
   canvas scrolls, so its own size is the viewport, and the export measures the
   cards instead (`captureSize()` in `capture.js`). Scrolled or offscreen tables
   are included. Filename mirrors Export (`mydb.sql`→`mydb.png`). Empty schema
   shows error, no download.
+
+  `Export SVG` is the vector twin: same sizing, same filename rule with a
+  `.svg` extension (`mydb.sql`→`mydb.svg`), so a diagram pasted into docs or
+  slides stays sharp when rescaled. It uses `toSvg` rather than `toPng`, and
+  not only for the format: `toPng` builds a canvas from an `<img>` whose `src`
+  is a data URL, which the CSP's `connect-src 'self'` blocks, while `toSvg`
+  serializes the clone directly and never goes through an image. The library
+  returns a *data URL*, so `decodeSvgDataUrl` unwraps it before the file is
+  written — otherwise the `.svg` would begin `data:image/svg+xml…` and open in
+  nothing.
+- **Indexes** — a per-column `IX` flag emits a single-column index
+  (`idx_<table>_<col>`). An index over **two or more** columns is a table-level
+  thing, opened with `⌗` in the card header, because `IX` on three columns
+  means three separate indexes, not one index over three. Composite indexes
+  round-trip in every dialect: `KEY name (a, b)` inline for MySQL/MariaDB, and
+  a separate `CREATE INDEX` statement for Postgres and SQLite, matching how
+  each dialect already emits single-column indexes. The name is optional —
+  unnamed derives `idx_<table>_<col1>_<col2>`, the same convention the
+  single-column path uses — and a one-column index deliberately stays on the
+  column flag, so a schema that only uses `IX` still saves the exact bytes it
+  always did. Both the name and the column list are validated as identifiers,
+  and the parsers route by column count, which is what lets both shapes reopen.
+- **Types** — the dialog's type list covers `INT…JSON` plus `ENUM` with editable
+  values, and a `DECIMAL(10,2)`-style argument list where the type takes one.
+  When **PostgreSQL** is the selected dialect an `Array` checkbox appears,
+  appending the `[]` suffix (`VARCHAR(255)` → `VARCHAR(255)[]`). The suffix is
+  part of the stored type expression, so `JSON[]` emits as `JSONB[]` and reopens
+  as `JSON[]` — the array dimension survives the dialect's own type mapping
+  rather than being dropped. Arrays are PostgreSQL syntax, so the control is
+  shown only for postgres and the server **refuses to emit one for any other
+  dialect** rather than producing DDL MySQL or SQLite would reject; the error
+  names the target dialect. `INT[][]` (multi-dimension) and `ENUM[]` are
+  refused outright: no emitter here renders a multi-dimension array, and the
+  ENUM rendering is a `CHECK (col IN (…))` constraint that describes one value,
+  not an array of them. An array column also cannot be a `PK` or `AI`, so
+  turning the toggle on clears both.
 - **Files** — schema store in `-dir` (default `./schemas`): Files dropdown +
   New/Save/Del; saves debounce-autosave the current file — switching or
   deleting a file flushes the pending save first. The server generates and
@@ -139,12 +184,15 @@ string.
 ```
 frontend/src/geometry.js     (canvas box metrics + FK edge paths)   (pure, testable)
 frontend/src/erd.js          (UI helpers + naming + dialects + layout)(pure, testable)
-frontend/src/capture.js      (PNG rasterization via html-to-image, bounds via geometry)
+frontend/src/capture.js      (PNG/SVG capture via html-to-image, bounds via geometry)
 frontend/src/download.js     (download + clipboard helpers)         (pure)
 frontend/src/history.js      (undo stack, JSON snapshots)           (pure)
 frontend/src/autosave.js     (debounced lint/save/sql, dirty flag) (pure)
 frontend/src/schema.svelte.js(store: model state, mutations, fetch glue)
 frontend/src/Toolbar.svelte  (header bar, file/dialect actions)
+frontend/src/TableCard.svelte(table card, column rows, dialog hosts)
+frontend/src/ColumnEditModal.svelte(per-column controls dialog)
+frontend/src/TableIndexModal.svelte(composite-index dialog)
 frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
 grammar.go              model + mysql/mariadb parse/lint + inserts
 grammar_postgres.go     postgres parse (reads buildPostgres output)
