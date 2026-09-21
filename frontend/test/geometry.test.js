@@ -358,3 +358,154 @@ test("edgePaths: py is parent y + HDR_H/2", () => {
 	// ci = 0+28+13=41
 	assert.ok(e.d.startsWith("M 280 41 "), e.d);
 });
+
+// ---- the crow's foot belongs at the CHILD end ----
+//
+// Reported from the UI: "when table users column id in reference to table
+// posts ... is not line arrow to table posts?" The arrowhead was placed by
+// `marker-end`, i.e. at the END OF THE PATH — but the path starts at the
+// PARENT's border whenever the child is to the right, so on those edges the
+// crow's foot landed on the parent and the relationship read backwards.
+// `arrowAtStart` now names the child end explicitly, and App.svelte swaps
+// marker-end for marker-start accordingly. The marker is already
+// `orient="auto-start-reverse"`, so a start marker points away from the path.
+//
+// These assert WHICH END THE ARROW IS DRAWN AT, which is the thing the earlier
+// coordinate tests never checked: they asserted where the labels were, so they
+// all passed while the arrow pointed the wrong way.
+
+// pathEnds returns the coordinates the path actually starts and ends at.
+const pathEnds = (d) => {
+	const n = d.match(/-?[\d.]+/g).map(Number);
+	return { startX: n[0], startY: n[1], endX: n[n.length - 2] };
+};
+
+test("edgePaths: arrowhead is at the child end when the child is on the right", () => {
+	const users = tab("u", 40, 40, [{ id: "u1", pk: true, nn: true }]);
+	const posts = tab("p", 500, 40, [
+		{ id: "p1", pk: true, nn: true, ref: { tableId: "u" } },
+	]);
+	const [e] = edgePaths({ tables: [users, posts] });
+	// the path ends at the child, so the default end marker is already correct
+	assert.equal(e.arrowAtStart, false);
+	assert.equal(
+		pathEnds(e.d).endX,
+		500,
+		"path should end at the child's left border",
+	);
+});
+
+test("edgePaths: arrowhead is at the child end when the child is on the LEFT", () => {
+	// The inverted case: child posts at x=40, parent users at x=500. The path
+	// runs posts.RIGHT → users.LEFT, so a bare `marker-end` would put the
+	// crow's foot on the PARENT. This is the bug that was reported.
+	const posts = tab("p", 40, 40, [
+		{ id: "p1", pk: true, nn: true, ref: { tableId: "u" } },
+	]);
+	const users = tab("u", 500, 40, [{ id: "u1", pk: true, nn: true }]);
+	const [e] = edgePaths({ tables: [posts, users] });
+	assert.equal(e.arrowAtStart, true, "arrow must be drawn at the path start");
+	const { startX, endX } = pathEnds(e.d);
+	assert.equal(startX, 40 + BOX_W, "path starts at the child's right border");
+	assert.equal(
+		endX,
+		500,
+		"path ends at the parent — so the start is the child",
+	);
+});
+
+test("edgePaths: a self edge puts the arrowhead at the child end too", () => {
+	const s = tab("t1", 50, 20, [{ id: "c1", pk: true, ref: { tableId: "t1" } }]);
+	const [e] = edgePaths({ tables: [s] });
+	assert.equal(e.arrowAtStart, true);
+});
+
+// ---- reciprocal FKs must not be drawn as one curve ----
+//
+// `users.id → posts.id` AND `posts.id → users.id` is a legal schema (two tables
+// mutually referencing). Both edges computed IDENTICAL path strings, so they
+// painted one line on top of itself: a single visible arrowhead, and two sets
+// of cardinality labels stacked at each end. Each edge in a colliding group now
+// gets its own lane offset.
+
+test("edgePaths: reciprocal FKs draw two distinct curves", () => {
+	const users = tab("u", 40, 40, [
+		{ id: "u1", pk: true, nn: true, ref: { tableId: "p" } },
+	]);
+	const posts = tab("p", 500, 40, [
+		{ id: "p1", pk: true, nn: true, ref: { tableId: "u" } },
+	]);
+	const edges = edgePaths({ tables: [users, posts] });
+	assert.equal(edges.length, 2, "both directions must be drawn");
+	const [a, b] = edges;
+	assert.notEqual(a.d, b.d, "the two edges must not be the same curve");
+	// Each arrowhead is at its OWN child end. users sits LEFT of posts here, so
+	// the users.id → posts edge has its child at the path START and the
+	// posts.id → users edge has its child at the END.
+	assert.equal(
+		a.arrowAtStart,
+		true,
+		"users.id → posts: child users is at the start",
+	);
+	assert.equal(
+		b.arrowAtStart,
+		false,
+		"posts.id → users: child posts is at the end",
+	);
+});
+
+test("edgePaths: reciprocal FK labels do not collide", () => {
+	const users = tab("u", 40, 40, [
+		{ id: "u1", pk: true, nn: true, ref: { tableId: "p" } },
+	]);
+	const posts = tab("p", 500, 40, [
+		{ id: "p1", pk: true, nn: true, ref: { tableId: "u" } },
+	]);
+	const [a, b] = edgePaths({ tables: [users, posts] });
+	// Both child-end labels are the same text ("0..1") at the same nominal
+	// point unless the lanes separate them; 9px text needs ~10px of clearance.
+	for (const [p, q] of [
+		[a.from, b.from],
+		[a.to, b.to],
+	]) {
+		const dx = Math.abs(p.x - q.x);
+		const dy = Math.abs(p.y - q.y);
+		assert.ok(
+			Math.hypot(dx, dy) >= 10,
+			`labels overlap: (${p.x.toFixed(1)},${p.y.toFixed(1)}) vs (${q.x.toFixed(1)},${q.y.toFixed(1)})`,
+		);
+	}
+});
+
+// The lane offset must NOT touch edges that are already distinct. Two FKs from
+// one table to the same parent sit on different rows, so their endpoints differ
+// and they were never colliding — moving them would be a regression.
+test("edgePaths: distinct FKs into one parent are left unoffset", () => {
+	const users = tab("u", 500, 0, [{ id: "u1", pk: true, nn: true }]);
+	const posts = tab("p", 0, 10, [
+		{ id: "c0", pk: true, nn: true },
+		{ id: "c1", ref: { tableId: "u" } }, // row 1
+		{ id: "c2", ref: { tableId: "u" } }, // row 2
+	]);
+	const edges = edgePaths({ tables: [users, posts] });
+	assert.equal(edges.length, 2);
+	const ci1 = 10 + HDR_H + 1 * ROW_H + ROW_CENTER;
+	const ci2 = 10 + HDR_H + 2 * ROW_H + ROW_CENTER;
+	// each keeps its exact anchor row...
+	assert.ok(edges[0].d.startsWith(`M ${BOX_W} ${ci1} `), edges[0].d);
+	assert.ok(edges[1].d.startsWith(`M ${BOX_W} ${ci2} `), edges[1].d);
+	// ...and its control points stay at the midpoint of the two borders
+	const mid = (BOX_W + 500) / 2;
+	assert.ok(edges[0].d.includes(`C ${mid} ${ci1}`), edges[0].d);
+	assert.ok(edges[1].d.includes(`C ${mid} ${ci2}`), edges[1].d);
+});
+
+test("edgePaths: a lone edge keeps its exact previous geometry", () => {
+	// Guards the lane refactor: with one edge in a group the offset is 0, so
+	// the path string stays byte-identical to the pre-refactor output.
+	const parent = tab("p", 0, 40, [{ id: "c0" }]);
+	const child = tab("c", 500, 10, [{ id: "c1", ref: { tableId: "p" } }]);
+	const [e] = edgePaths({ tables: [parent, child] });
+	assert.equal(e.d, "M 280 51 C 390 51, 390 54, 500 54");
+	assert.equal(e.arrowAtStart, false);
+});

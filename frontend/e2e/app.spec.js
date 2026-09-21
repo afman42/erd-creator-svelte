@@ -260,6 +260,101 @@ test("self-referencing FK loops outside its card with labels clear", async ({
 	expect(texts.sort()).toEqual(["0..1", "0..N"]);
 });
 
+// Two tables referencing EACH OTHER is a legal schema AND reachable from the
+// UI: the FK dropdown excludes only the column's own table, so users.id can
+// point at posts and posts.id back at users. Both edges used to compute
+// identical path strings, so they painted one line on top of itself: a single
+// visible arrowhead, and two cardinality labels stacked on each other at every
+// end. Asserted in the real DOM, because the defect was a rendering collision
+// that no coordinate-level assertion caught. Written through the API for
+// brevity; the dialog path is covered by the FK tests above.
+test("reciprocal FKs render two curves with an arrowhead at each child", async ({
+	page,
+	request,
+}) => {
+	const put = await request.put("/api/files/mutual.sql", {
+		data: {
+			dialect: "mysql",
+			tables: [
+				{
+					id: "users",
+					name: "users",
+					columns: [
+						{ name: "id", type: "INT", pk: true, nn: true, ai: true },
+						{
+							name: "post_id",
+							type: "INT",
+							ref: { tableId: "posts", action: "CASCADE" },
+						},
+					],
+				},
+				{
+					id: "posts",
+					name: "posts",
+					columns: [
+						{ name: "id", type: "INT", pk: true, nn: true, ai: true },
+						{
+							name: "user_id",
+							type: "INT",
+							ref: { tableId: "users", action: "CASCADE" },
+						},
+					],
+				},
+			],
+		},
+	});
+	expect(put.ok()).toBeTruthy();
+
+	await page.goto("/");
+	await page.getByLabel("Open schema file").selectOption("mutual.sql");
+	await expect(page.locator(".tname").first()).toHaveValue("users");
+
+	// two edges, so four labels
+	await expect(page.locator("svg text.card")).toHaveCount(4);
+
+	// both paths are drawn, and they are NOT the same curve
+	const paths = await page
+		.locator("svg path.edge")
+		.evaluateAll((els) => els.map((e) => e.getAttribute("d")));
+	expect(paths.length).toBe(2);
+	expect(new Set(paths).size).toBe(2);
+
+	// Each edge carries exactly one arrowhead, and between them one is a start
+	// marker and one is an end marker — i.e. each sits at its own child end. The
+	// marker is orient="auto-start-reverse", so the start one points out of the
+	// child rather than back along the curve.
+	const markers = await page.locator("svg path.edge").evaluateAll((els) =>
+		els.map((e) => ({
+			start: e.getAttribute("marker-start"),
+			end: e.getAttribute("marker-end"),
+		})),
+	);
+	for (const m of markers) {
+		expect([m.start, m.end].filter(Boolean).length).toBe(1);
+	}
+	expect(markers.filter((m) => m.start).length).toBe(1);
+	expect(markers.filter((m) => m.end).length).toBe(1);
+
+	// the cardinality labels must not be stacked on each other
+	const overlaps = await page.locator("svg text.card").evaluateAll((els) => {
+		const boxes = els.map((e) => e.getBBox());
+		const out = [];
+		for (let i = 0; i < boxes.length; i++)
+			for (let j = i + 1; j < boxes.length; j++) {
+				const a = boxes[i];
+				const b = boxes[j];
+				const hit =
+					a.x < b.x + b.width &&
+					a.x + a.width > b.x &&
+					a.y < b.y + b.height &&
+					a.y + a.height > b.y;
+				if (hit) out.push([i, j]);
+			}
+		return out;
+	});
+	expect(overlaps).toEqual([]);
+});
+
 test("FK type mismatch surfaces server lint in header", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "+ Table" }).click();

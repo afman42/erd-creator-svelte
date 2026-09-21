@@ -164,7 +164,8 @@ function onKey(ev) {
 					fill="none"
 					stroke={e.self ? EDGE_SELF_STROKE : EDGE_STROKE}
 					stroke-width={EDGE_STROKE_WIDTH}
-					marker-end="url(#crow)"
+					marker-end={e.arrowAtStart ? undefined : "url(#crow)"}
+					marker-start={e.arrowAtStart ? "url(#crow)" : undefined}
 				/>
 				<!-- Min-max cardinality, derived from the column's flags (see
 				     cardinality() in geometry.js). The position comes from

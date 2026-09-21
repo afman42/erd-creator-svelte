@@ -49,6 +49,24 @@ export const LBL_T_PARENT = 0.75;
 // it clear of the cards is what makes the edge visible at all.
 export const EDGE_BOW = 30;
 
+// How far apart two edges between the SAME pair of tables are offset. Without
+// it they route to identical coordinates and paint one line on top of itself,
+// so a reciprocal FK pair showed a single arrowhead and two sets of cardinality
+// labels stacked at each end.
+//
+// The offset is applied to the control points, so it reaches the labels
+// ATTENUATED: a label sits at t=0.25/0.75, where the cubic's x contribution
+// from the control points is 3(1-t)²t + 3(1-t)t² = 0.5625. A lane of L
+// therefore separates two labels by only 0.5625·L, not L — which is what made
+// a first attempt at 22px leave the labels 12.4px apart and still overlapping.
+//
+// The minimum is LABEL_W / 0.5625. LABEL_W is a measured 21.609px (the
+// cardinality labels are always four characters — "0..1", "0..N", "1..1" — in
+// the monospace face), so 38.4px is the threshold and 44px gives 24.75px
+// centre-to-centre, i.e. 3.1px of clear space between the boxes. That is the
+// whole margin and it is enough, because the label width is fixed.
+export const EDGE_LANE = 44;
+
 // Total rendered height of a card with nColumns columns.
 export function boxHeight(nColumns) {
 	return HDR_H + nColumns * ROW_H + ADDCOL_H + BORDER_H;
@@ -227,7 +245,18 @@ export function applyCardinality(t, c, stateId) {
 }
 
 export function edgePaths(schema) {
-	const out = [];
+	// Edges are ROUTED first and drawn second, because the lane an edge takes
+	// depends on how many other edges share its table pair — a fact only known
+	// once every edge has been seen.
+	//
+	// Two edges between the SAME pair of tables (a reciprocal FK pair, or two
+	// columns referencing one table) compute identical endpoints whenever their
+	// columns sit at the same row index and the cards share a y. They were then
+	// drawn as one curve on top of itself: a single visible line, a single
+	// visible arrowhead, and two sets of cardinality labels stacked on each
+	// other at both ends. Each edge in such a group is offset along its control
+	// points so every relationship stays separately visible.
+	const routed = [];
 	for (const t of schema.tables)
 		for (let i = 0; i < t.columns.length; i++) {
 			const c = t.columns[i];
@@ -273,7 +302,6 @@ export function edgePaths(schema) {
 				x2 = p.x; // parent's left border
 				childAtStart = true;
 			}
-			const mid = (x1 + x2) / 2;
 			const { child, parent } = cardinality(t, c);
 			// When both ends leave from the same border — the self loop, and
 			// any x-overlapping pair — the curve would degenerate to a vertical
@@ -281,25 +309,71 @@ export function edgePaths(schema) {
 			// Bowing the control points out makes the edge visible and gives the
 			// labels a line to sit on.
 			const degenerate = x1 === x2;
-			const bx = degenerate ? x1 + EDGE_BOW : mid;
-			const d = `M ${x1} ${ci} C ${bx} ${ci}, ${bx} ${py}, ${x2} ${py}`;
-			// Each label rides the curve at the end nearest its OWN card, so a
-			// reader finds the symbol beside the table it describes.
-			const tChild = childAtStart ? LBL_T_CHILD : LBL_T_PARENT;
-			const tParent = childAtStart ? LBL_T_PARENT : LBL_T_CHILD;
-			out.push({
-				d,
-				self: t.id === p.id,
-				from: {
-					...pointOnCubic(x1, ci, bx, ci, bx, py, x2, py, tChild),
-					text: child,
-				},
-				to: {
-					...pointOnCubic(x1, ci, bx, ci, bx, py, x2, py, tParent),
-					text: parent,
-				},
+			routed.push({
+				t,
+				p,
+				ci,
+				py,
+				x1,
+				x2,
+				childAtStart,
+				degenerate,
+				child,
+				parent,
 			});
 		}
+
+	// Group edges that would otherwise be drawn at the SAME coordinates. Two
+	// edges collide only when every endpoint agrees — same facing borders, same
+	// anchor rows — which is what the signature below captures. Grouping by
+	// table pair alone would also spread edges that are already distinct: two
+	// FKs from one table to one parent (`created_by` / `updated_by` → users) sit
+	// on different rows, and offsetting those would move a diagram that was
+	// never broken.
+	const lanes = new Map();
+	for (const r of routed) {
+		const key = [r.x1, r.x2, r.ci, r.py].join("|");
+		if (!lanes.has(key)) lanes.set(key, []);
+		lanes.get(key).push(r);
+	}
+
+	const out = [];
+	for (const group of lanes.values()) {
+		// A single edge needs no lane: offset 0 leaves every existing geometry
+		// untouched, so the one-way cases render exactly as before.
+		const count = group.length;
+		group.forEach((r, lane) => {
+			const offset = count === 1 ? 0 : (lane - (count - 1) / 2) * EDGE_LANE;
+			const bx = (r.degenerate ? r.x1 + EDGE_BOW : (r.x1 + r.x2) / 2) + offset;
+			// The crow's foot belongs at the CHILD end — the many side of the
+			// relationship, and the card the child-end label describes. The
+			// routing starts at the parent's border when the child is to the
+			// right, so `marker-end` alone put the arrowhead on the parent for
+			// those edges, and it pointed the wrong way whenever a child sat
+			// left of its parent. The marker carries
+			// `orient="auto-start-reverse"`, so naming the right end is enough;
+			// the geometry itself stays untouched.
+			const arrowAtStart = r.childAtStart;
+			const d = `M ${r.x1} ${r.ci} C ${bx} ${r.ci}, ${bx} ${r.py}, ${r.x2} ${r.py}`;
+			// Each label rides the curve at the end nearest its OWN card, so a
+			// reader finds the symbol beside the table it describes.
+			const tChild = r.childAtStart ? LBL_T_CHILD : LBL_T_PARENT;
+			const tParent = r.childAtStart ? LBL_T_PARENT : LBL_T_CHILD;
+			out.push({
+				d,
+				self: r.t.id === r.p.id,
+				arrowAtStart,
+				from: {
+					...pointOnCubic(r.x1, r.ci, bx, r.ci, bx, r.py, r.x2, r.py, tChild),
+					text: r.child,
+				},
+				to: {
+					...pointOnCubic(r.x1, r.ci, bx, r.ci, bx, r.py, r.x2, r.py, tParent),
+					text: r.parent,
+				},
+			});
+		});
+	}
 	return out;
 }
 
