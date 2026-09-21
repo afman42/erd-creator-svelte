@@ -28,11 +28,26 @@ export const GAP = 12; // vertical gap between cards stacked in a layer
 // row plus its comment line, so the anchor is half the *row*, not half ROW_H.
 export const ROW_CENTER = 13;
 
-// Where a cardinality label sits relative to its edge endpoint: pushed outward
-// along the edge so it clears the card border, and dropped below the line so it
-// does not sit on top of it.
-export const LBL_DX = 6;
-export const LBL_DY = 9;
+// Where a cardinality label sits along its edge, as a fraction of the curve
+// from the child end (0) to the parent end (1). Labels sit ON the line near
+// each end rather than beside a card border: beside-the-border placement left
+// them floating in empty space whenever the curve was not next to a card, and
+// the line itself is what the symbol describes.
+//
+// The fractions are 0.25/0.75 rather than closer to the ends for a measured
+// reason: every FK into one table terminates at the same point (its header
+// centre), so two such edges converge as they approach it and their parent-end
+// labels collide. At 0.82 two labels landed 9px apart with 10px-tall text —
+// overlapping. Pulling them back to 0.75 uses the part of the curve where the
+// edges are still apart, measured at 17px for the same fixture.
+export const LBL_T_CHILD = 0.25;
+export const LBL_T_PARENT = 0.75;
+
+// How far an edge bows out when the two cards overlap in x. In the default
+// layout every card shares an x range, so the curve degenerated to a vertical
+// line exactly on the card border — invisible, with its labels adrift. Bowing
+// it clear of the cards is what makes the edge visible at all.
+export const EDGE_BOW = 30;
 
 // Total rendered height of a card with nColumns columns.
 export function boxHeight(nColumns) {
@@ -93,48 +108,53 @@ export function edgePaths(schema) {
 			const ci = t.y + HDR_H + i * ROW_H + ROW_CENTER;
 			const py = p.y + HDR_H / 2;
 			let x1, x2;
+			// childAtStart records which END OF THE CURVE is at the child's
+			// card. The routing starts at the parent's border when the child is
+			// to the right, so the child's end is not always the path's start —
+			// and placing the child's label by a fixed fraction from the start
+			// therefore put it at the parent's end, inverting the notation.
+			let childAtStart;
 			if (t.id === p.id) {
 				x1 = t.x;
 				x2 = t.x + 60;
+				childAtStart = true;
 			} else if (t.x > p.x) {
-				x1 = p.x + BOX_W;
-				x2 = t.x;
+				x1 = p.x + BOX_W; // parent's right border
+				x2 = t.x; // child's left border
+				childAtStart = false;
 			} else if (t.x + BOX_W < p.x) {
-				x1 = t.x + BOX_W;
-				x2 = p.x;
+				x1 = t.x + BOX_W; // child's right border
+				x2 = p.x; // parent's left border
+				childAtStart = true;
 			} else {
 				x1 = t.x + BOX_W;
 				x2 = p.x + BOX_W;
+				childAtStart = true;
 			}
 			const mid = (x1 + x2) / 2;
 			const { child, parent } = cardinality(t, c);
-			// Labels are anchored to the CARD each one describes, not to the
-			// path's endpoints. The path picks whichever borders are nearest,
-			// so x1 is the parent's border when the child sits to the right —
-			// anchoring `child` to x1 drew the "many" symbol on the parent and
-			// the "one" on the child, inverting the notation. Measuring from
-			// the cards keeps each label with its own table regardless of how
-			// the path was routed.
-			//
-			// facing() returns the border of `from` that looks toward `toward`,
-			// plus the direction to push the label (outward, into the gap).
-			const childSide = facing(t, p);
-			const parentSide = facing(p, t);
+			// When the two cards overlap in x — which is every card in the
+			// default stacked layout — x1 and x2 coincide, so the curve would
+			// be a vertical line lying exactly on the card border: invisible,
+			// with its labels floating in space. Bowing the control points out
+			// to one side makes the edge visible and gives the labels a line to
+			// sit on.
+			const overlaps = x1 === x2;
+			const bx = overlaps ? x1 + EDGE_BOW : mid;
+			const d = `M ${x1} ${ci} C ${bx} ${ci}, ${bx} ${py}, ${x2} ${py}`;
+			// Each label rides the curve at the end nearest its OWN card, so a
+			// reader finds the symbol beside the table it describes.
+			const tChild = childAtStart ? LBL_T_CHILD : LBL_T_PARENT;
+			const tParent = childAtStart ? LBL_T_PARENT : LBL_T_CHILD;
 			out.push({
-				d: `M ${x1} ${ci} C ${mid} ${ci}, ${mid} ${py}, ${x2} ${py}`,
+				d,
 				self: t.id === p.id,
-				// child end, beside the FK column's own row
 				from: {
-					x: childSide.x,
-					y: ci + LBL_DY,
-					anchor: childSide.anchor,
+					...pointOnCubic(x1, ci, bx, ci, bx, py, x2, py, tChild),
 					text: child,
 				},
-				// parent end, beside the parent's header
 				to: {
-					x: parentSide.x,
-					y: py + LBL_DY,
-					anchor: parentSide.anchor,
+					...pointOnCubic(x1, ci, bx, ci, bx, py, x2, py, tParent),
 					text: parent,
 				},
 			});
@@ -142,34 +162,25 @@ export function edgePaths(schema) {
 	return out;
 }
 
-// facing returns where a label for `from` goes when its edge runs toward
-// `toward`: the x of the border it should sit beside, the direction to nudge,
-// and which edge of the text to pin there.
+// pointOnCubic evaluates a cubic Bezier at t ∈ [0,1], given its four control
+// points as flat coordinates. Labels are placed with it so they sit on the
+// rendered curve rather than near it — the alternative (measuring from a card
+// border) put them in empty space whenever the curve was not beside a card.
 //
-// The anchor matters. Centring the text on a point LBL_DX from the border still
-// overlaps the card, because half the text width reaches back over it — a 22px
-// label centred 6px out covers 5px of the card. Pinning the text's NEAR edge
-// (start when the label sits to the right, end when it sits to the left) makes
-// the clearance independent of the label's width, which is what the offset
-// cannot do on its own.
-//
-// When the two cards share an x range — the default layout stacks new tables
-// directly below the last one — there is no facing border to choose, and
-// nudging one inward would put the label inside the card. Both then take the
-// right border, which is clear of both boxes; they stay apart because they sit
-// at different y.
-function facing(from, toward) {
-	// toward is to the right of from → label sits just right of from's right
-	// border, pinned by its left edge so it grows away from the card
-	if (from.x + BOX_W <= toward.x) {
-		return { x: from.x + BOX_W + LBL_DX, anchor: "start" };
-	}
-	// toward is to the left → label sits just left of from's left border,
-	// pinned by its right edge so it grows away from the card
-	if (from.x >= toward.x + BOX_W) {
-		return { x: from.x - LBL_DX, anchor: "end" };
-	}
-	// x ranges overlap (the default stacked layout) → no facing border exists,
-	// so both labels take the right side, which is clear of both boxes
-	return { x: from.x + BOX_W + LBL_DX, anchor: "start" };
+// The control points are passed separately rather than parsed back out of the
+// path string: re-parsing would make the label depend on the string format, so
+// a change to how `d` is written would silently move the labels.
+function pointOnCubic(x0, y0, x1, y1, x2, y2, x3, y3, t) {
+	const u = 1 - t;
+	const a = u * u * u;
+	const b = 3 * u * u * t;
+	const cc = 3 * u * t * t;
+	const d = t * t * t;
+	return {
+		x: a * x0 + b * x1 + cc * x2 + d * x3,
+		y: a * y0 + b * y1 + cc * y2 + d * y3,
+		// labels sit slightly above the line so the stroke does not strike
+		// through the text
+		dy: -4,
+	};
 }

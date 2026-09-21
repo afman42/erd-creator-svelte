@@ -126,13 +126,12 @@ function onKey(ev) {
 					marker-end="url(#crow)"
 				/>
 				<!-- Min-max cardinality, derived from the column's flags (see
-				     cardinality() in geometry.js). The anchor comes from the
-				     data, not the stylesheet: which edge of the text is pinned
-				     depends on which side of the card the label sits on, and
-				     pinning the NEAR edge is what keeps a wide label from
-				     reaching back over the border. -->
-				<text class="card" x={e.from.x} y={e.from.y} text-anchor={e.from.anchor}>{e.from.text}</text>
-				<text class="card" x={e.to.x} y={e.to.y} text-anchor={e.to.anchor}>{e.to.text}</text>
+				     cardinality() in geometry.js). The position comes from
+				     pointOnCubic(), so each label sits ON its own curve;
+				     `dy` lifts it a few px so the stroke does not strike
+				     through the text. -->
+				<text class="card" x={e.from.x} y={e.from.y + e.from.dy}>{e.from.text}</text>
+				<text class="card" x={e.to.x} y={e.to.y + e.to.dy}>{e.to.text}</text>
 			{/each}
 		</svg>
 		{#each store.schema.tables as t (t.id)}
@@ -183,13 +182,16 @@ function onKey(ev) {
 		stroke: #888;
 		stroke-width: 1.5;
 	}
-	/* Min-max cardinality labels. Styled via a class, not an inline style: the
-	   CSP is style-src 'self' and would block the latter. The text-anchor is
-	   deliberately NOT set here — it comes from edgePaths(), because it depends
-	   on which side of the card each label sits on. */
+	/* Min-max cardinality labels, centred on their curve point so the symbol
+	   straddles the line it describes. Styled via a class, not an inline style:
+	   the CSP is style-src 'self' and would block the latter. */
 	.card {
-		fill: #7fa3c0;
+		fill: #9fb0c0;
 		font: 9px ui-monospace, monospace;
+		text-anchor: middle;
+		paint-order: stroke;
+		stroke: #101418;
+		stroke-width: 2.5px;
 	}
 	.self {
 		stroke: var(--color-accent);

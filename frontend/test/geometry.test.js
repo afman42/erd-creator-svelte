@@ -104,72 +104,84 @@ test("edgePaths: a nullable FK labels the parent end 0..1", () => {
 	assert.equal(e.to.text, "0..1");
 });
 
-// The labels must be attached to the RIGHT CARD, not merely to a path end.
-// This is the bug the visual check caught: the path picks whichever borders
-// are nearest, so when the child sits to the right the path STARTS at the
-// parent — anchoring `child` to the path start drew the "many" symbol on the
-// parent and inverted the notation. Asserting coordinates alone did not catch
-// it, so these tests assert which card each label is beside.
-test("edgePaths: each label sits beside its own card, child to the right", () => {
+// Labels ride ON the curve. Their position comes from the same cubic the path
+// uses, so a label cannot drift off its own line — which is what happened when
+// they were positioned relative to a card border: whenever the curve was not
+// beside a card, the label floated in empty space with no visible line.
+test("edgePaths: labels lie on their own curve, child to the right", () => {
 	const users = tab("u", 0, 0, [{ pk: true, nn: true }]);
 	const posts = tab("p", 700, 0, [
 		{ pk: true, nn: true, ref: { tableId: "u" } },
 	]);
 	const [e] = edgePaths({ tables: [users, posts] });
-	// child (posts) is the RIGHT card (700..980); its label must be just left
-	// of it, in the gap — NOT beside the parent at 0..280
 	assert.equal(e.from.text, "0..1", "child is a sole pk → unique");
-	assert.ok(
-		e.from.x > 280 && e.from.x < 700,
-		`child label must be in the gap (280..700), got ${e.from.x}`,
-	);
-	// parent (users) is the LEFT card; its label must be just right of it
 	assert.equal(e.to.text, "1..1");
-	assert.ok(
-		e.to.x > 280 && e.to.x < 700,
-		`parent label must be in the gap (280..700), got ${e.to.x}`,
-	);
-	// the two are on opposite sides of the gap, so they cannot be swapped
-	assert.ok(e.from.x > e.to.x, "child label is nearer the child card");
+	// both labels sit within the span the curve covers, and the child's is
+	// nearer the child card — the notation must not be swapped
+	for (const p of [e.from, e.to]) {
+		assert.ok(p.x > 280 && p.x < 700, `label x ${p.x} not between the cards`);
+	}
+	assert.ok(e.from.x > e.to.x, "child label nearer the child card");
 });
 
-test("edgePaths: each label sits beside its own card, child to the left", () => {
+test("edgePaths: labels lie on their own curve, child to the left", () => {
 	const users = tab("u", 700, 0, [{ pk: true, nn: true }]);
 	const posts = tab("p", 0, 0, [{ pk: true, nn: true, ref: { tableId: "u" } }]);
 	const [e] = edgePaths({ tables: [users, posts] });
-	// child (posts) is now the LEFT card (0..280); parent (users) the right one
-	assert.ok(
-		e.from.x > 280 && e.from.x < 700,
-		`child label in the gap, got ${e.from.x}`,
-	);
-	assert.ok(
-		e.to.x > 280 && e.to.x < 700,
-		`parent label in the gap, got ${e.to.x}`,
-	);
-	assert.ok(e.from.x < e.to.x, "child label is nearer the child card");
+	// child (posts) is the LEFT card now → its label must be the left one
+	assert.ok(e.from.x < e.to.x, "child label nearer the child card");
+	for (const p of [e.from, e.to]) {
+		assert.ok(p.x > 280 && p.x < 700, `label x ${p.x} not between the cards`);
+	}
 });
 
-// The default layout stacks new tables directly below the last one, so both
-// cards share an x range. There is then no facing border to choose, and the
-// old formula nudged one label inward — inside the card. Both must go right.
-test("edgePaths: stacked tables put both labels clear of the card", () => {
+// The default layout stacks new tables directly below the last one, so every
+// card shares an x range. The curve then degenerated to a vertical line lying
+// exactly on the card border — invisible — with its labels adrift in space.
+// The bow is what makes the edge visible at all, so it is asserted here rather
+// than left as an incidental detail.
+test("edgePaths: overlapping cards bow the edge clear of the border", () => {
 	const users = tab("u", 40, 40, [{ pk: true, nn: true }]);
 	const posts = tab("p", 40, 200, [
 		{ pk: true, nn: true, ref: { tableId: "u" } },
 	]);
 	const [e] = edgePaths({ tables: [users, posts] });
 	const right = 40 + BOX_W;
-	for (const [name, p] of [
-		["from", e.from],
-		["to", e.to],
-	]) {
-		assert.ok(
-			p.x > right,
-			`${name} label at ${p.x} is inside the card (40..${right})`,
-		);
-	}
-	// and they do not collide: they differ in y (column row vs header)
-	assert.notEqual(e.from.y, e.to.y);
+	// the labels are clear of the card on both ends
+	assert.ok(e.from.x > right, `child label ${e.from.x} not clear of the card`);
+	assert.ok(e.to.x > right, `parent label ${e.to.x} not clear of the card`);
+	// the curve bows out, so the stroke is off the border. The bow is
+	// symmetric, so the two labels share an x and are separated by y — which
+	// is why the assertion below is on the control point, not on the labels
+	// differing in x.
+	const bowX = Number(/C ([\d.-]+) /.exec(e.d)?.[1]);
+	assert.ok(
+		bowX > right,
+		`curve control point ${bowX} must bow past the card border ${right}`,
+	);
+	// and the two labels do not sit on top of each other
+	assert.notEqual(e.from.y, e.to.y, "labels must be separated vertically");
+});
+
+// Every FK into one table terminates at the same point (its header centre), so
+// two such edges converge as they approach it and their parent-end labels can
+// collide. This was found visually at t=0.82, where two labels landed 9px apart
+// with 10px-tall text; the fractions are 0.25/0.75 so the labels sit where the
+// edges are still apart.
+test("edgePaths: two FKs into one parent do not collide at the parent end", () => {
+	const users = tab("u", 0, 0, [{ pk: true, nn: true }]);
+	const a = tab("a", 40, 200, [{ pk: true, nn: true, ref: { tableId: "u" } }]);
+	const b = tab("b", 40, 320, [{ pk: true, nn: true, ref: { tableId: "u" } }]);
+	const edges = edgePaths({ tables: [users, a, b] });
+	assert.equal(edges.length, 2);
+	const [e1, e2] = edges;
+	// both parent-end labels are 1..1 and must not overlap: they need at least
+	// one text height (10px) of vertical separation
+	const dy = Math.abs(e1.to.y - e2.to.y);
+	assert.ok(
+		dy >= 10,
+		`parent-end labels only ${dy.toFixed(1)}px apart — they would overlap`,
+	);
 });
 
 test("edgePaths: a self edge still gets labels", () => {
