@@ -96,14 +96,17 @@ string.
   the select is a *view* of those flags, which is why it can never disagree with
   the emitted DDL, and why the `.sql` format is unchanged.
 
-  A **primary key pins the state**, and the select shows that by disabling the
-  options it would have to override rather than offering them: a PK is emitted
-  `NOT NULL` in every dialect, so its parent end is always `1..1`; a *sole* PK is
-  also unique, pinning its child end to `0..1`. A **composite**-PK member keeps a
-  free child end (that is what makes a junction table expressible) but not a free
-  parent end. `1..N` is deliberately absent — SQL cannot express "every parent
-  must have at least one child", so it would assert something no database
-  enforces.
+  All four states are selectable on any column, including a primary key. A PK
+  cannot honour three of them — it is emitted `NOT NULL` **and** `UNIQUE` in
+  every dialect, so a PK is always `0..1 / 1..1` — so picking one of the other
+  states **clears the PK** and warns you, rather than the option being disabled
+  or the pick being silently overridden. The model and the emitted DDL therefore
+  never disagree, which is the property the whole design protects. A **composite**
+  -PK member is a partial case: `PRIMARY KEY (a, b)` does not make `a` unique on
+  its own, so its child end can be made `0..1` without touching the PK, while
+  relaxing its parent end clears it. `1..N` is deliberately absent — SQL cannot
+  express "every parent must have at least one child", so it would assert
+  something no database enforces.
 
   Each edge is labelled with **min-max cardinality** at both
   ends (`0..1`, `1..1`, `0..N`), always on, with each symbol sitting **on the

@@ -145,6 +145,36 @@ git history, not here.
   one is the reason the bug survived: the suite agreed with it. Totals moved
   87→94 unit, 52→54 e2e, with Go untouched at 162 (no Go change at all).
 
+- Cardinality is now **freely choosable**, superseding the disable-the-options
+  behaviour described above. All four states are selectable on every column; a
+  pick a PK cannot honour **clears the PK** and warns, instead of the option
+  being disabled. The rule did not change — `reachableStates()` is still the
+  source of truth and is now the negation of the new `pkConflictsWith()` — only
+  what happens when a pick contradicts it: `applyCardinality()` drops `pk` and
+  lets the flags express the state, so the model still agrees with the emitted
+  DDL. The dialog shows a hint under the select while the column is a PK, since
+  a native `<select>` cannot say "this also unticks PK".
+
+  Two things this corrected in my own earlier reasoning. First, I had described
+  the PK constraint as NOT NULL alone; `PRIMARY KEY` implies **NOT NULL and
+  UNIQUE** in all three dialects, so a PK is always `0..1 / 1..1` and the child
+  axis is pinned too — dropping only the NOT NULL rule (the option I first
+  offered) would have left two of the four states still unreachable. Second, the
+  three options I presented were wrong in a way worth recording: option 1
+  ("enable all four, keep deriving") was not free choice at all, and option 2
+  ("drop PK's NOT NULL pinning") would have made PK columns emit a redundant
+  `UNIQUE` and let the diagram disagree with MySQL/Postgres, which enforce
+  `PK ⇒ NOT NULL, UNIQUE` regardless of what the DDL says. The chosen mechanism
+  keeps the diagram honest and needs no Go change.
+
+  Tests moved 94 unit / 54 e2e → 94 unit / 54 e2e (same counts, rewritten
+  in place): the sole-PK test now asserts every state is accepted and that the
+  PK is cleared for the three conflicting ones; the composite-PK test pins that
+  its child end is free *without* dropping the PK while its parent end clears it;
+  and the `reachableStates`-agreement property is now a `pkConflictsWith`
+  property that also asserts the PK is dropped exactly when a conflict is
+  reported. Go untouched.
+
 - Min-max cardinality labels on FK edges (`0..1`, `1..1`, `0..N`), always on.
   Derived, never authored — which is the whole design: a stored cardinality
   field would be a second source of truth that could contradict the flags and
