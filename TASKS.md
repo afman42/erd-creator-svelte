@@ -168,7 +168,31 @@ git history, not here.
   0.25/0.75 uses the part of the curve where the edges are still apart, measured
   at 17px for the same fixture; a regression test now asserts ≥10px separation.
   And the labels carry a `paint-order: stroke` halo so the line does not strike
-  through the text. Totals moved 68→81 unit, 49→50 e2e.
+  through the text.
+
+  **Two further routing bugs, found by an automated invariant sweep** (checking,
+  for every layout, whether any label lands inside any card — the assertion the
+  coordinate tests kept failing to make):
+
+  (4) A **self-referencing FK** (`parent_id` → the same table — a tree or
+  adjacency list, an ordinary pattern that parses, emits and round-trips) was
+  routed `t.x` → `t.x + 60`, straight through the card body, so the loop and
+  both labels were drawn inside the table. The UI cannot create one (the FK
+  dropdown excludes the column's own table), so it is reachable only from a
+  hand-written file — which is why no UI test had hit it.
+
+  (5) **Partial** x-overlap. The bow was gated on `x1 === x2`, which is true only
+  when the two borders coincide exactly; cards overlapping by any other amount
+  took the side-to-side branch and the curve ran through both bodies. The check
+  is now interval overlap (`t.x < p.x + BOX_W && p.x < t.x + BOX_W`), and the
+  degenerate-bow condition is `x1 === x2` — the two are genuinely different
+  questions, which is what the original code conflated.
+
+  Both are covered: the self-loop test asserts the curve bows outside the card
+  and neither label is inside it, the overlap test asserts both ends leave the
+  rightmost border, and an e2e loads a self-referencing schema through the API
+  and asserts no label overlaps any card in the real DOM. Totals moved 81 unit,
+  50→51 e2e.
 
 - PostgreSQL array types (`INT[]`, `VARCHAR(255)[]`, `JSON[]`). This was
   originally my top recommendation as "a one-file allowlist widening" and I

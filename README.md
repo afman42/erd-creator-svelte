@@ -104,9 +104,13 @@ string.
   always `0`: SQL cannot express "every parent must have at least one child",
   so printing `1..N` would assert something no database can enforce.
 
-  Edges whose two cards overlap in x (the default stacked layout) are **bowed**
-  clear of the card border. Without the bow the curve degenerates to a vertical
-  line lying exactly on the border — invisible, with its labels adrift.
+  Edges whose two cards overlap in x (the default stacked layout, and any
+  partial overlap) are **bowed** clear of the card border, and a
+  self-referencing FK (`parent_id` → the same table, which is how a tree or
+  adjacency list is written) loops out of and back into the card's right
+  border rather than through its body. Without both, the curve degenerated to a
+  vertical line lying on the border — invisible — or ran through the card, with
+  its labels drawn inside the table.
 - **Export PNG / SVG** — `Export PNG` rasterizes the canvas (tables + FK edges)
   to a `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
   The image covers the **whole diagram**, not just the visible area: the
