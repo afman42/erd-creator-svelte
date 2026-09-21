@@ -1,7 +1,16 @@
 <script>
 import { untrack } from "svelte";
 import EmptyState from "./EmptyState.svelte";
-import { edgePaths } from "./geometry.js";
+import {
+	EDGE_SELF_STROKE,
+	EDGE_STROKE,
+	EDGE_STROKE_WIDTH,
+	edgePaths,
+	LABEL_ANCHOR,
+	LABEL_FILL,
+	LABEL_HALO,
+	LABEL_HALO_WIDTH,
+} from "./geometry.js";
 import SqlPanel from "./SqlPanel.svelte";
 import {
 	refreshSql,
@@ -145,9 +154,16 @@ function onKey(ev) {
 				</marker>
 			</defs>
 			{#each edges as e}
+				<!-- Presentation ATTRIBUTES, not just classes: html-to-image does
+				     not carry the stylesheet into the export, so class-only paint
+				     is lost and the line renders invisible in PNG/SVG. See the
+				     constants in geometry.js. -->
 				<path
 					d={e.d}
 					class={e.self ? "edge self" : "edge"}
+					fill="none"
+					stroke={e.self ? EDGE_SELF_STROKE : EDGE_STROKE}
+					stroke-width={EDGE_STROKE_WIDTH}
 					marker-end="url(#crow)"
 				/>
 				<!-- Min-max cardinality, derived from the column's flags (see
@@ -155,8 +171,30 @@ function onKey(ev) {
 				     pointOnCubic(), so each label sits ON its own curve;
 				     `dy` lifts it a few px so the stroke does not strike
 				     through the text. -->
-				<text class="card" x={e.from.x} y={e.from.y + e.from.dy}>{e.from.text}</text>
-				<text class="card" x={e.to.x} y={e.to.y + e.to.dy}>{e.to.text}</text>
+				<text
+					class="card"
+					x={e.from.x}
+					y={e.from.y + e.from.dy}
+					fill={LABEL_FILL}
+					font-family="ui-monospace, monospace"
+					font-size="9"
+					text-anchor={LABEL_ANCHOR}
+					paint-order="stroke"
+					stroke={LABEL_HALO}
+					stroke-width={LABEL_HALO_WIDTH}
+				>{e.from.text}</text>
+				<text
+					class="card"
+					x={e.to.x}
+					y={e.to.y + e.to.dy}
+					fill={LABEL_FILL}
+					font-family="ui-monospace, monospace"
+					font-size="9"
+					text-anchor={LABEL_ANCHOR}
+					paint-order="stroke"
+					stroke={LABEL_HALO}
+					stroke-width={LABEL_HALO_WIDTH}
+				>{e.to.text}</text>
 			{/each}
 		</svg>
 		{#each store.schema.tables as t (t.id)}

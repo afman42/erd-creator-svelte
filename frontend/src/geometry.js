@@ -54,6 +54,32 @@ export function boxHeight(nColumns) {
 	return HDR_H + nColumns * ROW_H + ADDCOL_H + BORDER_H;
 }
 
+// ---- SVG presentation values for edges and their labels ----
+//
+// These are applied as PRESENTATION ATTRIBUTES on the SVG elements, not as CSS
+// classes, because html-to-image does not carry the stylesheet into an export:
+// the exported document has no <style> element and no `.edge` rule, so anything
+// styled only by a class loses its paint and renders invisible. Measured before
+// the change: a PNG sampled at the curve and at both cardinality labels returned
+// the background colour (rgb(16,20,24)) at every point — the line and labels
+// were simply not drawn. The crow's-foot arrowhead was visible throughout
+// because it was the one element already styled by an attribute, which is what
+// identified the cause.
+//
+// The values mirror tokens.css. They are duplicated rather than referenced
+// through var() because a CSS custom property does not resolve in the exported
+// document either — so the duplication is load-bearing, and a test asserts these
+// stay equal to the tokens so the two cannot drift apart.
+export const EDGE_STROKE = "#7fa3c0"; // = --color-edge
+export const EDGE_STROKE_WIDTH = 2;
+export const EDGE_SELF_STROKE = "#bb5588"; // = --color-accent, for self-loops
+export const LABEL_FILL = "#9fb0c0"; // = --color-text-muted
+export const LABEL_HALO = "#101418"; // = --color-bg, so the line does not cut the text
+export const LABEL_HALO_WIDTH = 2.5;
+// font-family/font-size are set as separate attributes rather than a font
+// shorthand, because SVG presentation attributes have no `font` shorthand.
+export const LABEL_ANCHOR = "middle";
+
 // Vertical distance between the tops of two cards stacked in the same layer:
 // one card plus the gap below it.
 export function stackStep(nColumns) {

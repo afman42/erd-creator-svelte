@@ -28,8 +28,12 @@ import {
 	BORDER_H,
 	BOX_W,
 	boxHeight,
+	EDGE_SELF_STROKE,
+	EDGE_STROKE,
 	GAP,
 	HDR_H,
+	LABEL_FILL,
+	LABEL_HALO,
 	ROW_H,
 	stackStep,
 } from "../src/geometry.js";
@@ -510,14 +514,7 @@ const MODAL_SRC = readFileSync(
 	"utf8",
 );
 
-// ---- relationship edge visibility ----
-//
-// The crow's-foot arrowhead EXISTED in the exported SVG but could not be SEEN:
-// it was a 7x7 marker whose path carried no stroke-width — a marker's contents
-// do not inherit the referencing path's — so it drew at 1px, in the same #888
-// grey as its own line. Measured in the export: 22 differing pixels in a 6x7
-// box. These read the real sources, because the failure is a rendering property
-// that no coordinate assertion can catch.
+// Read once and shared by the export-paint and marker tests below.
 const APP_SRC = readFileSync(
 	new URL("../src/App.svelte", import.meta.url),
 	"utf8",
@@ -526,6 +523,81 @@ const TOKENS_SRC = readFileSync(
 	new URL("../src/tokens.css", import.meta.url),
 	"utf8",
 );
+
+// ---- export paint: presentation attributes, not CSS classes ----
+//
+// html-to-image does not carry the stylesheet into an export: the exported
+// document has no <style> element and no `.edge` rule. Anything styled ONLY by
+// a CSS class therefore loses its paint and renders invisible. Measured before
+// the fix: a PNG sampled at the curve and at both cardinality labels returned
+// the background colour at every point, while the crow's-foot arrowhead stayed
+// visible — because it was the one element styled by a presentation attribute.
+//
+// The values live in geometry.js and are written as attributes in App.svelte, so
+// these read both sources. The e2e test samples real PNG pixels; this one is the
+// cheap guard that the wiring has not been dropped.
+test("edge and label paint is applied as SVG attributes, not class-only", () => {
+	// the path carries stroke and stroke-width attributes
+	assert.match(
+		APP_SRC,
+		/<path[^>]*stroke=\{e\.self \? EDGE_SELF_STROKE : EDGE_STROKE\}/s,
+		"edge path has no stroke attribute — it would be invisible in an export",
+	);
+	assert.match(
+		APP_SRC,
+		/stroke-width=\{EDGE_STROKE_WIDTH\}/,
+		"no stroke-width attribute",
+	);
+	// the labels carry fill and font attributes
+	assert.match(APP_SRC, /fill=\{LABEL_FILL\}/, "labels have no fill attribute");
+	assert.match(APP_SRC, /font-size="9"/, "labels have no font-size attribute");
+	assert.match(
+		APP_SRC,
+		/text-anchor=\{LABEL_ANCHOR\}/,
+		"labels have no text-anchor",
+	);
+	// and the halo, so a label is legible over its own line
+	assert.match(APP_SRC, /stroke=\{LABEL_HALO\}/, "labels have no halo stroke");
+});
+
+// The constants duplicate tokens.css values on purpose: a CSS custom property
+// does not resolve in the exported document either, so they cannot be shared.
+// That duplication is load-bearing, so it is pinned here.
+test("SVG paint constants match their tokens.css values", () => {
+	const token = (name) =>
+		new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,8})`)
+			.exec(TOKENS_SRC)?.[1]
+			?.toLowerCase();
+	assert.equal(
+		EDGE_STROKE.toLowerCase(),
+		token("--color-edge"),
+		"EDGE_STROKE != --color-edge",
+	);
+	assert.equal(
+		EDGE_SELF_STROKE.toLowerCase(),
+		token("--color-accent"),
+		"EDGE_SELF_STROKE != --color-accent",
+	);
+	assert.equal(
+		LABEL_FILL.toLowerCase(),
+		token("--color-text-muted"),
+		"LABEL_FILL != --color-text-muted",
+	);
+	assert.equal(
+		LABEL_HALO.toLowerCase(),
+		token("--color-bg"),
+		"LABEL_HALO != --color-bg",
+	);
+});
+
+// ---- relationship edge visibility ----
+//
+// The crow's-foot arrowhead EXISTED in the exported SVG but could not be SEEN:
+// it was a 7x7 marker whose path carried no stroke-width — a marker's contents
+// do not inherit the referencing path's — so it drew at 1px, in the same #888
+// grey as its own line. Measured in the export: 22 differing pixels in a 6x7
+// box. These read the real sources, because the failure is a rendering property
+// that no coordinate assertion can catch.
 const crowMarker = () =>
 	APP_SRC.slice(APP_SRC.indexOf('id="crow"'), APP_SRC.indexOf("</marker>"));
 

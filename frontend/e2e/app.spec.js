@@ -923,6 +923,91 @@ test("Export SVG downloads the diagram as real SVG source", async ({
 	await expect(page.getByText("downloaded mysql-schema.svg")).toBeVisible();
 });
 
+// The relationship line and the cardinality labels must be PAINTED IN THE
+// EXPORT, not merely present in the markup.
+//
+// html-to-image does not carry the stylesheet into the export: the exported
+// document has no <style> element and no `.edge` rule, so an element styled only
+// by a CSS class loses its paint. Measured before the fix: sampling the exported
+// PNG at the curve and at both labels returned the background colour at every
+// point — the line and labels were not drawn at all, while the crow's-foot
+// arrowhead stayed visible because it was the one element styled by a
+// presentation attribute. That asymmetry is what identified the cause, so this
+// test samples real pixels rather than asserting on attributes.
+test("exported PNG actually paints the edge line and its labels", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "+ Table" }).click();
+	const dlg = page.locator("dialog.coledit");
+	await page
+		.locator("section.table")
+		.nth(1)
+		.locator(".row .edit")
+		.nth(0)
+		.click();
+	await expect(dlg).toBeVisible();
+	await dlg.locator("select.fk").selectOption({ index: 1 });
+	await dlg.getByRole("button", { name: "Done" }).click();
+	await expect(dlg).toHaveCount(0);
+
+	// label positions come from the SVG export; both formats are 1:1 and share
+	// the same coordinate space, so they can be used to sample the PNG
+	const svgDl = page.waitForEvent("download");
+	await page.getByRole("button", { name: "Export SVG" }).click();
+	const svgStream = await (await svgDl).createReadStream();
+	const svgChunks = [];
+	for await (const c of svgStream) svgChunks.push(c);
+	const svg = Buffer.concat(svgChunks).toString("utf8");
+	const labelPts = [
+		...svg.matchAll(/<text[^>]*x="([\d.]+)"[^>]*y="([\d.]+)"/g),
+	].map((m) => [Math.round(Number(m[1])), Math.round(Number(m[2]))]);
+	expect(labelPts.length).toBe(2);
+
+	const pngDl = page.waitForEvent("download");
+	await page.getByRole("button", { name: "Export PNG" }).click();
+	const pngStream = await (await pngDl).createReadStream();
+	const pngChunks = [];
+	for await (const c of pngStream) pngChunks.push(c);
+	const pngB64 = Buffer.concat(pngChunks).toString("base64");
+
+	const res = await page.evaluate(
+		async ([b64, pts]) => {
+			const img = new Image();
+			img.src = `data:image/png;base64,${b64}`;
+			await img.decode();
+			const c = document.createElement("canvas");
+			c.width = img.naturalWidth;
+			c.height = img.naturalHeight;
+			const ctx = c.getContext("2d");
+			ctx.drawImage(img, 0, 0);
+			// brightest pixel within r, so a thin antialiased line still counts
+			const brightest = (x, y, r) => {
+				const d = ctx.getImageData(x - r, y - r, 2 * r + 1, 2 * r + 1).data;
+				let lum = -1;
+				for (let i = 0; i < d.length; i += 4)
+					lum = Math.max(lum, d[i] + d[i + 1] + d[i + 2]);
+				return lum;
+			};
+			// background is #101418 → luminance 16+20+24 = 60
+			return {
+				bg: brightest(250, 260, 2),
+				labels: pts.map(([x, y]) => brightest(x, y, 6)),
+			};
+		},
+		[pngB64, labelPts],
+	);
+
+	// the background is the control: it must stay dark, or this proves nothing
+	expect(res.bg).toBeLessThan(120);
+	for (const [i, lum] of res.labels.entries()) {
+		expect(
+			lum,
+			`label ${i} not painted in the PNG (luminance ${lum} ≈ background ${res.bg})`,
+		).toBeGreaterThan(res.bg + 200);
+	}
+});
+
 test("Export SVG of a saved file uses the .svg name", async ({ page }) => {
 	await page.goto("/");
 	page.once("dialog", (d) => d.accept("vector"));
