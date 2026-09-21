@@ -116,6 +116,35 @@ git history, not here.
 
 ## Done elsewhere (trail, not tracking)
 
+- Cardinality dropdown, and the PK bug it uncovered. The select offers the four
+  states a relationship can be in and writes the `ux`/`nn` flags — it is a VIEW
+  of the flags, not a stored field, so there is no second source of truth and
+  the `.sql` format is untouched. All four states were already reachable via
+  those flags; the control is about discoverability, not capability.
+
+  **The bug:** `cardinality()` read `c.nn` alone for the parent end, but every
+  emitter writes NOT NULL for a primary key regardless of that flag
+  (`export.go`, the `c.Nn || c.Pk` guards). A hand-written file can parse to
+  `pk=true, nn=false` — `id INT, PRIMARY KEY (id)` does exactly that, verified —
+  so the diagram said `0..1` while the DDL said `1..1`. The diagram lied. Fixed
+  by reading `nn || pk`, which is what is actually emitted.
+
+  Working that out also corrected my own design. I had assumed only a *sole* PK
+  pinned the state; in fact ANY PK pins the parent end (they are all emitted NOT
+  NULL), while only a sole PK pins the child end. `reachableStates()` now derives
+  the enabled options from that rule, and the dialog disables the rest instead of
+  offering choices it would override. A property test asserts `reachableStates()`
+  agrees with what `applyCardinality()` actually accepts, so the two cannot drift.
+
+  Three of my own test errors surfaced during this, each worth noting because
+  they were the test being wrong rather than the code: an expected array in the
+  wrong sort order (`"0..1" < "0..N"` because `"1" < "N"`), a harness that
+  rebuilt a composite-PK table with one column — silently turning it into a sole
+  PK and changing the rule under test — and, most importantly, an existing test
+  that asserted `0..1` for a PK column, i.e. it had encoded the bug. That last
+  one is the reason the bug survived: the suite agreed with it. Totals moved
+  87→94 unit, 52→54 e2e, with Go untouched at 162 (no Go change at all).
+
 - Min-max cardinality labels on FK edges (`0..1`, `1..1`, `0..N`), always on.
   Derived, never authored — which is the whole design: a stored cardinality
   field would be a second source of truth that could contradict the flags and

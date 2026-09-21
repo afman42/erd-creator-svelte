@@ -89,7 +89,23 @@ string.
   unaffected.)
 - **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
   actions; bezier edge renders automatically; type-mismatch lint (server-side)
-  in the header. Each edge is labelled with **min-max cardinality** at both
+  in the header. Once an FK is set, a **`Cardinality`** select offers the four
+  states a relationship can be in (`0..N / 0..1`, `0..N / 1..1`, `0..1 / 0..1`,
+  `0..1 / 1..1`) and writes the `UQ` / `NN` flags for you — so you can set the
+  relationship without knowing that `UQ` means `0..1`. It stores nothing new:
+  the select is a *view* of those flags, which is why it can never disagree with
+  the emitted DDL, and why the `.sql` format is unchanged.
+
+  A **primary key pins the state**, and the select shows that by disabling the
+  options it would have to override rather than offering them: a PK is emitted
+  `NOT NULL` in every dialect, so its parent end is always `1..1`; a *sole* PK is
+  also unique, pinning its child end to `0..1`. A **composite**-PK member keeps a
+  free child end (that is what makes a junction table expressible) but not a free
+  parent end. `1..N` is deliberately absent — SQL cannot express "every parent
+  must have at least one child", so it would assert something no database
+  enforces.
+
+  Each edge is labelled with **min-max cardinality** at both
   ends (`0..1`, `1..1`, `0..N`), always on, with each symbol sitting **on the
   curve** near the card it describes. The labels are *derived* from flags the
   column already has, never authored: `UQ` — or a **sole** primary key — makes
