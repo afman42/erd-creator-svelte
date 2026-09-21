@@ -125,6 +125,14 @@ function onKey(ev) {
 					class={e.self ? "edge self" : "edge"}
 					marker-end="url(#crow)"
 				/>
+				<!-- Min-max cardinality, derived from the column's flags (see
+				     cardinality() in geometry.js). The anchor comes from the
+				     data, not the stylesheet: which edge of the text is pinned
+				     depends on which side of the card the label sits on, and
+				     pinning the NEAR edge is what keeps a wide label from
+				     reaching back over the border. -->
+				<text class="card" x={e.from.x} y={e.from.y} text-anchor={e.from.anchor}>{e.from.text}</text>
+				<text class="card" x={e.to.x} y={e.to.y} text-anchor={e.to.anchor}>{e.to.text}</text>
 			{/each}
 		</svg>
 		{#each store.schema.tables as t (t.id)}
@@ -174,6 +182,14 @@ function onKey(ev) {
 		fill: none;
 		stroke: #888;
 		stroke-width: 1.5;
+	}
+	/* Min-max cardinality labels. Styled via a class, not an inline style: the
+	   CSP is style-src 'self' and would block the latter. The text-anchor is
+	   deliberately NOT set here — it comes from edgePaths(), because it depends
+	   on which side of the card each label sits on. */
+	.card {
+		fill: #7fa3c0;
+		font: 9px ui-monospace, monospace;
 	}
 	.self {
 		stroke: var(--color-accent);

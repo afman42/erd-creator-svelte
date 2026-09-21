@@ -79,6 +79,27 @@ test("undo restores table name (Ctrl+Z outside inputs)", async ({ page }) => {
 	await expect(page.locator(".tname")).toHaveValue("users");
 });
 
+test("min-max cardinality labels render on FK edges", async ({ page }) => {
+	await page.goto("/");
+	// no FK yet → no edges and no labels
+	await expect(page.locator("svg text.card")).toHaveCount(0);
+
+	// add a table and point its first column at users
+	await page.getByRole("button", { name: "+ Table" }).click();
+	const dlg = await openCol(page, 1, 0);
+	await dlg.locator("select.fk").selectOption({ index: 1 });
+	await closeCol(dlg);
+
+	// one edge → exactly two labels: child end and parent end
+	const labels = page.locator("svg text.card");
+	await expect(labels).toHaveCount(2);
+
+	// the default new column is `id INT PK NN AI`, so it is a SOLE pk (unique,
+	// child 0..1) and NOT NULL (parent 1..1)
+	const texts = await labels.allTextContents();
+	expect(texts.sort()).toEqual(["0..1", "1..1"]);
+});
+
 test("FK type mismatch surfaces server lint in header", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "+ Table" }).click();

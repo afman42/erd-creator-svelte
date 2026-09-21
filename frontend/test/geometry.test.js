@@ -5,6 +5,7 @@ import {
 	BORDER_H,
 	BOX_W,
 	boxHeight,
+	cardinality,
 	edgePaths,
 	GAP,
 	HDR_H,
@@ -14,6 +15,171 @@ import {
 } from "../src/geometry.js";
 
 const tab = (id, x, y, cols) => ({ id, x, y, columns: cols });
+
+// ---- min-max cardinality ----
+//
+// Derived from flags the model already has, so there is no stored cardinality
+// to contradict the DDL. The truth table below IS the specification.
+
+test("cardinality: NOT NULL decides the parent end", () => {
+	const t = tab("c", 0, 0, []);
+	assert.equal(cardinality(t, { nn: true }).parent, "1..1");
+	assert.equal(cardinality(t, { nn: false }).parent, "0..1");
+	// parent max is always 1 — an FK is a scalar reference, so a child row can
+	// never point at more than one parent row
+	assert.ok(cardinality(t, { nn: true }).parent.endsWith("1"));
+});
+
+test("cardinality: UQ makes the child end unique", () => {
+	const t = tab("c", 0, 0, []);
+	assert.equal(cardinality(t, { ux: true }).child, "0..1");
+	assert.equal(cardinality(t, { ux: false }).child, "0..N");
+});
+
+test("cardinality: a SOLE primary key is unique", () => {
+	const t = tab("c", 0, 0, [{ pk: true }, { pk: false }]);
+	assert.equal(cardinality(t, t.columns[0]).child, "0..1");
+});
+
+// The one that matters most: in a junction table PK(a, b) each column repeats
+// freely — that is exactly WHY it is M:N. Reading `pk` as unique would label
+// every junction table 0..1 and invert the meaning of the notation.
+test("cardinality: a composite-PK member is NOT unique", () => {
+	const t = tab("c", 0, 0, [{ pk: true }, { pk: true }]);
+	assert.equal(cardinality(t, t.columns[0]).child, "0..N");
+	assert.equal(cardinality(t, t.columns[1]).child, "0..N");
+});
+
+// SQL cannot express "every parent must have at least one child", so 1..N is
+// never correct: it would assert something the database cannot enforce.
+test("cardinality: the child minimum is always 0", () => {
+	for (const c of [
+		{},
+		{ ux: true },
+		{ pk: true },
+		{ nn: true },
+		{ ux: true, nn: true },
+	]) {
+		assert.ok(
+			cardinality(tab("c", 0, 0, [c]), c).child.startsWith("0.."),
+			"child min must always be 0",
+		);
+	}
+});
+
+test("edgePaths: an M:N junction table labels both edges 0..N / 1..1", () => {
+	// posts 1—N post_tags N—1 tags: the canonical M:N shape
+	const posts = tab("p", 0, 0, [{ pk: true, nn: true }]);
+	const tags = tab("g", 700, 0, [{ pk: true, nn: true }]);
+	const j = tab("j", 350, 0, [
+		{ pk: true, nn: true, ref: { tableId: "p" } },
+		{ pk: true, nn: true, ref: { tableId: "g" } },
+	]);
+	const edges = edgePaths({ tables: [posts, tags, j] });
+	assert.equal(edges.length, 2);
+	for (const e of edges) {
+		assert.equal(e.from.text, "0..N", "junction side is many");
+		assert.equal(e.to.text, "1..1", "referenced side is exactly one");
+	}
+});
+
+test("edgePaths: a unique FK labels the child end 0..1 (one-to-one)", () => {
+	const users = tab("u", 0, 0, [{ pk: true }]);
+	const profile = tab("f", 700, 0, [
+		{ pk: true },
+		{ ux: true, nn: true, ref: { tableId: "u" } },
+	]);
+	const [e] = edgePaths({ tables: [users, profile] });
+	assert.equal(e.from.text, "0..1");
+	assert.equal(e.to.text, "1..1");
+});
+
+test("edgePaths: a nullable FK labels the parent end 0..1", () => {
+	const users = tab("u", 0, 0, [{ pk: true }]);
+	const posts = tab("p", 700, 0, [
+		{ pk: true },
+		{ nn: false, ref: { tableId: "u" } },
+	]);
+	const [e] = edgePaths({ tables: [users, posts] });
+	assert.equal(e.to.text, "0..1");
+});
+
+// The labels must be attached to the RIGHT CARD, not merely to a path end.
+// This is the bug the visual check caught: the path picks whichever borders
+// are nearest, so when the child sits to the right the path STARTS at the
+// parent — anchoring `child` to the path start drew the "many" symbol on the
+// parent and inverted the notation. Asserting coordinates alone did not catch
+// it, so these tests assert which card each label is beside.
+test("edgePaths: each label sits beside its own card, child to the right", () => {
+	const users = tab("u", 0, 0, [{ pk: true, nn: true }]);
+	const posts = tab("p", 700, 0, [
+		{ pk: true, nn: true, ref: { tableId: "u" } },
+	]);
+	const [e] = edgePaths({ tables: [users, posts] });
+	// child (posts) is the RIGHT card (700..980); its label must be just left
+	// of it, in the gap — NOT beside the parent at 0..280
+	assert.equal(e.from.text, "0..1", "child is a sole pk → unique");
+	assert.ok(
+		e.from.x > 280 && e.from.x < 700,
+		`child label must be in the gap (280..700), got ${e.from.x}`,
+	);
+	// parent (users) is the LEFT card; its label must be just right of it
+	assert.equal(e.to.text, "1..1");
+	assert.ok(
+		e.to.x > 280 && e.to.x < 700,
+		`parent label must be in the gap (280..700), got ${e.to.x}`,
+	);
+	// the two are on opposite sides of the gap, so they cannot be swapped
+	assert.ok(e.from.x > e.to.x, "child label is nearer the child card");
+});
+
+test("edgePaths: each label sits beside its own card, child to the left", () => {
+	const users = tab("u", 700, 0, [{ pk: true, nn: true }]);
+	const posts = tab("p", 0, 0, [{ pk: true, nn: true, ref: { tableId: "u" } }]);
+	const [e] = edgePaths({ tables: [users, posts] });
+	// child (posts) is now the LEFT card (0..280); parent (users) the right one
+	assert.ok(
+		e.from.x > 280 && e.from.x < 700,
+		`child label in the gap, got ${e.from.x}`,
+	);
+	assert.ok(
+		e.to.x > 280 && e.to.x < 700,
+		`parent label in the gap, got ${e.to.x}`,
+	);
+	assert.ok(e.from.x < e.to.x, "child label is nearer the child card");
+});
+
+// The default layout stacks new tables directly below the last one, so both
+// cards share an x range. There is then no facing border to choose, and the
+// old formula nudged one label inward — inside the card. Both must go right.
+test("edgePaths: stacked tables put both labels clear of the card", () => {
+	const users = tab("u", 40, 40, [{ pk: true, nn: true }]);
+	const posts = tab("p", 40, 200, [
+		{ pk: true, nn: true, ref: { tableId: "u" } },
+	]);
+	const [e] = edgePaths({ tables: [users, posts] });
+	const right = 40 + BOX_W;
+	for (const [name, p] of [
+		["from", e.from],
+		["to", e.to],
+	]) {
+		assert.ok(
+			p.x > right,
+			`${name} label at ${p.x} is inside the card (40..${right})`,
+		);
+	}
+	// and they do not collide: they differ in y (column row vs header)
+	assert.notEqual(e.from.y, e.to.y);
+});
+
+test("edgePaths: a self edge still gets labels", () => {
+	const s = tab("t1", 50, 20, [{ pk: true, ref: { tableId: "t1" } }]);
+	const [e] = edgePaths({ tables: [s] });
+	assert.equal(e.from.text, "0..1", "sole pk → unique");
+	// no NN on this column, so the reference is optional
+	assert.equal(e.to.text, "0..1");
+	assert.ok(Number.isFinite(e.from.x) && Number.isFinite(e.to.x));
+});
 
 test("constants match CSS", () => {
 	assert.equal(BOX_W, 280);
