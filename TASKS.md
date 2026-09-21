@@ -116,6 +116,45 @@ git history, not here.
 
 ## Done elsewhere (trail, not tracking)
 
+- Reciprocal FKs drew as a single curve, with the arrowhead on the wrong end.
+  Reported from the UI: *"when table users column id in reference to table posts
+  ... is not line arrow to table posts?"* Two defects, both in `edgePaths()`.
+
+  **The arrowhead was on the parent.** The crow's foot was applied as
+  `marker-end`, i.e. at the END OF THE PATH — but the routing starts at the
+  *parent's* border whenever the child is to the right, so on those edges the
+  arrow landed on the parent and the relationship read backwards. A child placed
+  left of its parent (a drag) pointed the wrong way outright. The fix names the
+  child end explicitly (`arrowAtStart`) and App.svelte applies it as
+  `marker-start` or `marker-end`; the marker already carried
+  `orient="auto-start-reverse"`, so a start marker points away from the curve and
+  no geometry changed.
+
+  **Reciprocal FKs collapsed onto one line.** `users.id → posts.id` AND
+  `posts.id → users.id` is a legal schema — and one the UI can build, since the
+  FK dropdown excludes only the column's own table — yet both edges computed
+  *identical* path strings: one line painted on top of itself, one visible
+  arrowhead, and two cardinality labels stacked at each end. Colliding edges are
+  now spread into lanes.
+
+  **The lane size had to be derived, not guessed.** A first attempt at 22px left
+  the labels 12.4px apart and still overlapping. The offset is applied to the
+  control points, so it reaches the labels *attenuated*: a label sits at
+  t=0.25/0.75, where the cubic's contribution from the control points is
+  3(1−t)²t + 3(1−t)t² = 0.5625. The real constraint is therefore
+  `LABEL_W / 0.5625` — with a ~21.6px label that is ~38.4px — and the constant
+  is 44px. Two earlier claims of mine were wrong and the measurements said so:
+  that 22px was sufficient, and (in the first test) which end `arrowAtStart`
+  takes, which the suite caught immediately.
+
+  **The existing tests all passed while the arrow pointed the wrong way.** They
+  asserted where the *labels* were, never which end the arrow was drawn at — the
+  same blind spot as the earlier label-position bugs. The regression tests
+  assert the arrow end, and the e2e one asserts the real DOM (two distinct `d`
+  strings, one start marker and one end marker, no overlapping label boxes).
+  Verified to FAIL when both fixes are reverted: the two edges collapse to a
+  single distinct path. Totals 94→101 unit, 54→55 e2e, Go untouched.
+
 - Cardinality dropdown, and the PK bug it uncovered. The select offers the four
   states a relationship can be in and writes the `ux`/`nn` flags — it is a VIEW
   of the flags, not a stored field, so there is no second source of truth and

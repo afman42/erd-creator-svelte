@@ -131,6 +131,30 @@ string.
   vertical line lying on the border — invisible — or ran through the card, with
   its labels drawn inside the table.
 
+  The **crow's foot sits at the child end**, and the routing is not always
+  drawn child-first: it starts at the *parent's* border when the child is to the
+  right. The arrowhead was placed by `marker-end`, so on those edges it landed
+  on the parent and the relationship read backwards — and whenever a child sat
+  left of its parent the arrow pointed the wrong way outright. Which end belongs
+  to the child is now named explicitly (`arrowAtStart`), and the marker is
+  applied as `marker-start` or `marker-end` accordingly; `orient="auto-start-reverse"`
+  makes the start marker point away from the curve, so the geometry is unchanged.
+
+  Two tables referencing **each other** (`users.id → posts.id` *and*
+  `posts.id → users.id`) is a legal schema, and both edges used to compute
+  *identical* path strings — painting one line on top of itself, so only one
+  arrowhead was visible and two sets of cardinality labels stacked at each end.
+  Edges that would collide are now spread into **lanes**. The offset is applied
+  to the control points, so it reaches the labels *attenuated* by 0.5625 (a label
+  sits at t=0.25/0.75, where the cubic's control-point contribution is
+  3(1−t)²t + 3(1−t)t² = 0.5625). The lane is therefore sized as
+  `LABEL_W / 0.5625`: a cardinality label measures 21.6px, so ≥38.4px is needed
+  to stop the boxes touching, and the constant is 44px — a measured 3.1px of
+  clear space between the two labels, which is the whole margin, since a
+  four-character label is a fixed width in the monospace face. Edges that are
+  already distinct — two FKs into one parent, on different rows — are left
+  untouched.
+
   The crow's-foot arrowhead is sized and stroked to survive an export: a marker
   does not inherit the stroke-width of the path that references it, so the
   original 7×7 marker drew at 1px in the same grey as its line and was
