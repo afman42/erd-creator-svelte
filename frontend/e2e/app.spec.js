@@ -100,6 +100,74 @@ test("min-max cardinality labels render on FK edges", async ({ page }) => {
 	expect(texts.sort()).toEqual(["0..1", "1..1"]);
 });
 
+// The cardinality dropdown is a VIEW of the ux/nn flags, never a stored field —
+// the .sql file has nowhere to keep a cardinality. So changing it must change
+// the flags, and the diagram labels must follow immediately.
+test("cardinality dropdown drives the flags and the diagram labels", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "+ Table" }).click();
+	// the new table's id column is a sole PK, so clear PK first: that is the one
+	// shape where every option is reachable
+	const dlg = await openCol(page, 1, 0);
+	await dlg.locator("select.fk").selectOption({ index: 1 });
+	await dlg.locator('.flags label[title="primary key"] input').uncheck();
+
+	const card = dlg.locator("[data-testid=cardinality]");
+	await expect(card).toBeVisible();
+
+	// 0..N / 0..1 → child becomes many, parent stays optional.
+	// The expected order is SORTED: "0..1" sorts before "0..N" because "1" < "N".
+	await card.selectOption("0..N / 0..1");
+	await closeCol(dlg);
+	await expect
+		.poll(async () =>
+			(await page.locator("svg text.card").allTextContents()).sort(),
+		)
+		.toEqual(["0..1", "0..N"]);
+
+	// 0..1 / 1..1 → both ends change
+	const dlg2 = await openCol(page, 1, 0);
+	await expect(dlg2.locator("[data-testid=cardinality]")).toHaveValue(
+		"0..N / 0..1",
+	);
+	await dlg2.locator("[data-testid=cardinality]").selectOption("0..1 / 1..1");
+	await closeCol(dlg2);
+	await expect
+		.poll(async () =>
+			(await page.locator("svg text.card").allTextContents()).sort(),
+		)
+		.toEqual(["0..1", "1..1"]);
+
+	// the flags really moved: the SQL panel shows NOT NULL and UNIQUE
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText("NOT NULL UNIQUE");
+});
+
+// A PK is emitted NOT NULL in every dialect, so its parent end is pinned to
+// 1..1 whatever the nn flag says. The dropdown must show that as fixed rather
+// than offer a choice it would have to override.
+test("cardinality options are disabled when a PK pins the state", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "+ Table" }).click();
+	const dlg = await openCol(page, 1, 0);
+	await dlg.locator("select.fk").selectOption({ index: 1 });
+
+	// the column is a sole PK → only 0..1 / 1..1 is reachable
+	const opts = dlg.locator("[data-testid=cardinality] option");
+	await expect(opts).toHaveCount(4);
+	const enabled = await opts.evaluateAll((els) =>
+		els.filter((e) => !e.disabled).map((e) => e.value),
+	);
+	expect(enabled).toEqual(["0..1 / 1..1"]);
+	await expect(dlg.locator("[data-testid=cardinality]")).toHaveValue(
+		"0..1 / 1..1",
+	);
+});
+
 // A self-referencing FK (parent_id → same table) is an ordinary pattern — a
 // tree or adjacency list — and it parses, emits and round-trips. The UI cannot
 // create one (the FK dropdown excludes the column's own table), so it is

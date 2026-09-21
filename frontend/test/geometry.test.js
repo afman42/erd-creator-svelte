@@ -188,8 +188,11 @@ test("edgePaths: a self edge still gets labels", () => {
 	const s = tab("t1", 50, 20, [{ pk: true, ref: { tableId: "t1" } }]);
 	const [e] = edgePaths({ tables: [s] });
 	assert.equal(e.from.text, "0..1", "sole pk → unique");
-	// no NN on this column, so the reference is optional
-	assert.equal(e.to.text, "0..1");
+	// The parent end is 1..1, NOT 0..1: this column is a primary key, and every
+	// emitter writes NOT NULL for a PK regardless of the nn flag. Reading `nn`
+	// alone here is the bug that made the diagram disagree with its own DDL —
+	// this assertion previously encoded it.
+	assert.equal(e.to.text, "1..1", "pk → emitted NOT NULL → mandatory");
 	assert.ok(Number.isFinite(e.from.x) && Number.isFinite(e.to.x));
 });
 

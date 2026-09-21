@@ -19,7 +19,7 @@ import {
 	newTable,
 	uniqName,
 } from "./erd.js";
-import { stackStep } from "./geometry.js";
+import { applyCardinality, stackStep } from "./geometry.js";
 import {
 	clearHistory,
 	snap as snapHistory,
@@ -259,6 +259,23 @@ export function togglePk(c) {
 	snap();
 	c.pk = !c.pk;
 	if (c.pk) c.nn = true;
+	flashLint();
+}
+
+// setCardinality applies one of the four reachable cardinality states by writing
+// the ux/nn flags that cardinality() reads. Nothing beyond those flags is
+// stored, so the diagram cannot disagree with the emitted DDL, and the .sql file
+// — which has nowhere to put a cardinality — needs no change.
+//
+// It refuses a state the column cannot be in (a sole PK pins 0..1 / 1..1) and
+// says so, rather than applying the request and letting the derived value
+// silently override it.
+export function setCardinality(t, c, stateId) {
+	snap();
+	if (!applyCardinality(t, c, stateId)) {
+		flash("a primary key column is always 0..1 / 1..1", "err");
+		return;
+	}
 	flashLint();
 }
 

@@ -103,8 +103,13 @@ export function stackStep(nColumns) {
 //                table PK(a, b), each column repeats freely, which is exactly
 //                why it is M:N. Treating `pk` as unique would label every
 //                junction table 0..1 and invert the meaning of the notation.
-//   parent min — 1 when the column is NOT NULL (the reference is mandatory),
-//                else 0.
+//   parent min — 1 when the column is NOT NULL, else 0. Note this reads
+//                `nn || pk`, NOT `nn` alone: every emitter writes " NOT NULL"
+//                for a primary key regardless of the nn flag (export.go, the
+//                `c.Nn || c.Pk` guards), so a column parsed from a hand-written
+//                file as `pk=true, nn=false` emits NOT NULL while the old check
+//                read it as optional — the diagram said 0..1 where the DDL said
+//                1..1. The label must follow what is actually emitted.
 //   parent max — always 1: an FK is a scalar column reference, so a child row
 //                can never point at more than one parent row.
 //   child min  — ALWAYS 0, and this is not a gap in the implementation. SQL
@@ -116,12 +121,96 @@ export function stackStep(nColumns) {
 // t is the child (FK-holding) table, c the FK column.
 export function cardinality(t, c) {
 	// A sole PK is unique; a composite-PK member is not.
-	const solePk = c.pk && t.columns.filter((x) => x.pk).length === 1;
-	const unique = !!(c.ux || solePk);
+	const unique = isUniqueRef(t, c);
+	// nn || pk, because that is what the emitters write — see above.
+	const required = !!(c.nn || c.pk);
 	return {
 		child: unique ? "0..1" : "0..N",
-		parent: c.nn ? "1..1" : "0..1",
+		parent: required ? "1..1" : "0..1",
 	};
+}
+
+// isUniqueRef reports whether an FK column references at most one row.
+//
+// A UQ column is unique. A SOLE primary key is too. A COMPOSITE-PK member is
+// NOT: in a junction table PK(a, b) each column repeats freely, which is
+// exactly why it is M:N — reading `pk` alone as unique would label every
+// junction table 0..1 and invert the notation.
+export function isUniqueRef(t, c) {
+	const solePk = c.pk && t.columns.filter((x) => x.pk).length === 1;
+	return !!(c.ux || solePk);
+}
+
+// isSolePk: a sole primary key is unique, pinning the CHILD end to 0..1.
+export function isSolePk(t, c) {
+	return !!c.pk && t.columns.filter((x) => x.pk).length === 1;
+}
+
+// The four cardinality states a relationship can actually be in.
+//
+// Only four: the child minimum is always 0 (SQL cannot enforce a minimum on the
+// parent side), and the parent maximum is always 1 (an FK is a scalar
+// reference). So the state is fully described by (child max, parent min).
+export const CARDINALITY_STATES = [
+	{ id: "0..N / 0..1", child: "0..N", parent: "0..1" },
+	{ id: "0..N / 1..1", child: "0..N", parent: "1..1" },
+	{ id: "0..1 / 0..1", child: "0..1", parent: "0..1" },
+	{ id: "0..1 / 1..1", child: "0..1", parent: "1..1" },
+];
+
+// reachableStates lists the states a column can actually be put into, which is
+// what the dialog disables options from.
+//
+// The PK constraint is the whole reason this is a function rather than a
+// constant. Every emitter writes NOT NULL for a primary key regardless of the
+// nn flag (export.go's `c.Nn || c.Pk` guards), so a PK column's PARENT end is
+// always 1..1 — for a composite-PK member too, not just a sole PK. On top of
+// that, a SOLE PK is unique, pinning its CHILD end to 0..1.
+//
+// So: a sole PK is fully pinned; a composite-PK member still has a free child
+// end (toggled by ux, which is what makes a junction table expressible); an
+// ordinary column has all four.
+export function reachableStates(t, c) {
+	const parent = c.pk ? "1..1" : null; // PK → emitted NOT NULL
+	const child = isSolePk(t, c) ? "0..1" : null; // sole PK → unique
+	return CARDINALITY_STATES.filter(
+		(s) => (!parent || s.parent === parent) && (!child || s.child === child),
+	).map((s) => s.id);
+}
+
+// cardinalityState returns the id of the state a column is currently in.
+export function cardinalityState(t, c) {
+	const { child, parent } = cardinality(t, c);
+	const found = CARDINALITY_STATES.find(
+		(s) => s.child === child && s.parent === parent,
+	);
+	return found ? found.id : null;
+}
+
+// applyCardinality writes the flags needed to reach a state, and reports
+// whether it could.
+//
+// This is the exact inverse of cardinality(): it stores nothing new, it sets the
+// ux/nn flags that cardinality() reads. That is the whole design — a stored
+// cardinality field would be a second source of truth that could contradict the
+// DDL, and the .sql file has nowhere to put it.
+//
+// A state the column cannot be in is REFUSED rather than applied and then
+// silently overridden by the derived value; returning false lets the dialog
+// disable those options instead of lying about them.
+export function applyCardinality(t, c, stateId) {
+	const state = CARDINALITY_STATES.find((s) => s.id === stateId);
+	if (!state) return false;
+	if (!reachableStates(t, c).includes(stateId)) return false;
+	c.ux = state.child === "0..1";
+	c.nn = state.parent === "1..1";
+	// A PK column is emitted NOT NULL whatever nn says, so leaving nn false on
+	// one would keep the model disagreeing with its own output — the bug this
+	// function exists to close. Normalising here means a `pk=true, nn=false`
+	// column parsed from a hand-written file becomes self-consistent the moment
+	// its cardinality is touched.
+	if (c.pk) c.nn = true;
+	return true;
 }
 
 export function edgePaths(schema) {

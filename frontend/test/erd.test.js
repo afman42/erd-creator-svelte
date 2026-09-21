@@ -25,16 +25,22 @@ import {
 } from "../src/erd.js";
 import {
 	ADDCOL_H,
+	applyCardinality,
 	BORDER_H,
 	BOX_W,
 	boxHeight,
+	CARDINALITY_STATES,
+	cardinality,
+	cardinalityState,
 	EDGE_SELF_STROKE,
 	EDGE_STROKE,
 	GAP,
 	HDR_H,
+	isSolePk,
 	LABEL_FILL,
 	LABEL_HALO,
 	ROW_H,
+	reachableStates,
 	stackStep,
 } from "../src/geometry.js";
 
@@ -524,7 +530,150 @@ const TOKENS_SRC = readFileSync(
 	"utf8",
 );
 
-// ---- export paint: presentation attributes, not CSS classes ----
+// ---- cardinality states: the dropdown's round-trip ----
+//
+// The select is a VIEW of the ux/nn flags, not a second source of truth. These
+// pin the inverse relationship, which is the property that makes that true: for
+// every state, applying it and reading it back must give the same state.
+
+test("cardinalityState reads all four states from the flags", () => {
+	const mk = (flags) => {
+		const c = { pk: false, nn: false, ux: false, ...flags };
+		return { t: { columns: [c] }, c };
+	};
+	const cases = [
+		[{}, "0..N / 0..1"],
+		[{ nn: true }, "0..N / 1..1"],
+		[{ ux: true }, "0..1 / 0..1"],
+		[{ ux: true, nn: true }, "0..1 / 1..1"],
+	];
+	for (const [flags, want] of cases) {
+		const { t, c } = mk(flags);
+		assert.equal(
+			cardinalityState(t, c),
+			want,
+			`flags ${JSON.stringify(flags)}`,
+		);
+	}
+});
+
+// The load-bearing property: apply(state) then read back must be that state.
+// If this fails, the dropdown can disagree with what the diagram shows.
+test("every cardinality state round-trips through applyCardinality", () => {
+	for (const state of CARDINALITY_STATES) {
+		// start from a plain non-pk, non-unique column
+		const c = { pk: false, nn: false, ux: false };
+		const t = { columns: [c] };
+		assert.equal(
+			applyCardinality(t, c, state.id),
+			true,
+			`applyCardinality refused ${state.id}`,
+		);
+		assert.equal(
+			cardinalityState(t, c),
+			state.id,
+			`applying ${state.id} did not read back as itself`,
+		);
+	}
+});
+
+// A sole PK pins the relationship: unique (one child) and emitted NOT NULL
+// (mandatory parent). Every other state must be REFUSED, not applied and then
+// overridden by the derived value.
+test("a sole PK pins 0..1 / 1..1 and refuses the others", () => {
+	const c = { pk: true, nn: true, ux: false };
+	const t = { columns: [c] };
+	assert.equal(cardinalityState(t, c), "0..1 / 1..1");
+	assert.equal(isSolePk(t, c), true);
+	for (const state of CARDINALITY_STATES) {
+		const wanted = state.id === "0..1 / 1..1";
+		assert.equal(
+			applyCardinality(t, c, state.id),
+			wanted,
+			`sole PK should ${wanted ? "accept" : "refuse"} ${state.id}`,
+		);
+	}
+	// and it is still in the pinned state afterwards, whatever was requested
+	assert.equal(cardinalityState(t, c), "0..1 / 1..1");
+});
+
+// A composite-PK member is NOT unique on its own, so its child end is 0..N and
+// stays steerable — that is what makes a junction table expressible. Its PARENT
+// end is pinned to 1..1 though, because every emitter writes NOT NULL for any
+// PK column (`c.Nn || c.Pk`), not just a sole one. So it is not fully pinned,
+// but it is not free either.
+test("a composite-PK member keeps a free child end but a pinned parent end", () => {
+	const a = { pk: true, nn: true, ux: false };
+	const b = { pk: true, nn: true, ux: false };
+	const t = { columns: [a, b] };
+	assert.equal(isSolePk(t, a), false);
+	assert.equal(cardinalityState(t, a), "0..N / 1..1");
+	// the child end can still be made unique …
+	assert.equal(applyCardinality(t, a, "0..1 / 1..1"), true);
+	assert.equal(cardinalityState(t, a), "0..1 / 1..1");
+	// … but the parent end cannot be relaxed, because the DDL is NOT NULL
+	assert.equal(applyCardinality(t, a, "0..1 / 0..1"), false);
+	assert.equal(cardinalityState(t, a), "0..1 / 1..1");
+});
+
+test("applyCardinality rejects an unknown state", () => {
+	const c = { pk: false, nn: false, ux: false };
+	assert.equal(applyCardinality({ columns: [c] }, c, "1..N"), false);
+	assert.equal(applyCardinality({ columns: [c] }, c, ""), false);
+});
+
+// reachableStates is what the dialog disables options from, so it must agree
+// with what applyCardinality actually accepts — the two are the same rule seen
+// from two sides, and this pins them together.
+test("reachableStates matches what applyCardinality accepts", () => {
+	const shapes = [
+		{ label: "plain", cols: [{ pk: false, nn: false, ux: false }], i: 0 },
+		{ label: "sole pk", cols: [{ pk: true, nn: true, ux: false }], i: 0 },
+		{
+			label: "composite pk",
+			cols: [
+				{ pk: true, nn: true, ux: false },
+				{ pk: true, nn: true, ux: false },
+			],
+			i: 0,
+		},
+	];
+	for (const { label, cols, i } of shapes) {
+		const t = { columns: cols };
+		const reachable = reachableStates(t, cols[i]);
+		assert.ok(reachable.length > 0, `${label}: no reachable states`);
+		for (const s of CARDINALITY_STATES) {
+			// Rebuild with the SAME column count: a one-column table would turn a
+			// composite-PK member into a sole PK, changing the rule under test.
+			const fresh = cols.map((c) => ({ ...c }));
+			const tt = { columns: fresh };
+			const accepted = applyCardinality(tt, fresh[i], s.id);
+			assert.equal(
+				accepted,
+				reachable.includes(s.id),
+				`${label}: applyCardinality(${s.id}) = ${accepted} but reachableStates says ${reachable.includes(s.id)}`,
+			);
+		}
+	}
+});
+
+// The bug the dropdown work uncovered: a hand-written file can parse to
+// `pk=true, nn=false` (`id INT, PRIMARY KEY (id)`), and every emitter writes
+// NOT NULL for a PK regardless. Reading `nn` alone made the diagram say 0..1
+// where the DDL said 1..1 — the diagram lied.
+test("a PK column reads as 1..1 even when nn was never set", () => {
+	const c = { pk: true, nn: false, ux: false };
+	const t = { columns: [c] };
+	// this is the regression: nn is false, but the DDL is NOT NULL
+	assert.equal(cardinality(t, c).parent, "1..1");
+	assert.equal(cardinalityState(t, c), "0..1 / 1..1");
+	// and touching its cardinality normalises nn, so the model stops disagreeing
+	// with its own output
+	assert.equal(applyCardinality(t, c, "0..1 / 1..1"), true);
+	assert.equal(c.nn, true);
+});
+
+// ---- relationship edge visibility ----
 //
 // html-to-image does not carry the stylesheet into an export: the exported
 // document has no <style> element and no `.edge` rule. Anything styled ONLY by
