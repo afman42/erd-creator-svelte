@@ -119,6 +119,172 @@ test("table delete × removes box and clears dangling FKs", async ({ page }) => 
 	).toHaveCount(0);
 });
 
+test("FK ON UPDATE survives dialog, save, reload and SQL panel", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	page.once("dialog", (d) => d.accept("fkupdate"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("fkupdate.sql");
+
+	// second table gets an FK to users, then an ON UPDATE action
+	await page.getByRole("button", { name: "+ Table" }).click();
+	const dlg = await openCol(page, 1, 0);
+	await dlg.locator("select.fk").selectOption({ index: 1 });
+	// no ON UPDATE by default: the control exists but reads "— none —"
+	await expect(dlg.locator("select[data-testid=on-update]")).toHaveValue("");
+	await dlg.locator("select[data-testid=on-update]").selectOption("CASCADE");
+
+	// the clause must reach the server, not just the dialog. This endpoint
+	// serves the parsed schema envelope (JSON), so the assertion is on the
+	// model field; the DDL rendering is asserted through the SQL panel below,
+	// which goes through the same emitter as the saved file.
+	await expect(async () => {
+		const body = await (await request.get("/api/files/fkupdate.sql")).json();
+		const col = body.tables[1].columns[0];
+		expect(col.ref.onUpdate).toBe("CASCADE");
+	}).toPass({ timeout: 5000 });
+
+	// and survive a reopen: the dialog reads the saved action back
+	await closeCol(dlg);
+	await page.reload();
+	const dlg2 = await openCol(page, 1, 0);
+	await expect(dlg2.locator("select[data-testid=on-update]")).toHaveValue(
+		"CASCADE",
+	);
+	await closeCol(dlg2);
+
+	// the SQL panel shows it too, through the same emitter as the saved file
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText("ON UPDATE CASCADE");
+});
+
+test("composite index round-trips through dialog, save, reload and SQL", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	page.once("dialog", (d) => d.accept("idx"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("idx.sql");
+
+	// a second column so an index over two columns is meaningful
+	await page.getByRole("button", { name: "+ column" }).first().click();
+
+	// open the composite-index dialog from the card header
+	await page
+		.getByRole("button", { name: /composite indexes for/ })
+		.first()
+		.click();
+	const dlg = page.locator("dialog.idxedit");
+	await expect(dlg).toBeVisible();
+	await expect(dlg).toContainText("No composite indexes");
+
+	// pick both columns in the "New index" fieldset, then create
+	const picks = dlg.locator(".new .picks label");
+	await picks.nth(0).click();
+	await picks.nth(1).click();
+	await dlg.getByRole("button", { name: "Add index" }).click();
+	await expect(dlg.getByTestId("index-row")).toHaveCount(1);
+
+	// it reaches the server as a table-level index, not as two column flags
+	await expect(async () => {
+		const body = await (await request.get("/api/files/idx.sql")).json();
+		const t = body.tables[0];
+		expect(t.indexes?.length).toBe(1);
+		expect(t.indexes[0].cols.length).toBe(2);
+	}).toPass({ timeout: 5000 });
+
+	// and the emitted DDL has the composite KEY, which is the whole point.
+	// The dialog must be closed first: it is modal, so it intercepts clicks on
+	// the toolbar behind it.
+	await dlg.getByRole("button", { name: "Done" }).click();
+	await expect(dlg).toHaveCount(0);
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText(
+		"KEY `idx_users_id_column` (`id`, `column`)",
+	);
+
+	// survives a reopen
+	await page.reload();
+	await page
+		.getByRole("button", { name: /composite indexes for/ })
+		.first()
+		.click();
+	await expect(
+		page.locator("dialog.idxedit").getByTestId("index-row"),
+	).toHaveCount(1);
+});
+
+test("postgres array type round-trips and is refused for other dialects", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	page.once("dialog", (d) => d.accept("arr"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("arr.sql");
+
+	// the array control is postgres-only: absent while mysql is selected
+	const mysqlDlg = await openCol(page, 0, 0);
+	await expect(mysqlDlg.locator("[data-testid=is-array]")).toHaveCount(0);
+	await closeCol(mysqlDlg);
+
+	// switch to postgres, then turn the column into an array
+	await page.getByTestId("dialect").selectOption("postgres");
+	const dlg = await openCol(page, 0, 0);
+	const isArray = dlg.locator("[data-testid=is-array]");
+	await expect(isArray).toBeVisible();
+	await isArray.check();
+	await closeCol(dlg);
+
+	// the suffix reaches the server and survives a reopen
+	await expect(async () => {
+		const body = await (await request.get("/api/files/arr.sql")).json();
+		expect(body.tables[0].columns[0].type).toBe("INT[]");
+	}).toPass({ timeout: 5000 });
+
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText('"id" INT[]');
+
+	// and the same schema exported as mysql must be refused, because INT[] is
+	// not valid MySQL — the error must name the target dialect
+	const res = await request.post("/export", {
+		data: {
+			dialect: "mysql",
+			schema: await (await request.get("/api/files/arr.sql")).json(),
+		},
+	});
+	expect(res.status()).toBe(400);
+	expect(await res.text()).toContain("PostgreSQL-only");
+});
+
+test("array toggle clears PK and AI, which an array column cannot be", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByTestId("dialect").selectOption("postgres");
+	// the default column is id/INT/PK/NN/AI — an array cannot be any of those
+	const dlg = await openCol(page, 0, 0);
+	await dlg.locator("[data-testid=is-array]").check();
+	// PK and AI must both clear: an array column can be neither in PostgreSQL.
+	// Selected by title rather than index so a flag reorder cannot silently
+	// make this assert the wrong control.
+	await expect(
+		dlg.locator('.flags label[title="primary key"] input'),
+	).not.toBeChecked();
+	await expect(
+		dlg.locator('.flags label[title="auto increment"] input'),
+	).not.toBeChecked();
+	// unticking restores a plain type
+	await dlg.locator("[data-testid=is-array]").uncheck();
+	await closeCol(dlg);
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText('"id" INT');
+	await expect(page.locator("aside pre")).not.toContainText("INT[]");
+});
+
 test("Del button deletes current file after confirm dialog", async ({
 	page,
 	request,
@@ -638,6 +804,72 @@ test("Export PNG of saved file uses .png name", async ({ page }) => {
 	const dl = page.waitForEvent("download");
 	await page.getByRole("button", { name: "Export PNG" }).click();
 	expect((await dl).suggestedFilename()).toBe("shot.png");
+});
+
+test("Export SVG downloads the diagram as real SVG source", async ({
+	page,
+}) => {
+	await page.goto("/");
+	const download = page.waitForEvent("download");
+	await page.getByRole("button", { name: "Export SVG" }).click();
+	const dl = await download;
+	expect(dl.suggestedFilename()).toBe("mysql-schema.svg");
+	const stream = await dl.createReadStream();
+	const chunks = [];
+	for await (const c of stream) chunks.push(c);
+	const text = Buffer.concat(chunks).toString("utf8");
+	// The failure this guards: toSvg() returns a data URL, so writing it out
+	// verbatim would produce a file starting "data:image/svg+xml..." that no
+	// viewer opens. Asserting it starts with <svg is the whole point — a byte
+	// count or an extension check would pass on the broken version too.
+	expect(text.trimStart().startsWith("<svg")).toBe(true);
+	expect(text).toContain("<foreignObject");
+	expect(text).not.toContain("data:image/svg+xml");
+	// the whole diagram, sized like the PNG path: the default table sits at
+	// x=40, so width = 40 + BOX_W(280) + PAD(40) = 360. This is the property
+	// that distinguishes whole-diagram sizing from the viewport.
+	expect(text).toContain('width="360"');
+	await expect(page.getByText("downloaded mysql-schema.svg")).toBeVisible();
+});
+
+test("Export SVG of a saved file uses the .svg name", async ({ page }) => {
+	await page.goto("/");
+	page.once("dialog", (d) => d.accept("vector"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("vector.sql");
+	const dl = page.waitForEvent("download");
+	await page.getByRole("button", { name: "Export SVG" }).click();
+	expect((await dl).suggestedFilename()).toBe("vector.svg");
+});
+
+test("Export SVG on empty schema shows error, no download", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page
+		.locator("section.table")
+		.first()
+		.getByTitle("delete table (Del)")
+		.click();
+	await expect(page.locator("section.table")).toHaveCount(0);
+	await page.getByRole("button", { name: "Export SVG" }).click();
+	await expect(page.locator("header .err")).toContainText("nothing to export");
+	await expect(page.getByText(/downloaded/)).toHaveCount(0);
+});
+
+test("Export PNG still works alongside Export SVG", async ({ page }) => {
+	// Two export buttons sharing one `exporting` flag: adding the second must
+	// not break the first, so this re-asserts the PNG path end to end.
+	await page.goto("/");
+	const download = page.waitForEvent("download");
+	await page.getByRole("button", { name: "Export PNG" }).click();
+	const dl = await download;
+	expect(dl.suggestedFilename()).toBe("mysql-schema.png");
+	const stream = await dl.createReadStream();
+	const chunks = [];
+	for await (const c of stream) chunks.push(c);
+	const buf = Buffer.concat(chunks);
+	expect(buf.subarray(0, 4).toString("hex")).toBe("89504e47");
 });
 
 test("Export PNG on empty schema shows error, no download", async ({

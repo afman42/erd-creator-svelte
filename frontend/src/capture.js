@@ -21,6 +21,77 @@ export function pngFilename(currentFile, dialect) {
 }
 
 /**
+ * Filename for SVG export. Same rule as pngFilename with a different extension;
+ * kept as its own function so the two are pinned independently in tests rather
+ * than sharing one implementation that a typo could break for both.
+ */
+export function svgFilename(currentFile, dialect) {
+	if (currentFile) return currentFile.replace(/\.sql$/i, ".svg");
+	return `${dialect || "erd"}-schema.svg`;
+}
+
+/**
+ * Unwrap the data URL html-to-image's toSvg() returns into plain SVG source.
+ *
+ * toSvg() serializes the clone and hands back
+ * `data:image/svg+xml;charset=utf-8,` + encodeURIComponent(svg) — a URI, not a
+ * document. Writing that to a .svg file would produce a file whose first
+ * characters are "data:image/svg+xml..." rather than "<svg", which no editor or
+ * viewer will open. Decoding is the difference between an SVG file and a text
+ * file that looks like one.
+ *
+ * Exported (and therefore unit-testable) because the decoding is the part with
+ * a failure mode; the capture around it is a thin wrapper.
+ */
+export function decodeSvgDataUrl(dataUrl) {
+	if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+		throw new Error("svg capture returned no data URL");
+	}
+	const comma = dataUrl.indexOf(",");
+	if (comma < 0) throw new Error("svg data URL is malformed");
+	const meta = dataUrl.slice(5, comma);
+	const body = dataUrl.slice(comma + 1);
+	// base64 is the other legal form; html-to-image uses encodeURIComponent
+	// today, so this is a guard against a library change silently producing a
+	// file full of percent-escapes rather than an SVG.
+	if (meta.includes("base64")) {
+		return atob(body);
+	}
+	const svg = decodeURIComponent(body);
+	if (!svg.trimStart().startsWith("<svg")) {
+		throw new Error("svg data URL did not decode to SVG source");
+	}
+	return svg;
+}
+
+/**
+ * Capture the canvas element to SVG source, sized to the whole diagram.
+ *
+ * Why toSvg and not toPng: toPng/toBlob build a canvas from an <img> whose src
+ * is the data URL, which the CSP's `connect-src 'self'` blocks (see the note in
+ * capturePng). toSvg never goes through an <img> — it serializes the clone
+ * directly — so it stays inside the policy while producing a vector file that
+ * scales without the pixelation a PNG gets when zoomed.
+ */
+export async function captureSvg(canvasEl, schema) {
+	if (!canvasEl) throw new Error("canvas not found");
+	const size = captureSize(schema);
+	if (!size) throw new Error("nothing to capture");
+	const { toSvg } = await import("html-to-image");
+	const dataUrl = await toSvg(canvasEl, {
+		backgroundColor: BG,
+		width: size.width,
+		height: size.height,
+		// Same reasoning as the PNG path: the clone inherits `overflow: auto`,
+		// which would paint scrollbars into the output.
+		style: { overflow: "hidden" },
+	});
+	return decodeSvgDataUrl(dataUrl);
+}
+
+/** Capture the canvas element to a PNG Blob, sized to the whole diagram. */
+
+/**
  * Rendered size of the whole diagram, padded, in CSS pixels.
  * Measured from the cards so a scrolled or offscreen one is still included.
  * Returns null when there is nothing to draw.

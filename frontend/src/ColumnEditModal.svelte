@@ -20,8 +20,10 @@ import {
 	rmColumn,
 	setRef,
 	setRefAction,
+	setRefOnUpdate,
 	setType,
 	store,
+	toggleArray,
 	toggleFlag,
 	togglePk,
 } from "./schema.svelte.js";
@@ -73,6 +75,22 @@ function remove() {
 		</select>
 	</label>
 
+	{#if store.schema.dialect === "postgres"}
+		<!-- Array types are PostgreSQL syntax, and the server refuses to emit one
+		     for any other dialect (ValidateFor). Showing the control elsewhere
+		     would let the user build a schema that cannot be saved. -->
+		<label class="fld" title="PostgreSQL array type (e.g. INT[])">
+			<span>Array</span>
+			<input
+				class="isarray"
+				type="checkbox"
+				data-testid="is-array"
+				checked={column.type.endsWith("[]")}
+				onchange={() => toggleArray(column)}
+			/>
+		</label>
+	{/if}
+
 	<fieldset class="flags">
 		<legend>Flags</legend>
 		<label title="primary key"
@@ -118,6 +136,19 @@ function remove() {
 				value={column.ref.action ?? "CASCADE"}
 				onchange={(e) => setRefAction(column, e)}
 			>
+				{#each actions as a (a)}<option value={a}>{a}</option>{/each}
+			</select>
+		</label>
+
+		<label class="fld">
+			<span>ON UPDATE</span>
+			<select
+				class="act"
+				data-testid="on-update"
+				value={column.ref.onUpdate ?? ""}
+				onchange={(e) => setRefOnUpdate(column, e)}
+			>
+				<option value="">— none —</option>
 				{#each actions as a (a)}<option value={a}>{a}</option>{/each}
 			</select>
 		</label>

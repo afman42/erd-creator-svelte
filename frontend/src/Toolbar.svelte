@@ -7,6 +7,7 @@ import {
 	deleteFile,
 	exportDdl,
 	exportPng,
+	exportSvg,
 	newFile,
 	openFile,
 	saveCurrent,
@@ -83,6 +84,7 @@ const LABELS = {
 		{store.exporting ? "..." : "Export"}
 	</button>
 	<button onclick={exportPng} disabled={store.exporting} aria-label="Export PNG">Export PNG</button>
+	<button onclick={exportSvg} disabled={store.exporting} aria-label="Export SVG">Export SVG</button>
 	<button onclick={onToggleSql} aria-label="{showSql ? 'Hide' : 'Show'} SQL panel" aria-expanded={showSql} aria-controls="sql-panel">{showSql ? "Hide" : "Show"} SQL</button>
 	{#if store.currentFile}
 		<span class="ok" data-testid="current-file" role="status" aria-live="polite">{store.currentFile}</span>

@@ -204,16 +204,56 @@ export function setType(c, base) {
 	if (!isInt(c.type)) c.ai = false;
 	flashLint();
 }
+
+// toggleArray adds or removes the PostgreSQL array suffix on a column's type.
+//
+// The suffix is appended to whatever the type currently is, so `VARCHAR(255)`
+// becomes `VARCHAR(255)[]` and back — no separate "element type" field, because
+// the model already stores the full type expression and splitting it would mean
+// two sources of truth for the same fact.
+//
+// Only offered while postgres is selected: `INT[]` is PostgreSQL syntax and the
+// server refuses to emit it for the other dialects (ValidateFor), so exposing
+// the control elsewhere would let the user build a schema that cannot be saved.
+export function toggleArray(c) {
+	snap();
+	c.type = c.type.endsWith("[]") ? c.type.slice(0, -2) : `${c.type}[]`;
+	// An array column cannot be an identity column or a primary key, so those
+	// flags are cleared rather than left set for the server to reject.
+	if (c.type.endsWith("[]")) {
+		c.ai = false;
+		c.pk = false;
+	}
+	flashLint();
+}
 export function setRef(c, ev) {
 	snap();
 	const id = ev.target.value;
-	c.ref = id ? { tableId: id, action: c.ref?.action ?? "CASCADE" } : null;
+	// Both actions are carried across a re-target: changing which table an FK
+	// points at must not silently reset the referential actions the user chose.
+	// onUpdate keeps its "" (meaning "omit the clause") rather than gaining a
+	// default, which is the asymmetry documented on Ref in grammar.go.
+	c.ref = id
+		? {
+				tableId: id,
+				action: c.ref?.action ?? "CASCADE",
+				onUpdate: c.ref?.onUpdate ?? "",
+			}
+		: null;
 	if (id) c.ai = false;
 	flashLint();
 }
 export function setRefAction(c, ev) {
 	snap();
 	c.ref.action = ev.target.value;
+}
+// setRefOnUpdate sets ON UPDATE. Unlike setRefAction there is no default: the
+// empty option means "omit the clause" and is stored as "", because a schema
+// written before this field existed carries no ON UPDATE and must keep emitting
+// none. See the Ref comment in grammar.go for why the two actions differ.
+export function setRefOnUpdate(c, ev) {
+	snap();
+	c.ref.onUpdate = ev.target.value;
 }
 export function togglePk(c) {
 	snap();
@@ -228,6 +268,64 @@ export function togglePk(c) {
 export function toggleFlag(c, flag) {
 	snap();
 	c[flag] = !c[flag];
+}
+
+// ---- composite indexes ----
+// A composite index spans several columns, so it cannot live on a Col — see the
+// Index comment in grammar.go. These mutations mirror the column ones: snapshot
+// for undo, then mutate. Every one is guarded so the UI cannot produce a state
+// the server would reject (an index with no columns, or the same column twice,
+// which is legal SQL but always a mistake here).
+
+// ensureIndexes returns the table's index list, creating it on a table that
+// predates the field (a schema loaded from an older file has no `indexes`).
+function ensureIndexes(t) {
+	if (!Array.isArray(t.indexes)) t.indexes = [];
+	return t.indexes;
+}
+
+// addIndex creates a composite index over the named columns. Duplicates are
+// dropped: the same column twice in one index is almost certainly a mis-click,
+// and the server's validation would accept it while the DDL it produces is
+// useless.
+export function addIndex(t, cols) {
+	const unique = [...new Set(cols.filter(Boolean))];
+	if (unique.length < 2) {
+		flash("pick at least two columns for a composite index", "err");
+		return;
+	}
+	snap();
+	ensureIndexes(t).push({ cols: unique });
+}
+
+export function rmIndex(t, ix) {
+	snap();
+	const list = ensureIndexes(t);
+	const i = list.indexOf(ix);
+	if (i >= 0) list.splice(i, 1);
+}
+
+// setIndexName sets an explicit name. Empty clears it back to the derived
+// idx_<table>_<cols> form, which is the default and needs no UI. No table
+// parameter: the name lives on the index itself, so only the index is needed.
+export function setIndexName(ix, name) {
+	snap();
+	ix.name = name.trim();
+}
+
+// toggleIndexCol adds or removes one column from an existing composite index.
+// Refuses to drop below two columns: a one-column index is Col.Ix, and letting
+// it become one here would emit the same DDL two different ways depending on
+// how it was created. Takes only the index for the same reason as setIndexName.
+export function toggleIndexCol(ix, colName) {
+	const i = ix.cols.indexOf(colName);
+	if (i >= 0 && ix.cols.length <= 2) {
+		flash("a composite index needs at least two columns", "err");
+		return;
+	}
+	snap();
+	if (i >= 0) ix.cols.splice(i, 1);
+	else ix.cols.push(colName);
 }
 
 export function flash(msg, kind = "ok") {
@@ -441,6 +539,32 @@ export async function exportPng() {
 		flash(`downloaded ${name}`);
 	} catch (e) {
 		flash(`png export failed: ${e.message}`, "err");
+	} finally {
+		store.exporting = false;
+	}
+}
+// exportSvg is the vector twin of exportPng: same sizing, same empty-schema
+// guard, same filename rule with a .svg extension. It exists alongside PNG
+// rather than replacing it because the two answer different needs — SVG for
+// docs and slides where the diagram is rescaled, PNG where a bitmap is
+// required. The SVG is written as text, not as a data URL: see decodeSvgDataUrl.
+export async function exportSvg() {
+	if (!store.schema.tables.length) {
+		flash("nothing to export — add a table first", "err");
+		return;
+	}
+	store.exporting = true;
+	try {
+		const el = document.querySelector(".canvas");
+		const { captureSvg, svgFilename } = await import("./capture.js");
+		const svg = await captureSvg(el, store.schema);
+		const name = svgFilename(store.currentFile, store.schema.dialect);
+		// downloadText already sets a text charset; an SVG is XML, so it is
+		// passed through as-is with the .svg extension as the type signal.
+		downloadText(svg, name);
+		flash(`downloaded ${name}`);
+	} catch (e) {
+		flash(`svg export failed: ${e.message}`, "err");
 	} finally {
 		store.exporting = false;
 	}

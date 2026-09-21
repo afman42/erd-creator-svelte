@@ -86,6 +86,11 @@ export function newTable(name) {
 				ref: null,
 			},
 		],
+		// Composite indexes. Always present (empty array) so the UI can push to
+		// it without a null guard, and serialized away by the server's omitempty
+		// when empty — so a schema with no composite index still travels as the
+		// exact JSON it did before this field existed.
+		indexes: [],
 	};
 }
 export function newColumn() {
@@ -111,6 +116,11 @@ export function cloneTable(t) {
 			id: `c${nextColId++}`,
 			ref: c.ref ? { ...c.ref } : null,
 		})),
+		// Indexes must be deep-copied: the `...t` spread above copies the array
+		// by reference, so without this a duplicated table would share the
+		// original's index list and editing one would silently change the other.
+		// The cols slice is copied too, for the same reason one level down.
+		indexes: (t.indexes ?? []).map((ix) => ({ ...ix, cols: [...ix.cols] })),
 	};
 }
 

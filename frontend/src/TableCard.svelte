@@ -21,6 +21,7 @@ import {
 	rmTable,
 	store,
 } from "./schema.svelte.js";
+import TableIndexModal from "./TableIndexModal.svelte";
 
 let { table, onDragStart } = $props();
 
@@ -30,6 +31,9 @@ let editingColId = $state(null);
 const editing = $derived(
 	table.columns.find((c) => c.id === editingColId) ?? null,
 );
+
+// Whether the composite-index dialog is open. Same reasoning: view state.
+let showIndexes = $state(false);
 
 const parentName = (c) =>
 	store.schema.tables.find((x) => x.id === c.ref?.tableId)?.name;
@@ -81,6 +85,10 @@ const parentName = (c) =>
 			aria-label="Table name {table.name}"
 		/>
 		<button
+			title="composite indexes"
+			aria-label="composite indexes for {table.name}"
+			onclick={() => (showIndexes = true)}>⌗</button>
+		<button
 			title="duplicate"
 			aria-label="duplicate table {table.name}"
 			onclick={() => dupTable(table)}>⧉</button>
@@ -105,6 +113,10 @@ const parentName = (c) =>
 		column={editing}
 		onClose={() => (editingColId = null)}
 	/>
+{/if}
+
+{#if showIndexes}
+	<TableIndexModal {table} onClose={() => (showIndexes = false)} />
 {/if}
 
 <style>

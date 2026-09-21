@@ -191,6 +191,26 @@ test("cloneTable deep-copies columns so mutation does not leak", () => {
 	assert.equal(src.columns[0].name, "id");
 });
 
+test("cloneTable carries the FK onUpdate action and keeps it independent", () => {
+	// A duplicate must not lose ON UPDATE, and mutating the copy must not reach
+	// the original: cloneTable rebuilds the ref per column ({...c.ref}), so both
+	// referential actions travel with it.
+	const src = newTable("a");
+	src.columns[0].ref = {
+		tableId: "t9",
+		action: "CASCADE",
+		onUpdate: "SET NULL",
+	};
+	const c = cloneTable(src);
+	assert.equal(c.columns[0].ref.action, "CASCADE");
+	assert.equal(c.columns[0].ref.onUpdate, "SET NULL");
+	c.columns[0].ref.onUpdate = "RESTRICT";
+	assert.equal(src.columns[0].ref.onUpdate, "SET NULL");
+	// an FK with no ON UPDATE keeps the empty value rather than gaining one
+	src.columns[0].ref = { tableId: "t9", action: "CASCADE", onUpdate: "" };
+	assert.equal(cloneTable(src).columns[0].ref.onUpdate, "");
+});
+
 test("layout puts referenced tables left; stacks same layer; cycles terminate", () => {
 	const users = newTable("users");
 	const posts = newTable("posts");
@@ -236,6 +256,37 @@ test("layout: FK depth 2 layers — a→b→c puts c leftmost, a rightmost", () 
 	b.columns[0].ref = { tableId: c.id };
 	layout({ tables: [a, b, c] });
 	assert.ok(c.x < b.x && b.x < a.x);
+});
+
+test("newTable carries an empty indexes list", () => {
+	// Always an array, never undefined, so the UI can push without a guard; the
+	// server's omitempty is what keeps it off the wire when empty.
+	assert.deepEqual(newTable("t").indexes, []);
+});
+
+test("cloneTable deep-copies indexes so the copy is independent", () => {
+	// The `...t` spread copies the indexes array by reference, so a duplicated
+	// table would share the original's index list without an explicit copy —
+	// editing one table's index would silently change the other's.
+	const src = newTable("a");
+	src.indexes.push({ cols: ["x", "y"] });
+	const c = cloneTable(src);
+	assert.deepEqual(c.indexes, [{ cols: ["x", "y"] }]);
+	assert.notEqual(c.indexes, src.indexes, "index array must be a new array");
+	assert.notEqual(
+		c.indexes[0].cols,
+		src.indexes[0].cols,
+		"cols must be copied",
+	);
+	c.indexes[0].cols.push("z");
+	c.indexes[0].name = "renamed";
+	assert.deepEqual(src.indexes[0].cols, ["x", "y"], "src cols mutated");
+	assert.equal(src.indexes[0].name, undefined, "src name mutated");
+	// a table with no indexes field (an older file) clones to an empty list
+	assert.deepEqual(
+		cloneTable({ ...newTable("b"), indexes: undefined }).indexes,
+		[],
+	);
 });
 
 test("layout stacks tables in same layer vertically by box height", () => {
@@ -466,6 +517,29 @@ test("ColumnEditModal holds every control the row gave up", () => {
 	assert.match(MODAL_SRC, /class="cmt"/, "comment input missing from modal");
 	assert.match(MODAL_SRC, /class="fk"/, "FK select missing from modal");
 	assert.match(MODAL_SRC, /class="act"/, "ON DELETE select missing from modal");
+	// ON UPDATE is a second select, so the single class="act" match above cannot
+	// see it: pin the label and the mutation, or a missing ON UPDATE control
+	// passes this test by virtue of its sibling existing.
+	assert.match(MODAL_SRC, /ON UPDATE/, "ON UPDATE control missing from modal");
+	assert.match(
+		MODAL_SRC,
+		/setRefOnUpdate/,
+		"ON UPDATE is not wired in the modal",
+	);
+	// the array control must exist AND be gated on the postgres dialect: the
+	// server refuses to emit an array type for any other dialect, so offering
+	// the control elsewhere would let the user build a schema that cannot save
+	assert.match(MODAL_SRC, /class="isarray"/, "array toggle missing from modal");
+	assert.match(
+		MODAL_SRC,
+		/toggleArray/,
+		"array toggle is not wired in the modal",
+	);
+	assert.match(
+		MODAL_SRC,
+		/dialect === "postgres"/,
+		"array toggle is not gated on the postgres dialect",
+	);
 	// all five flags still wired to their mutations
 	assert.match(MODAL_SRC, /togglePk/, "PK is not wired in the modal");
 	assert.match(MODAL_SRC, /toggleFlag/, "the flag toggles are not wired");
@@ -526,7 +600,12 @@ test("uniqName handles multi-digit suffixes and empty taken sets", () => {
 	assert.equal(uniqName("t1", []), "t1");
 });
 
-import { captureSize, pngFilename } from "../src/capture.js";
+import {
+	captureSize,
+	decodeSvgDataUrl,
+	pngFilename,
+	svgFilename,
+} from "../src/capture.js";
 
 test("pngFilename mirrors exportFilename with .png", () => {
 	assert.equal(pngFilename("mydb.sql", "mysql"), "mydb.png");
@@ -535,6 +614,45 @@ test("pngFilename mirrors exportFilename with .png", () => {
 	assert.equal(pngFilename("", "postgres"), "postgres-schema.png");
 	assert.equal(pngFilename(null, "sqlite"), "sqlite-schema.png");
 	assert.equal(pngFilename("", ""), "erd-schema.png");
+});
+
+test("svgFilename mirrors pngFilename with .svg", () => {
+	assert.equal(svgFilename("mydb.sql", "mysql"), "mydb.svg");
+	assert.equal(svgFilename("MYDB.SQL", "mysql"), "MYDB.svg");
+	assert.equal(svgFilename("", "mysql"), "mysql-schema.svg");
+	assert.equal(svgFilename(null, "postgres"), "postgres-schema.svg");
+	assert.equal(svgFilename("", ""), "erd-schema.svg");
+});
+
+// toSvg() returns a data URL, and writing that straight to a .svg file would
+// produce a file starting "data:image/svg+xml..." that no viewer opens. These
+// pin the unwrapping, which is the part of the SVG path with a failure mode.
+test("decodeSvgDataUrl unwraps an encodeURIComponent data URL to SVG source", () => {
+	const src = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="5"/></svg>';
+	const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(src)}`;
+	assert.equal(decodeSvgDataUrl(dataUrl), src);
+	// the decoded form must actually start with the tag, which is the property
+	// that makes the output a valid .svg file
+	assert.ok(decodeSvgDataUrl(dataUrl).startsWith("<svg"));
+});
+
+test("decodeSvgDataUrl handles base64 and rejects non-SVG payloads", () => {
+	const src = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+	const b64 = Buffer.from(src, "utf8").toString("base64");
+	assert.equal(
+		decodeSvgDataUrl(`data:image/svg+xml;base64,${b64}`),
+		src,
+		"base64 data URL must decode too",
+	);
+	// not a data URL at all → the capture contract was broken
+	assert.throws(() => decodeSvgDataUrl("<svg></svg>"), /no data URL/);
+	// a data URL that decodes to something other than SVG must not be written
+	// out as a .svg file
+	assert.throws(
+		() => decodeSvgDataUrl("data:text/plain,not%20svg"),
+		/did not decode to SVG/,
+	);
+	assert.throws(() => decodeSvgDataUrl("data:image/svg+xml"), /malformed/);
 });
 
 test("captureSize measures the whole diagram, not the viewport", () => {
