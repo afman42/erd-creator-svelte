@@ -100,6 +100,76 @@ test("min-max cardinality labels render on FK edges", async ({ page }) => {
 	expect(texts.sort()).toEqual(["0..1", "1..1"]);
 });
 
+// A self-referencing FK (parent_id → same table) is an ordinary pattern — a
+// tree or adjacency list — and it parses, emits and round-trips. The UI cannot
+// create one (the FK dropdown excludes the column's own table), so it is
+// reachable only from a hand-written or externally generated .sql file. That is
+// exactly the case the earlier cardinality work missed: the loop was routed
+// through the card body, drawing the curve and both labels INSIDE the table.
+test("self-referencing FK loops outside its card with labels clear", async ({
+	page,
+	request,
+}) => {
+	// write the schema through the API, the way an existing file would arrive
+	const put = await request.put("/api/files/self.sql", {
+		data: {
+			dialect: "mysql",
+			tables: [
+				{
+					id: "t1",
+					name: "categories",
+					columns: [
+						{ name: "id", type: "INT", pk: true, nn: true, ai: true },
+						{
+							name: "parent_id",
+							type: "INT",
+							ref: { tableId: "t1", action: "CASCADE" },
+						},
+					],
+				},
+			],
+		},
+	});
+	expect(put.ok()).toBeTruthy();
+
+	await page.goto("/");
+	await page.getByLabel("Open schema file").selectOption("self.sql");
+	await expect(page.locator(".tname").first()).toHaveValue("categories");
+
+	const labels = page.locator("svg text.card");
+	await expect(labels).toHaveCount(2);
+
+	// the invariant, measured in the real DOM: no label sits inside the card
+	const bad = await page.evaluate(() => {
+		const cards = [...document.querySelectorAll("section.table")].map((e) => {
+			const r = e.getBoundingClientRect();
+			return { l: r.left, r: r.right, t: r.top, b: r.bottom };
+		});
+		const out = [];
+		for (const t of document.querySelectorAll("svg text.card")) {
+			const b = t.getBBox();
+			for (const c of cards) {
+				if (
+					b.x < c.r &&
+					b.x + b.width > c.l &&
+					b.y < c.b &&
+					b.y + b.height > c.t
+				)
+					out.push(
+						`${t.textContent} at (${Math.round(b.x)},${Math.round(b.y)})`,
+					);
+			}
+		}
+		return out;
+	});
+	expect(bad).toEqual([]);
+
+	// and the notation is right for a tree: the FK column is not unique (many
+	// children) and nullable (a root has no parent)
+	const texts = await labels.allTextContents();
+	expect(texts.sort()).toEqual(["0..1", "0..N"]);
+});
+
 test("FK type mismatch surfaces server lint in header", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "+ Table" }).click();

@@ -114,33 +114,46 @@ export function edgePaths(schema) {
 			// and placing the child's label by a fixed fraction from the start
 			// therefore put it at the parent's end, inverting the notation.
 			let childAtStart;
+			// Interval overlap, not x equality. Testing `x1 === x2` caught only
+			// the exactly-stacked case and missed cards that overlap *partially*
+			// — where the side-to-side routing sent the curve straight through
+			// both card bodies, putting the labels inside a card.
+			const overlapsX = t.x < p.x + BOX_W && p.x < t.x + BOX_W;
 			if (t.id === p.id) {
-				x1 = t.x;
-				x2 = t.x + 60;
+				// Self-reference (e.g. parent_id → same table): a loop out of
+				// the right border and back into it. Routing it through the
+				// card body, as the old `t.x` → `t.x + 60` did, drew the curve
+				// and both labels inside the table.
+				x1 = t.x + BOX_W;
+				x2 = t.x + BOX_W;
+				childAtStart = true;
+			} else if (overlapsX) {
+				// No facing border exists when the x ranges overlap, so both
+				// ends leave from the right of the rightmost card and the curve
+				// bows clear of both. This is the general form of the stacked
+				// case, which only happened to work because the two borders
+				// coincided.
+				x1 = Math.max(t.x, p.x) + BOX_W;
+				x2 = x1;
 				childAtStart = true;
 			} else if (t.x > p.x) {
 				x1 = p.x + BOX_W; // parent's right border
 				x2 = t.x; // child's left border
 				childAtStart = false;
-			} else if (t.x + BOX_W < p.x) {
+			} else {
 				x1 = t.x + BOX_W; // child's right border
 				x2 = p.x; // parent's left border
-				childAtStart = true;
-			} else {
-				x1 = t.x + BOX_W;
-				x2 = p.x + BOX_W;
 				childAtStart = true;
 			}
 			const mid = (x1 + x2) / 2;
 			const { child, parent } = cardinality(t, c);
-			// When the two cards overlap in x — which is every card in the
-			// default stacked layout — x1 and x2 coincide, so the curve would
-			// be a vertical line lying exactly on the card border: invisible,
-			// with its labels floating in space. Bowing the control points out
-			// to one side makes the edge visible and gives the labels a line to
-			// sit on.
-			const overlaps = x1 === x2;
-			const bx = overlaps ? x1 + EDGE_BOW : mid;
+			// When both ends leave from the same border — the self loop, and
+			// any x-overlapping pair — the curve would degenerate to a vertical
+			// line lying on that border: invisible, with its labels adrift.
+			// Bowing the control points out makes the edge visible and gives the
+			// labels a line to sit on.
+			const degenerate = x1 === x2;
+			const bx = degenerate ? x1 + EDGE_BOW : mid;
 			const d = `M ${x1} ${ci} C ${bx} ${ci}, ${bx} ${py}, ${x2} ${py}`;
 			// Each label rides the curve at the end nearest its OWN card, so a
 			// reader finds the symbol beside the table it describes.

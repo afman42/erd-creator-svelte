@@ -248,16 +248,32 @@ test("edgePaths: dangling ref dropped", () => {
 	assert.equal(edgePaths({ tables: [t] }).length, 0);
 });
 
-test("edgePaths: self edge uses left edge + 60", () => {
+// A self-referencing FK (parent_id → same table) is a real pattern that parses,
+// emits and round-trips. The loop must leave and re-enter the card from OUTSIDE
+// it: the old routing ran from t.x to t.x + 60, straight through the card body,
+// drawing the curve and both labels inside the table.
+test("edgePaths: self edge loops outside the card, not through it", () => {
 	const s = tab("t1", 50, 20, [{ id: "c1", ref: { tableId: "t1" } }]);
 	const [e] = edgePaths({ tables: [s] });
 	assert.equal(e.self, true);
-	assert.ok(e.d.startsWith(`M 50 `), "x1 is t.x");
-	assert.match(e.d, / C .* 110 /); // x2 = t.x + 60 = 110
-	// ci = y + HDR_H + 0*ROW_H + 13 = 20+28+13 =61
-	assert.match(e.d, /^M 50 61 /);
-	// py = p.y + HDR_H/2 = 20 + 14 = 34, end y is py
-	assert.match(e.d, / 34$/);
+	// both ends sit on the card's RIGHT border, clear of the body
+	assert.ok(
+		e.d.startsWith(`M ${50 + BOX_W} `),
+		`x1 should be the right border: ${e.d}`,
+	);
+	// the curve bows out to the right, away from the card
+	const bowX = Number(/C ([\d.-]+) /.exec(e.d)?.[1]);
+	assert.ok(bowX > 50 + BOX_W, `curve must bow outside the card, got ${bowX}`);
+	// and neither label is inside the card
+	const card = { l: 50, r: 50 + BOX_W, t: 20, b: 20 + boxHeight(1) };
+	for (const [name, p] of [
+		["from", e.from],
+		["to", e.to],
+	]) {
+		const inside =
+			p.x >= card.l && p.x <= card.r && p.y >= card.t && p.y <= card.b;
+		assert.ok(!inside, `${name} label (${p.x},${p.y}) is inside the card`);
+	}
 });
 
 test("edgePaths: normal, direction-flip, self, dangling", () => {
@@ -291,11 +307,28 @@ test("edgePaths: child far left of parent (t.x + BOX_W < p.x → t right edge to
 	assert.ok(e.d.includes(" 400 "), `x2 should be parent.x 400, got ${e.d}`);
 });
 
-test("edgePaths: overlap fallback uses right edges", () => {
+// PARTIAL x overlap, the case the old exact-equality check missed: a and b
+// overlap by 180px but share no border, so the side-to-side routing sent the
+// curve through both card bodies. Both ends now leave from the right of the
+// rightmost card, clear of both.
+test("edgePaths: partial x overlap bows clear of both cards", () => {
 	const a = tab("a", 0, 0, [{ id: "x", ref: { tableId: "b" } }]);
 	const b = tab("b", 100, 0, [{ id: "y" }]);
 	const [e] = edgePaths({ tables: [a, b] });
-	assert.match(e.d, /^M 280 .* C .* 380 /);
+	const rightmost = 100 + BOX_W; // b is the rightmost card
+	assert.ok(
+		e.d.startsWith(`M ${rightmost} `),
+		`both ends should leave the rightmost border: ${e.d}`,
+	);
+	// the curve bows outside it, and the labels are clear of both cards
+	const bowX = Number(/C ([\d.-]+) /.exec(e.d)?.[1]);
+	assert.ok(bowX > rightmost, `curve must bow clear, got ${bowX}`);
+	for (const [name, p] of [
+		["from", e.from],
+		["to", e.to],
+	]) {
+		assert.ok(p.x > rightmost, `${name} label ${p.x} not clear of the cards`);
+	}
 });
 
 test("edgePaths: ci offset increases with column index", () => {
