@@ -14,11 +14,7 @@
 // needs no inline styles (the CSP is style-src 'self', so it could not have
 // them anyway).
 import { baseType, isInt, TYPES } from "./erd.js";
-import {
-	CARDINALITY_STATES,
-	cardinalityState,
-	reachableStates,
-} from "./geometry.js";
+import { CARDINALITY_STATES, cardinalityState } from "./geometry.js";
 import {
 	commitColName,
 	commitComment,
@@ -42,11 +38,12 @@ const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 // The current cardinality state, derived from the flags — never stored.
 const cardState = $derived(cardinalityState(table, column));
 
-// The states this column can actually be put into, derived from its PK shape:
-// a PK is emitted NOT NULL so its parent end is pinned, and a sole PK is unique
-// so its child end is too. The other options are DISABLED rather than hidden,
-// so the constraint is visible instead of the choice silently disappearing.
-const reachable = $derived(reachableStates(table, column));
+// Every state is selectable, including the ones a PK cannot honour. PRIMARY KEY
+// implies NOT NULL and UNIQUE in every dialect, so a PK's own state is always
+// 0..1 / 1..1 — picking any other state CLEARS the PK rather than being
+// disabled. The hint below the select says so, because a native <select> has no
+// way to show "this will also untick PK" on the option itself.
+const pkPinsState = $derived(!!column.pk);
 
 let dlg = $state(null);
 
@@ -148,8 +145,8 @@ function remove() {
 			<span>Cardinality</span>
 			<!-- Derived from the flags, never stored: the .sql file has nowhere
 			     to keep a cardinality, so this select WRITES ux/nn and reads
-			     them back. A sole PK pins the state, so the other options are
-			     disabled rather than silently overridden. -->
+			     them back. All four options are selectable; one a PK cannot
+			     honour clears the PK (see setCardinality). -->
 			<select
 				class="card"
 				data-testid="cardinality"
@@ -157,10 +154,19 @@ function remove() {
 				onchange={(e) => setCardinality(table, column, e.currentTarget.value)}
 			>
 				{#each CARDINALITY_STATES as s (s.id)}
-					<option value={s.id} disabled={!reachable.includes(s.id)}>{s.id}</option>
+					<option value={s.id}>{s.id}</option>
 				{/each}
 			</select>
 		</label>
+
+		{#if pkPinsState}
+			<!-- A PK is emitted NOT NULL and UNIQUE, so it is always 0..1 / 1..1.
+			     Say the PK will be dropped BEFORE the click, since the select
+			     itself cannot. -->
+			<p class="pkhint" data-testid="pk-hint">
+				a primary key is always 0..1 / 1..1 — choosing another state clears PK
+			</p>
+		{/if}
 
 		<label class="fld">
 			<span>ON DELETE</span>
@@ -257,6 +263,13 @@ function remove() {
 		font-size: 11px;
 		color: #9fb0c0;
 		padding: 0 4px;
+	}
+	/* The PK caveat under the cardinality select. Muted and indented to sit
+	   under the control, not the label. */
+	.pkhint {
+		margin: -2px 0 8px 84px;
+		font-size: 11px;
+		color: #c9a227;
 	}
 	.flags label {
 		display: flex;

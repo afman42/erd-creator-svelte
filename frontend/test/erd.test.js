@@ -39,6 +39,7 @@ import {
 	isSolePk,
 	LABEL_FILL,
 	LABEL_HALO,
+	pkConflictsWith,
 	ROW_H,
 	reachableStates,
 	stackStep,
@@ -578,42 +579,57 @@ test("every cardinality state round-trips through applyCardinality", () => {
 });
 
 // A sole PK pins the relationship: unique (one child) and emitted NOT NULL
-// (mandatory parent). Every other state must be REFUSED, not applied and then
-// overridden by the derived value.
-test("a sole PK pins 0..1 / 1..1 and refuses the others", () => {
+// (mandatory parent), so 0..1 / 1..1 is the only state it can honour. Asking for
+// any other state is ALLOWED — it CLEARS the PK rather than being refused, which
+// is what makes all four options selectable — and the flags then express the
+// state, so the model still agrees with its own DDL.
+test("a sole PK accepts every state, clearing the PK when it must", () => {
 	const c = { pk: true, nn: true, ux: false };
 	const t = { columns: [c] };
 	assert.equal(cardinalityState(t, c), "0..1 / 1..1");
 	assert.equal(isSolePk(t, c), true);
+	// its own state leaves the PK alone
+	assert.equal(applyCardinality(t, c, "0..1 / 1..1"), true);
+	assert.equal(c.pk, true);
+	// every other state drops the PK, so the flags can express it
 	for (const state of CARDINALITY_STATES) {
-		const wanted = state.id === "0..1 / 1..1";
+		if (state.id === "0..1 / 1..1") continue;
+		const fresh = { pk: true, nn: true, ux: false };
+		const tt = { columns: [fresh] };
 		assert.equal(
-			applyCardinality(t, c, state.id),
-			wanted,
-			`sole PK should ${wanted ? "accept" : "refuse"} ${state.id}`,
+			applyCardinality(tt, fresh, state.id),
+			true,
+			`sole PK should accept ${state.id} by clearing itself`,
+		);
+		assert.equal(fresh.pk, false, `${state.id} should have cleared the PK`);
+		assert.equal(
+			cardinalityState(tt, fresh),
+			state.id,
+			`after clearing the PK, ${state.id} should read back as itself`,
 		);
 	}
-	// and it is still in the pinned state afterwards, whatever was requested
-	assert.equal(cardinalityState(t, c), "0..1 / 1..1");
 });
 
 // A composite-PK member is NOT unique on its own, so its child end is 0..N and
 // stays steerable — that is what makes a junction table expressible. Its PARENT
 // end is pinned to 1..1 though, because every emitter writes NOT NULL for any
-// PK column (`c.Nn || c.Pk`), not just a sole one. So it is not fully pinned,
-// but it is not free either.
-test("a composite-PK member keeps a free child end but a pinned parent end", () => {
+// PK column (`c.Nn || c.Pk`), not just a sole one. So the child end is free
+// WITHOUT touching the PK, while relaxing the parent end needs the PK gone.
+test("a composite-PK member steers its child end without dropping the PK", () => {
 	const a = { pk: true, nn: true, ux: false };
 	const b = { pk: true, nn: true, ux: false };
 	const t = { columns: [a, b] };
 	assert.equal(isSolePk(t, a), false);
 	assert.equal(cardinalityState(t, a), "0..N / 1..1");
-	// the child end can still be made unique …
+	// the child end can be made unique, and the PK survives: PK(a, b) does not
+	// make `a` unique on its own, so ux is a separate, compatible fact
 	assert.equal(applyCardinality(t, a, "0..1 / 1..1"), true);
+	assert.equal(a.pk, true);
 	assert.equal(cardinalityState(t, a), "0..1 / 1..1");
-	// … but the parent end cannot be relaxed, because the DDL is NOT NULL
-	assert.equal(applyCardinality(t, a, "0..1 / 0..1"), false);
-	assert.equal(cardinalityState(t, a), "0..1 / 1..1");
+	// relaxing the parent end cannot coexist with the PK, so it clears it
+	assert.equal(applyCardinality(t, a, "0..1 / 0..1"), true);
+	assert.equal(a.pk, false);
+	assert.equal(cardinalityState(t, a), "0..1 / 0..1");
 });
 
 test("applyCardinality rejects an unknown state", () => {
@@ -622,10 +638,11 @@ test("applyCardinality rejects an unknown state", () => {
 	assert.equal(applyCardinality({ columns: [c] }, c, ""), false);
 });
 
-// reachableStates is what the dialog disables options from, so it must agree
-// with what applyCardinality actually accepts — the two are the same rule seen
-// from two sides, and this pins them together.
-test("reachableStates matches what applyCardinality accepts", () => {
+// pkConflictsWith is what tells the store to warn "primary key cleared", and it
+// is the exact negation of reachableStates — the same rule the dialog used to
+// disable options from, seen from the other side. Pinning them together keeps
+// the warning honest: it must fire precisely when the PK is dropped.
+test("pkConflictsWith negates reachableStates and predicts the PK clear", () => {
 	const shapes = [
 		{ label: "plain", cols: [{ pk: false, nn: false, ux: false }], i: 0 },
 		{ label: "sole pk", cols: [{ pk: true, nn: true, ux: false }], i: 0 },
@@ -647,11 +664,19 @@ test("reachableStates matches what applyCardinality accepts", () => {
 			// composite-PK member into a sole PK, changing the rule under test.
 			const fresh = cols.map((c) => ({ ...c }));
 			const tt = { columns: fresh };
-			const accepted = applyCardinality(tt, fresh[i], s.id);
+			const conflicts = pkConflictsWith(tt, fresh[i], s.id);
 			assert.equal(
-				accepted,
-				reachable.includes(s.id),
-				`${label}: applyCardinality(${s.id}) = ${accepted} but reachableStates says ${reachable.includes(s.id)}`,
+				conflicts,
+				!reachable.includes(s.id),
+				`${label}: pkConflictsWith(${s.id}) disagrees with reachableStates`,
+			);
+			const hadPk = fresh[i].pk;
+			applyCardinality(tt, fresh[i], s.id);
+			// the PK is dropped exactly when a conflict was reported
+			assert.equal(
+				fresh[i].pk,
+				hadPk && !conflicts,
+				`${label}: ${s.id} changed the PK but pkConflictsWith said ${conflicts}`,
 			);
 		}
 	}

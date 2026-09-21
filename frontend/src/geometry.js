@@ -158,8 +158,7 @@ export const CARDINALITY_STATES = [
 	{ id: "0..1 / 1..1", child: "0..1", parent: "1..1" },
 ];
 
-// reachableStates lists the states a column can actually be put into, which is
-// what the dialog disables options from.
+// reachableStates lists the states a column's PK currently allows.
 //
 // The PK constraint is the whole reason this is a function rather than a
 // constant. Every emitter writes NOT NULL for a primary key regardless of the
@@ -170,12 +169,29 @@ export const CARDINALITY_STATES = [
 // So: a sole PK is fully pinned; a composite-PK member still has a free child
 // end (toggled by ux, which is what makes a junction table expressible); an
 // ordinary column has all four.
+//
+// This used to be the DISABLE list in the dialog. It is now the rule behind
+// pkConflictsWith() — the dialog offers every option and clears the PK when a
+// pick needs it gone, so this answers "what does the PK allow", not "what may
+// the user click".
 export function reachableStates(t, c) {
 	const parent = c.pk ? "1..1" : null; // PK → emitted NOT NULL
 	const child = isSolePk(t, c) ? "0..1" : null; // sole PK → unique
 	return CARDINALITY_STATES.filter(
 		(s) => (!parent || s.parent === parent) && (!child || s.child === child),
 	).map((s) => s.id);
+}
+
+// pkConflictsWith reports whether asking for `stateId` contradicts the column's
+// primary key, i.e. whether the PK has to be cleared for the pick to stick.
+//
+// The rule is unchanged and still comes from the DDL — it is exactly the
+// negation of reachableStates, so the two cannot drift. It reads the SOLE-PK
+// distinction too: a composite-PK member can be asked for a 0..1 child end
+// without touching the PK, because PRIMARY KEY (a, b) does not make `a` unique
+// on its own.
+export function pkConflictsWith(t, c, stateId) {
+	return !reachableStates(t, c).includes(stateId);
 }
 
 // cardinalityState returns the id of the state a column is currently in.
@@ -188,28 +204,25 @@ export function cardinalityState(t, c) {
 }
 
 // applyCardinality writes the flags needed to reach a state, and reports
-// whether it could.
+// whether the state was one it knows.
 //
 // This is the exact inverse of cardinality(): it stores nothing new, it sets the
 // ux/nn flags that cardinality() reads. That is the whole design — a stored
 // cardinality field would be a second source of truth that could contradict the
 // DDL, and the .sql file has nowhere to put it.
 //
-// A state the column cannot be in is REFUSED rather than applied and then
-// silently overridden by the derived value; returning false lets the dialog
-// disable those options instead of lying about them.
+// A pick the column's PK cannot honour now CLEARS the PK instead of being
+// refused. PRIMARY KEY implies NOT NULL and UNIQUE in every dialect, so a PK is
+// always 0..1 / 1..1; the old code disabled the other three options, which made
+// the choice visible but unreachable. Clearing the PK keeps the model and the
+// emitted DDL in agreement — the one thing that must not break — while letting
+// every option be selected. setCardinality() flashes when this happens.
 export function applyCardinality(t, c, stateId) {
 	const state = CARDINALITY_STATES.find((s) => s.id === stateId);
 	if (!state) return false;
-	if (!reachableStates(t, c).includes(stateId)) return false;
+	if (pkConflictsWith(t, c, stateId)) c.pk = false;
 	c.ux = state.child === "0..1";
 	c.nn = state.parent === "1..1";
-	// A PK column is emitted NOT NULL whatever nn says, so leaving nn false on
-	// one would keep the model disagreeing with its own output — the bug this
-	// function exists to close. Normalising here means a `pk=true, nn=false`
-	// column parsed from a hand-written file becomes self-consistent the moment
-	// its cardinality is touched.
-	if (c.pk) c.nn = true;
 	return true;
 }
 

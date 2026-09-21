@@ -19,7 +19,7 @@ import {
 	newTable,
 	uniqName,
 } from "./erd.js";
-import { applyCardinality, stackStep } from "./geometry.js";
+import { applyCardinality, pkConflictsWith, stackStep } from "./geometry.js";
 import {
 	clearHistory,
 	snap as snapHistory,
@@ -262,21 +262,23 @@ export function togglePk(c) {
 	flashLint();
 }
 
-// setCardinality applies one of the four reachable cardinality states by writing
-// the ux/nn flags that cardinality() reads. Nothing beyond those flags is
-// stored, so the diagram cannot disagree with the emitted DDL, and the .sql file
-// — which has nowhere to put a cardinality — needs no change.
+// setCardinality applies one of the four cardinality states by writing the
+// ux/nn flags that cardinality() reads. Nothing beyond those flags is stored, so
+// the diagram cannot disagree with the emitted DDL, and the .sql file — which
+// has nowhere to put a cardinality — needs no change.
 //
-// It refuses a state the column cannot be in (a sole PK pins 0..1 / 1..1) and
-// says so, rather than applying the request and letting the derived value
-// silently override it.
+// Every state is accepted. A pick the column's PK cannot honour clears the PK
+// (applyCardinality does that) and says so, because dropping a primary key is a
+// real change to the emitted DDL and must not happen silently. The old version
+// refused those picks instead, which left three of the four options permanently
+// unreachable on any PK column.
 export function setCardinality(t, c, stateId) {
 	snap();
-	if (!applyCardinality(t, c, stateId)) {
-		flash("a primary key column is always 0..1 / 1..1", "err");
-		return;
-	}
-	flashLint();
+	const clearsPk = pkConflictsWith(t, c, stateId);
+	if (!applyCardinality(t, c, stateId)) return;
+	if (clearsPk)
+		flash("primary key cleared — a PK is always 0..1 / 1..1", "warn");
+	else flashLint();
 }
 
 // toggleFlag flips one of a column's boolean flags (nn/ux/ai/ix). Lives here

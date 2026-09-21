@@ -108,17 +108,17 @@ test("cardinality dropdown drives the flags and the diagram labels", async ({
 }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "+ Table" }).click();
-	// the new table's id column is a sole PK, so clear PK first: that is the one
-	// shape where every option is reachable
 	const dlg = await openCol(page, 1, 0);
 	await dlg.locator("select.fk").selectOption({ index: 1 });
-	await dlg.locator('.flags label[title="primary key"] input').uncheck();
 
 	const card = dlg.locator("[data-testid=cardinality]");
 	await expect(card).toBeVisible();
 
-	// 0..N / 0..1 → child becomes many, parent stays optional.
-	// The expected order is SORTED: "0..1" sorts before "0..N" because "1" < "N".
+	// 0..N / 0..1 → child becomes many, parent optional. The column starts as a
+	// sole PK, so this pick also CLEARS the PK: a PK is emitted NOT NULL and
+	// UNIQUE, so it can only be 0..1 / 1..1 and must go for this state to stick.
+	// The expected label order is SORTED: "0..1" sorts before "0..N" because
+	// "1" < "N".
 	await card.selectOption("0..N / 0..1");
 	await closeCol(dlg);
 	await expect
@@ -127,8 +127,13 @@ test("cardinality dropdown drives the flags and the diagram labels", async ({
 		)
 		.toEqual(["0..1", "0..N"]);
 
-	// 0..1 / 1..1 → both ends change
+	// the PK really went with it
 	const dlg2 = await openCol(page, 1, 0);
+	await expect(
+		dlg2.locator('.flags label[title="primary key"] input'),
+	).not.toBeChecked();
+
+	// 0..1 / 1..1 → both ends change
 	await expect(dlg2.locator("[data-testid=cardinality]")).toHaveValue(
 		"0..N / 0..1",
 	);
@@ -145,10 +150,10 @@ test("cardinality dropdown drives the flags and the diagram labels", async ({
 	await expect(page.locator("aside pre")).toContainText("NOT NULL UNIQUE");
 });
 
-// A PK is emitted NOT NULL in every dialect, so its parent end is pinned to
-// 1..1 whatever the nn flag says. The dropdown must show that as fixed rather
-// than offer a choice it would have to override.
-test("cardinality options are disabled when a PK pins the state", async ({
+// Every state is selectable, including the ones a PK cannot honour. The PK is
+// cleared when a pick needs it gone, with a visible warning, so the choice is
+// never silently overridden and the diagram keeps matching the emitted DDL.
+test("every cardinality option is selectable; a conflicting pick clears PK", async ({
 	page,
 }) => {
 	await page.goto("/");
@@ -156,15 +161,32 @@ test("cardinality options are disabled when a PK pins the state", async ({
 	const dlg = await openCol(page, 1, 0);
 	await dlg.locator("select.fk").selectOption({ index: 1 });
 
-	// the column is a sole PK → only 0..1 / 1..1 is reachable
+	// the column is a sole PK → it reads 0..1 / 1..1, nothing is disabled, and
+	// the hint warns the PK will be dropped if another state is chosen
 	const opts = dlg.locator("[data-testid=cardinality] option");
 	await expect(opts).toHaveCount(4);
-	const enabled = await opts.evaluateAll((els) =>
-		els.filter((e) => !e.disabled).map((e) => e.value),
+	const disabled = await opts.evaluateAll((els) =>
+		els.filter((e) => e.disabled).map((e) => e.value),
 	);
-	expect(enabled).toEqual(["0..1 / 1..1"]);
+	expect(disabled).toEqual([]);
 	await expect(dlg.locator("[data-testid=cardinality]")).toHaveValue(
 		"0..1 / 1..1",
+	);
+	await expect(dlg.locator("[data-testid=pk-hint]")).toBeVisible();
+
+	// pick a state the PK cannot honour → the PK is cleared and the hint is gone
+	await dlg.locator("[data-testid=cardinality]").selectOption("0..N / 0..1");
+	await expect(
+		dlg.locator('.flags label[title="primary key"] input'),
+	).not.toBeChecked();
+	await expect(dlg.locator("[data-testid=cardinality]")).toHaveValue(
+		"0..N / 0..1",
+	);
+	await expect(dlg.locator("[data-testid=pk-hint]")).toHaveCount(0);
+	// and the user was told, rather than the PK vanishing silently. The banner
+	// is a WARNING, not an error: the pick succeeded.
+	await expect(page.locator("header .warn")).toContainText(
+		"primary key cleared",
 	);
 });
 
