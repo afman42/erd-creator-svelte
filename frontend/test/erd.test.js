@@ -510,6 +510,81 @@ const MODAL_SRC = readFileSync(
 	"utf8",
 );
 
+// ---- relationship edge visibility ----
+//
+// The crow's-foot arrowhead EXISTED in the exported SVG but could not be SEEN:
+// it was a 7x7 marker whose path carried no stroke-width — a marker's contents
+// do not inherit the referencing path's — so it drew at 1px, in the same #888
+// grey as its own line. Measured in the export: 22 differing pixels in a 6x7
+// box. These read the real sources, because the failure is a rendering property
+// that no coordinate assertion can catch.
+const APP_SRC = readFileSync(
+	new URL("../src/App.svelte", import.meta.url),
+	"utf8",
+);
+const TOKENS_SRC = readFileSync(
+	new URL("../src/tokens.css", import.meta.url),
+	"utf8",
+);
+const crowMarker = () =>
+	APP_SRC.slice(APP_SRC.indexOf('id="crow"'), APP_SRC.indexOf("</marker>"));
+
+test("crow's-foot marker is large enough and stroked to be visible", () => {
+	const marker = crowMarker();
+	assert.ok(marker, "crow marker not found in App.svelte");
+	const w = Number(/markerWidth="(\d+)"/.exec(marker)?.[1]);
+	const h = Number(/markerHeight="(\d+)"/.exec(marker)?.[1]);
+	assert.ok(w >= 10 && h >= 10, `marker is ${w}x${h}, too small to see at 1x`);
+	const sw = Number(/stroke-width="([\d.]+)"/.exec(marker)?.[1]);
+	assert.ok(sw >= 1.5, `marker stroke-width ${sw} is a hairline`);
+});
+
+// context-stroke is the documented way for a marker to inherit its path's
+// paint, but it does NOT resolve when that paint comes from a CSS class — the
+// marker keeps the literal string and paints NOTHING. Verified in the browser:
+// it turned a faint arrow into no arrow, worse than the bug it was fixing.
+test("crow's-foot marker does not rely on context-stroke", () => {
+	assert.ok(
+		!crowMarker().includes("context-stroke"),
+		"marker uses context-stroke, which does not resolve against a class-styled path",
+	);
+});
+
+// The marker's colour is written twice — a presentation attribute on the marker
+// and a CSS rule on the line — because it cannot be shared. This is the check
+// the comment in App.svelte promises: fail if the two ever disagree.
+test("marker stroke matches the edge line colour token", () => {
+	const markerStroke = /stroke="(#[0-9a-fA-F]{3,8})"/.exec(crowMarker())?.[1];
+	assert.ok(markerStroke, "marker has no concrete stroke colour");
+	const token = /--color-edge:\s*(#[0-9a-fA-F]{3,8})/.exec(TOKENS_SRC)?.[1];
+	assert.ok(token, "--color-edge token not found in tokens.css");
+	assert.equal(
+		markerStroke.toLowerCase(),
+		token.toLowerCase(),
+		`marker stroke ${markerStroke} != --color-edge ${token}`,
+	);
+	// and the line actually consumes the token
+	assert.match(APP_SRC, /\.edge\s*\{[^}]*stroke:\s*var\(--color-edge\)/s);
+});
+
+// The edge must stay brighter than the old #888, and distinct from both the
+// self-edge accent and the label colour, or the arrowhead merges into its line.
+test("edge colour is brighter than the old grey and distinct from its neighbours", () => {
+	const edge = /--color-edge:\s*(#[0-9a-fA-F]{3,8})/.exec(TOKENS_SRC)?.[1];
+	const accent = /--color-accent:\s*(#[0-9a-fA-F]{3,8})/.exec(TOKENS_SRC)?.[1];
+	const muted = /--color-text-muted:\s*(#[0-9a-fA-F]{3,8})/.exec(
+		TOKENS_SRC,
+	)?.[1];
+	assert.ok(edge && accent && muted);
+	assert.notEqual(edge, "#888888", "edge colour is the old invisible grey");
+	assert.notEqual(
+		edge,
+		accent,
+		"edge colour collides with the self-edge accent",
+	);
+	assert.notEqual(edge, muted, "edge colour collides with the label colour");
+});
+
 test("ColumnEditModal holds every control the row gave up", () => {
 	// name, type and comment inputs, plus the FK and action selects
 	assert.match(MODAL_SRC, /class="cname"/, "name input missing from modal");

@@ -107,16 +107,41 @@ function onKey(ev) {
 	<div class="canvas" class:dragging={!!drag}>
 		<svg>
 			<defs>
+				<!-- The crow's foot ("many") marker.
+				     Sized up from 7x7 with an explicit stroke-width. At 7x7 the
+				     arrowhead was a hairline chevron a few pixels across: it
+				     rendered, but could not be SEEN in an exported PNG (measured
+				     at ~6x7px, grey on grey). stroke-width is set here because a
+				     marker's contents do NOT inherit the referencing path's
+				     stroke-width, so the old marker drew at 1px while its line
+				     was 1.5px.
+
+				     The stroke is a concrete colour, not `context-stroke`. That
+				     value is the documented way to inherit the referencing
+				     path's paint, but it does NOT resolve when the path's stroke
+				     comes from a CSS class rather than a presentation attribute
+				     — verified: the exported marker kept the literal string
+				     `context-stroke` and painted NOTHING, turning a faint arrow
+				     into no arrow at all. The line colour is therefore written
+				     twice (here and in .edge); the marker test below fails if the
+				     two ever disagree. -->
 				<marker
 					id="crow"
 					viewBox="0 0 10 10"
 					refX="9"
 					refY="5"
-					markerWidth="7"
-					markerHeight="7"
+					markerWidth="11"
+					markerHeight="11"
 					orient="auto-start-reverse"
 				>
-					<path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="#888" />
+					<path
+						d="M 0 0 L 10 5 L 0 10"
+						fill="none"
+						stroke="#7fa3c0"
+						stroke-width="1.8"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
 				</marker>
 			</defs>
 			{#each edges as e}
@@ -179,8 +204,10 @@ function onKey(ev) {
 	}
 	.edge {
 		fill: none;
-		stroke: #888;
-		stroke-width: 1.5;
+		/* --color-edge, not the old #888: that grey was shared with the
+		   arrowhead and made the relationship read as faint in an export. */
+		stroke: var(--color-edge);
+		stroke-width: 2;
 	}
 	/* Min-max cardinality labels, centred on their curve point so the symbol
 	   straddles the line it describes. Styled via a class, not an inline style:
