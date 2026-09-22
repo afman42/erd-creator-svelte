@@ -96,7 +96,7 @@ const LABELS = {
 </header>
 
 <style>
-	header {
+		header {
 		display: flex;
 		gap: 8px;
 		align-items: center;
@@ -106,7 +106,17 @@ const LABELS = {
 		position: sticky;
 		top: 0;
 		z-index: 5;
-		flex-wrap: wrap;
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: thin;
+		-webkit-overflow-scrolling: touch;
+	}
+	header::-webkit-scrollbar {
+		height: 4px;
+	}
+	header::-webkit-scrollbar-thumb {
+		background: #3b4654;
 	}
 	header button,
 	header .btn {
@@ -117,6 +127,8 @@ const LABELS = {
 		padding: 6px 12px;
 		cursor: pointer;
 		font: inherit;
+		flex: 0 0 auto;
+		white-space: nowrap;
 	}
 	header button:disabled {
 		background: #3b4654;
@@ -130,6 +142,17 @@ const LABELS = {
 		border-radius: 5px;
 		padding: 5px 6px;
 		font: inherit;
+		flex: 0 0 auto;
+		max-width: 160px;
+	}
+	.err,
+	.ok,
+	.warn {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 200px;
+		flex: 0 1 auto;
 	}
 	.err {
 		color: #f87171;
