@@ -141,6 +141,7 @@ const parentName = (c) =>
 	}
 	.hdr {
 		display: flex;
+		align-items: center;
 		/* explicit height pins HDR_H in geometry.js */
 		height: 28px;
 		box-sizing: border-box;
@@ -160,12 +161,19 @@ const parentName = (c) =>
 		outline: none;
 	}
 	.hdr button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex: 0 0 28px;
+		width: 28px;
+		height: 28px;
+		padding: 0;
 		background: transparent;
 		color: #c0cedd;
 		border: 0;
 		cursor: pointer;
-		font-size: 13px;
-		flex: 0 0 auto;
+		font-size: 14px;
+		line-height: 1;
 	}
 	.hdr button:hover {
 		color: #f87171;
