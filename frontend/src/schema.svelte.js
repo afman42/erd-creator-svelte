@@ -12,6 +12,7 @@ import {
 	isInt,
 	layout,
 	newColumn,
+	newSchema,
 	newTable,
 	uniqName,
 } from "./erd.js";
