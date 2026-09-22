@@ -260,7 +260,7 @@ func discardTemp(f *os.File) {
 // os.CreateTemp already uses a random name and O_EXCL, so it cannot follow a
 // planted symlink and two concurrent saves cannot collide.
 func createTemp(dir string) (*os.File, error) {
-	root, err := filepath.EvalSymlinks(dir)
+	root, err := resolveStoreRoot(dir)
 	if err != nil {
 		return nil, err
 	}

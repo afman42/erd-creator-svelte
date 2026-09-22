@@ -23,7 +23,8 @@ export function touch(
 		skipNextTouch = false;
 		return;
 	}
-	lintTimer ??= setTimeout(() => {
+	clearTimeout(lintTimer);
+	lintTimer = setTimeout(() => {
 		lintTimer = null;
 		refreshLint();
 	}, 300);

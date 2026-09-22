@@ -148,6 +148,11 @@ export function cardinality(t, c) {
 	};
 }
 
+// isSolePk: a sole primary key is unique, pinning the CHILD end to 0..1.
+export function isSolePk(t, c) {
+	return !!c.pk && t.columns.filter((x) => x.pk).length === 1;
+}
+
 // isUniqueRef reports whether an FK column references at most one row.
 //
 // A UQ column is unique. A SOLE primary key is too. A COMPOSITE-PK member is
@@ -155,13 +160,7 @@ export function cardinality(t, c) {
 // exactly why it is M:N — reading `pk` alone as unique would label every
 // junction table 0..1 and invert the notation.
 export function isUniqueRef(t, c) {
-	const solePk = c.pk && t.columns.filter((x) => x.pk).length === 1;
-	return !!(c.ux || solePk);
-}
-
-// isSolePk: a sole primary key is unique, pinning the CHILD end to 0..1.
-export function isSolePk(t, c) {
-	return !!c.pk && t.columns.filter((x) => x.pk).length === 1;
+	return !!(c.ux || isSolePk(t, c));
 }
 
 // The four cardinality states a relationship can actually be in.

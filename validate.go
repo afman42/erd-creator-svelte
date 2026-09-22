@@ -111,9 +111,8 @@ func isValidTypeExpr(v string) bool {
 		}
 		return true
 	}
-	typeName := v[1:parenIdx]
-	for i := 0; i < len(typeName); i++ {
-		if !isTypeNameChar(typeName[i]) {
+	for i := 1; i < parenIdx; i++ {
+		if !isTypeNameChar(v[i]) {
 			return false
 		}
 	}
