@@ -1,6 +1,13 @@
 // fileStore.js — working-directory .sql store client.
 // Extracted from schema.svelte.js to shrink God object (~590→~470).
 // All functions take `store` as first param (DI) to avoid circular import of the $state store.
+
+import {
+	clearTimers as clearAutosaveTimers,
+	isDirty,
+	markSkipTouch,
+	setDirty,
+} from "./autosave.js";
 import {
 	adoptIds,
 	DEFAULT_DIALECT,
@@ -10,12 +17,6 @@ import {
 	newTable,
 } from "./erd.js";
 import { clearHistory } from "./history.js";
-import {
-	clearTimers as clearAutosaveTimers,
-	isDirty,
-	markSkipTouch,
-	setDirty,
-} from "./autosave.js";
 
 export async function refreshFiles(store) {
 	try {
@@ -32,12 +33,15 @@ export async function saveCurrent(store, flash, silent = false) {
 		return;
 	}
 	try {
-		const res = await fetch(`/api/files/${encodeURIComponent(store.currentFile)}`, {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(store.schema),
-			keepalive: true,
-		});
+		const res = await fetch(
+			`/api/files/${encodeURIComponent(store.currentFile)}`,
+			{
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(store.schema),
+				keepalive: true,
+			},
+		);
 		if (!res.ok) throw new Error(await res.text());
 		setDirty(false);
 		if (!silent) flash(`saved ${store.currentFile}`);
@@ -102,9 +106,12 @@ export async function deleteFile(store, flash) {
 	if (!store.currentFile) return;
 	if (!confirm(`Delete ${store.currentFile}?`)) return;
 	clearAutosaveTimers();
-	const res = await fetch(`/api/files/${encodeURIComponent(store.currentFile)}`, {
-		method: "DELETE",
-	});
+	const res = await fetch(
+		`/api/files/${encodeURIComponent(store.currentFile)}`,
+		{
+			method: "DELETE",
+		},
+	);
 	if (!res.ok) flash(`delete failed: ${await res.text()}`, "err");
 	else flash(`deleted ${store.currentFile}`);
 	store.currentFile = "";

@@ -190,7 +190,8 @@ export function uniqName(base, taken) {
 	const prefix = m ? m[1] : base;
 	let n = m ? Number(m[2]) : 1;
 	let name = base;
-	const has = taken instanceof Set ? (v) => taken.has(v) : (v) => taken.includes(v);
+	const has =
+		taken instanceof Set ? (v) => taken.has(v) : (v) => taken.includes(v);
 	while (has(name)) name = prefix + ++n;
 	return name;
 }

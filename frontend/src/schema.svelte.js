@@ -73,11 +73,8 @@ export async function refreshSql() {
 // $effect fires once on the swap — that is a load, not a user edit, so it must
 // not mark the file dirty or schedule a needless save.
 import {
-	clearTimers as clearTimersImpl,
 	flushCurrent as flushAutosave,
 	installFlush,
-	markSkipTouch,
-	setDirty,
 	touch as touchAutosave,
 } from "./autosave.js";
 
@@ -97,9 +94,6 @@ export function undo() {
 }
 
 // ---- timers / flush ----
-function clearTimers() {
-	clearTimersImpl();
-}
 async function flushCurrent() {
 	await flushAutosave({ store, saveCurrent });
 }
