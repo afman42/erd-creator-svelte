@@ -67,6 +67,12 @@ git history, not here.
       it. Trigger: a new dialect that legitimately emits a mid-line semicolon,
       or a bypass found in review. Fix is to emit through a structured builder
       that cannot concatenate raw input, making the check unnecessary.
+      (Found in review, fixed: the `''` escape skip used `for j := range`, so
+      its inner `j++` never advanced the scan — the second quote of the pair
+      wrongly closed the string and a `;` after an escaped quote
+      (`COMMENT 'it''s; mine'`) was rejected as an embedded separator. The
+      loop is now a classic counter loop, pinned by two new cases in
+      `TestValidateOutput`.)
 
 - [ ] **The accepted type grammar is a narrow allowlist.** `typeExpr` permits a
       name plus one parenthesised argument list, optionally followed by one
