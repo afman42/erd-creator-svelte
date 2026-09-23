@@ -431,7 +431,12 @@ func validateOutput(sql string) error {
 			continue // a comment may contain anything
 		}
 		var q byte = 0 // byte(0) = outside quotes; one of ' " ` while inside
-		for j := range trimmed {
+		// A classic counter loop, not `for j := range`: the escape branch's
+		// j++ must skip BOTH quotes of a '' pair. With range, the increment is
+		// discarded on the next iteration, so the second quote wrongly closed
+		// the string and a ";" after an escaped quote was flagged as a
+		// separator (a comment like 'it''s; mine' failed validation).
+		for j := 0; j < len(trimmed); j++ {
 			c := trimmed[j]
 			if q != 0 {
 				if c == q {
