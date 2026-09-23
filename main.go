@@ -143,6 +143,8 @@ func handleSchemaAPI(w http.ResponseWriter, r *http.Request) {
 	render(w, s)
 }
 
+const MaxBody = 1 << 20 // 1 MiB request cap, shared by decodeBody and saveFile
+
 // decodeBody enforces POST-only + 1 MiB cap and returns the raw body.
 // Shared by every JSON-accepting endpoint.
 func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
@@ -150,7 +152,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return nil, false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
@@ -163,6 +165,10 @@ func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 // than dropped: by the time Encode runs the status line is already committed, so
 // a failure cannot be turned into an error response — it would reach the client
 // as a truncated body under a 200. The log line is the only record of that.
+//
+// The parameter stays `any` because json.NewEncoder.Encode takes `any`: callers
+// legitimately pass []string, []fileInfo and *Schema, and a narrower type here
+// would gain no checking the encoder itself does not perform.
 func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("write json: %v", err)
@@ -180,18 +186,28 @@ func writeText(w http.ResponseWriter, body string) {
 
 // schemaEnvelope is the accepted POST body shape for every schema endpoint:
 // either {"schema":{"tables":[...]}} or the bare {"tables":[...]}.
+//
+// Dialect and SqliteTypes may ride alongside the bare tables — that is the
+// wire shape PUT (saveFile) sends, which stores the full Schema JSON. POST
+// endpoints ignore them (lint/inserts) or take the dialect as their own field
+// (export), but decodeSchemaJSON must preserve them or a bare {"tables",...,
+// "dialect":"sqlite"} body would come back as a mysql schema.
 type schemaEnvelope struct {
-	Schema Schema  `json:"schema"`
-	Tables []Table `json:"tables"`
+	Schema      Schema  `json:"schema"`
+	Tables      []Table `json:"tables"`
+	Dialect     string  `json:"dialect"`
+	SqliteTypes string  `json:"sqliteTypes"`
 }
 
 // schema returns the payload from whichever envelope field was populated.
-// Both are accepted so callers may post a bare table list.
+// Both are accepted so callers may post a bare table list. The bare form is
+// synthesized, never written into the envelope: mutating e.Schema in place
+// meant decodeSchemaJSON and handleExport saw call-order-dependent state.
 func (e *schemaEnvelope) schema() *Schema {
-	if len(e.Schema.Tables) == 0 {
-		e.Schema.Tables = e.Tables
+	if len(e.Schema.Tables) != 0 {
+		return &e.Schema
 	}
-	return &e.Schema
+	return &Schema{Tables: e.Tables, Dialect: e.Dialect, SqliteTypes: e.SqliteTypes}
 }
 
 // decodeSchemaJSON parses an envelope body. Shared by decodeSchema and

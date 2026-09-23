@@ -66,16 +66,21 @@ test("TYPES and DEFAULT_TYPE expose expected values", () => {
 // This reads the Go source so the two lists cannot drift again.
 test("frontend SAVEABLE_DIALECTS agrees with the Go saveable() switch", () => {
 	const go = readFileSync(new URL("../../grammar.go", import.meta.url), "utf8");
-	const body = go.slice(
-		go.indexOf("func (s *Schema) saveable() bool"),
-		go.indexOf("// Lint:"),
+	// slice between the function signature and the next top-level marker; if
+	// either renames, that is a test failure — not a silent empty matchAll
+	const saveableIdx = go.indexOf("func (s *Schema) saveable() bool");
+	const lintIdx = go.indexOf("// Lint reports");
+	assert.ok(
+		saveableIdx >= 0,
+		"signature renamed — 'saveable() bool' not found in grammar.go",
 	);
+	assert.ok(lintIdx >= 0, "'// Lint reports' marker not found in grammar.go");
+	const body = go.slice(saveableIdx, lintIdx);
 	// the dialects named in the Go switch's case clause
 	const goSaveable = [
 		...body.matchAll(/Dialect(Mysql|MariaDB|Postgres|Sqlite)/g),
 	].map((m) => m[1].toLowerCase());
-	const normalize = (d) => (d === "mariadb" ? "mariadb" : d);
-	const goSet = [...new Set(goSaveable.map(normalize))].sort();
+	const goSet = [...new Set(goSaveable)].sort();
 
 	assert.deepEqual(
 		[...SAVEABLE_DIALECTS].sort(),
@@ -375,17 +380,15 @@ let STYLE = CARD_SRC.slice(
 	CARD_SRC.lastIndexOf("</style>"),
 ).replace(/\/\*[\s\S]*?\*\//g, "");
 // ColumnRow now owns .row/.cmt — merge its style so geometry checks still pass
-try {
-	const ROW_SRC = readFileSync(
-		new URL("../src/ColumnRow.svelte", import.meta.url),
-		"utf8",
-	);
-	const rowStyle = ROW_SRC.slice(
-		ROW_SRC.indexOf("<style>"),
-		ROW_SRC.lastIndexOf("</style>"),
-	).replace(/\/\*[\s\S]*?\*\//g, "");
-	STYLE += rowStyle;
-} catch {}
+const ROW_SRC = readFileSync(
+	new URL("../src/ColumnRow.svelte", import.meta.url),
+	"utf8",
+);
+const rowStyle = ROW_SRC.slice(
+	ROW_SRC.indexOf("<style>"),
+	ROW_SRC.lastIndexOf("</style>"),
+).replace(/\/\*[\s\S]*?\*\//g, "");
+STYLE += rowStyle;
 
 function ruleBody(selector) {
 	const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -877,12 +880,6 @@ test("ColumnEditModal holds every control the row gave up", () => {
 	// focus trapping and Escape-to-close without an overlay reimplementation
 	assert.match(MODAL_SRC, /<dialog\b/, "modal is not a native <dialog>");
 	assert.match(MODAL_SRC, /showModal\(\)/, "modal never calls showModal()");
-});
-
-test("BOX_W / HDR_H / ROW_H constants match CSS", () => {
-	assert.equal(BOX_W, 280);
-	assert.equal(HDR_H, 28);
-	assert.equal(ROW_H, 42);
 });
 
 // uniqName increments a trailing number instead of appending to it. The old

@@ -16,8 +16,8 @@ import { addTable } from "./schema.svelte.js";
 		transform: translate(-50%, -50%);
 		text-align: center;
 		padding: 24px 32px;
-		background: #1a2028;
-		border: 1px dashed #3b4654;
+		background: var(--color-surface);
+		border: 1px dashed var(--color-border);
 		border-radius: 8px;
 		max-width: 320px;
 	}
@@ -25,15 +25,15 @@ import { addTable } from "./schema.svelte.js";
 		margin: 0 0 6px;
 		font-size: 14px;
 		font-weight: 600;
-		color: #d8dee6;
+		color: var(--color-text);
 	}
 	.empty-desc {
 		margin: 0 0 14px;
 		font-size: 12px;
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 	}
 	.empty-cta {
-		background: #2b6cb0;
+		background: var(--color-primary);
 		color: #fff;
 		border: 0;
 		border-radius: 5px;
@@ -42,7 +42,7 @@ import { addTable } from "./schema.svelte.js";
 		font: inherit;
 	}
 	.empty-cta:hover {
-		background: #357ac4;
+		background: var(--color-primary-hover);
 	}
 	.empty-cta:focus-visible {
 		outline: 2px solid #63b3ed;

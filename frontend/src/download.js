@@ -5,10 +5,15 @@ export function downloadBlob(blob, filename) {
 	const a = document.createElement("a");
 	a.href = url;
 	a.download = filename;
-	document.body.appendChild(a);
-	a.click();
-	a.remove();
-	URL.revokeObjectURL(url);
+	try {
+		document.body.appendChild(a);
+		a.click();
+	} finally {
+		a.remove();
+		// Delay the revoke: releasing the object URL on the same tick as the
+		// click can abort the download before the browser commits to it.
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+	}
 }
 
 export function downloadText(text, filename) {

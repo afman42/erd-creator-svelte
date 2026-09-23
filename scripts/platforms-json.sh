@@ -18,6 +18,10 @@ sep=""
 for platform in $PLATFORMS; do
 	os=${platform%/*}
 	arch=${platform#*/}
+	if [ "$os" = "$platform" ] || [ -z "$arch" ]; then
+		echo "error: bad platform '$platform' (want os/arch, e.g. linux/amd64)" >&2
+		exit 1
+	fi
 	ext=""
 	if [ "$os" = windows ]; then
 		ext=".exe"

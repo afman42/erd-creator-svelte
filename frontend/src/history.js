@@ -10,6 +10,15 @@ export function snap(schema) {
 	if (stack.length > 60) stack.shift();
 }
 
+// snapRaw pushes a pre-serialized entry, bypassing JSON.stringify. It exists as
+// a seam for tests: undo() must skip a corrupt snapshot (its catch→recurse
+// path), and the only way to PUT corrupt JSON on the stack is to push it
+// raw. Production callers should use snap().
+export function snapRaw(json) {
+	stack.push(json);
+	if (stack.length > 60) stack.shift();
+}
+
 export function undo() {
 	if (!stack.length) return null;
 	try {

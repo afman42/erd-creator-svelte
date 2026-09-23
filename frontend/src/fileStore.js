@@ -4,6 +4,7 @@
 
 import {
 	clearTimers as clearAutosaveTimers,
+	editGeneration,
 	isDirty,
 	markSkipTouch,
 	setDirty,
@@ -32,6 +33,12 @@ export async function saveCurrent(store, flash, silent = false) {
 		flash("no file selected — use New", "err");
 		return;
 	}
+	// Capture the edit generation at save start: the response only marks the
+	// file clean if no edit happened while it was in flight. Otherwise an
+	// older save resolving after a newer edit would clear dirty for edits
+	// that are still unpersisted (and a subsequent file switch would skip
+	// its flush, dropping them).
+	const gen = editGeneration();
 	try {
 		const res = await fetch(
 			`/api/files/${encodeURIComponent(store.currentFile)}`,
@@ -43,7 +50,7 @@ export async function saveCurrent(store, flash, silent = false) {
 			},
 		);
 		if (!res.ok) throw new Error(await res.text());
-		setDirty(false);
+		if (gen === editGeneration()) setDirty(false);
 		if (!silent) flash(`saved ${store.currentFile}`);
 	} catch (e) {
 		if (!silent) flash(`save failed: ${e.message}`, "err");
@@ -106,15 +113,18 @@ export async function deleteFile(store, flash) {
 	if (!store.currentFile) return;
 	if (!confirm(`Delete ${store.currentFile}?`)) return;
 	clearAutosaveTimers();
-	const res = await fetch(
-		`/api/files/${encodeURIComponent(store.currentFile)}`,
-		{
-			method: "DELETE",
-		},
-	);
-	if (!res.ok) flash(`delete failed: ${await res.text()}`, "err");
-	else flash(`deleted ${store.currentFile}`);
+	const name = store.currentFile;
+	const res = await fetch(`/api/files/${encodeURIComponent(name)}`, {
+		method: "DELETE",
+	});
+	// A failed DELETE leaves the file on disk and the editor still pointed at
+	// it, so currentFile/history are only cleared on success.
+	if (!res.ok) {
+		flash(`delete failed: ${await res.text()}`, "err");
+		return;
+	}
 	store.currentFile = "";
 	clearHistory();
+	flash(`deleted ${name}`);
 	await refreshFiles(store);
 }

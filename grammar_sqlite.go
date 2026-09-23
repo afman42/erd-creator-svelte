@@ -29,14 +29,19 @@ import (
 )
 
 var (
-	reSqliteCreate      = regexp.MustCompile(`(?i)^CREATE TABLE (\S+) \($`)
+	// Identifiers are captured as a fully quoted token (backticks INCLUDED, so
+	// unquoteTick sees them and strips escaping) or a bare run for hand-written
+	// files — ddlRe's ~-for-backtick pattern, shared with the mysql parser
+	// (grammar.go). A bare `(\S+)` could not span a space inside `` `user
+	// accounts` `` — the very case the emitter's quoting exists for.
+	reSqliteCreate      = ddlRe(`(?i)^CREATE TABLE ((?:~(?:[^~]|~~)*~|[^\s~]+)) \($`)
 	reSqliteEnd         = regexp.MustCompile(`^\);$`)
 	reSqliteCommentLine = regexp.MustCompile(`^-- (.*)$`)
-	reSqliteRowidPk     = regexp.MustCompile(`(?i)^(\S+) INTEGER PRIMARY KEY$`)
+	reSqliteRowidPk     = ddlRe(`(?i)^((?:~(?:[^~]|~~)*~|[^\s~]+)) INTEGER PRIMARY KEY$`)
 	reSqlitePK          = regexp.MustCompile(`(?i)^PRIMARY KEY \((.+)\)$`)
-	reSqliteFK          = regexp.MustCompile(`(?i)^FOREIGN KEY \((\S+)\) REFERENCES (\S+) \((\S+)\) ON DELETE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE)( ON UPDATE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?$`)
-	reSqliteIndex       = regexp.MustCompile(`(?i)^CREATE INDEX IF NOT EXISTS \S+ ON (\S+) \((.+)\);$`)
-	reSqliteCol         = regexp.MustCompile(`(?i)^(\S+) ([A-Z]+(?:\([^)]*\))?)( NOT NULL)?( UNIQUE)?$`)
+	reSqliteFK          = ddlRe(`(?i)^FOREIGN KEY \(((?:~(?:[^~]|~~)*~|[^\s~]+))\) REFERENCES ((?:~(?:[^~]|~~)*~|[^\s~]+)) \(((?:~(?:[^~]|~~)*~|[^\s~]+))\) ON DELETE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE)( ON UPDATE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?$`)
+	reSqliteIndex       = ddlRe(`(?i)^CREATE INDEX IF NOT EXISTS (?:(?:~(?:[^~]|~~)*~|[^\s~]+)) ON ((?:~(?:[^~]|~~)*~|[^\s~]+)) \((.+)\);$`)
+	reSqliteCol         = ddlRe(`(?i)^((?:~(?:[^~]|~~)*~|[^\s~]+)) ([A-Z]+(?:\((?:'[^']*'|[^)])*\))?)( NOT NULL)?( UNIQUE)?$`)
 	reSqliteEnumChk     = regexp.MustCompile(`(?i)^CHECK \(.*? IN \((.*)\)\)$`)
 )
 
@@ -156,8 +161,10 @@ func parseSqlite(sql string) (*Schema, error) {
 		tbl := &s.Tables[cur]
 
 		if m := reSqlitePK.FindStringSubmatch(body); m != nil {
-			for _, name := range strings.Split(m[1], ",") {
-				markCol(tbl, unquoteTick(name), func(c *Col) { c.Pk = true })
+			// Same quote-aware split as the index paths: a column named `a, b`
+			// is one PK element, not two.
+			for _, name := range splitIndexCols(m[1], unquoteTick) {
+				markCol(tbl, name, func(c *Col) { c.Pk = true })
 			}
 			commentLine = ""
 			continue

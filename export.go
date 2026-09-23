@@ -110,18 +110,31 @@ func splitType(ty string) (string, string) {
 	return strings.ToUpper(ty), ""
 }
 
-// splitTop splits on top-level commas, respecting parens and ” escaped strings.
+// splitTop splits on top-level commas, respecting parens and quoted strings.
+// All three quote characters the emitters use are honoured: single quotes
+// ('...' with ” escaping), double quotes ("..." with "" escaping) and
+// backticks (`...` with “ escaping). Without the backtick/double-quote cases,
+// an index column or PK named `a, b` split on its comma, turning one column
+// into two (and a single-column index into a composite).
 func splitTop(s string) []string {
 	var out []string
-	depth, inStr, start := 0, false, 0
-	for i := 0; i < len(s); i++ { // classic loop: body's i++ must skip the escaped quote
+	depth, inStr, q, start := 0, false, byte(0), 0
+	for i := 0; i < len(s); i++ {
 		c := s[i]
+		if inStr {
+			if c == q && i+1 < len(s) && s[i+1] == q {
+				i++ // skip the doubled-escape of the active quote
+				continue
+			}
+			if c == q {
+				inStr = false
+			}
+			continue
+		}
 		switch {
-		case c == '\'' && inStr && i+1 < len(s) && s[i+1] == '\'':
-			i++ // skip second quote of '' escape
-		case c == '\'':
-			inStr = !inStr
-		case inStr:
+		case c == '\'' || c == '"' || c == '`':
+			inStr = true
+			q = c
 		case c == '(':
 			depth++
 		case c == ')':
@@ -181,17 +194,6 @@ func isInt(base string) bool {
 	return false
 }
 
-func findTable(tables []Table, id string) *Table {
-	for i := range tables {
-		if tables[i].ID == id {
-			return &tables[i]
-		}
-	}
-	return nil
-}
-
-// tableMap builds an O(1) lookup for table ID → *Table. Used by hot paths
-// (Lint, build*, pending FK attachment) to replace O(n) linear scans.
 func tableMap(tables []Table) map[string]*Table {
 	m := make(map[string]*Table, len(tables))
 	for i := range tables {
@@ -219,30 +221,15 @@ func pkCol(t Table) (Col, bool) {
 	return Col{}, false
 }
 
-// fkTarget resolves a column's FK to its parent table and the single PK column
-// that FK references. ok=false when the parent is missing (dangling ref) or has
-// no sole PK — a single-column FK onto a composite or absent PK is invalid DDL,
-// so every dialect omits it. Lint reports both cases.
+// fkTargetMap resolves a column's FK to its parent table and the single PK
+// column that FK references. ok=false when the parent is missing (dangling
+// ref) or has no sole PK — a single-column FK onto a composite or absent PK is
+// invalid DDL, so every dialect omits it. Lint reports both cases.
 //
 // Shared by all three dialect builders: they differ in how they render the
-// constraint, not in which FKs are emittable.
-func fkTarget(tables []Table, c Col) (*Table, Col, bool) {
-	if c.Ref == nil {
-		return nil, Col{}, false
-	}
-	rt := findTable(tables, c.Ref.TableID)
-	if rt == nil {
-		return nil, Col{}, false
-	}
-	rp, ok := pkCol(*rt)
-	if !ok {
-		return nil, Col{}, false
-	}
-	return rt, rp, true
-}
-
-// fkTargetMap is the O(1) map-based variant of fkTarget — uses a prebuilt
-// tableMap instead of linear scanning per FK.
+// constraint, not in which FKs are emittable. The map form is used because the
+// build functions already carry a tableMap for Lint/FK work; the old slice
+// variant (findTable/fkTarget) did an O(n) scan per FK and was removed.
 func fkTargetMap(m map[string]*Table, c Col) (*Table, Col, bool) {
 	if c.Ref == nil {
 		return nil, Col{}, false

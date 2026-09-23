@@ -127,16 +127,10 @@ func TestMariaDBDetectedFromHeader(t *testing.T) {
 // would have saved it as mysql. The same class of bug applied to sqlite, which
 // was refused until it gained a parser.
 func TestMariaDBIsSaveable(t *testing.T) {
-	saveable := map[string]bool{
-		DialectMysql:    true,
-		DialectMariaDB:  true,
-		DialectPostgres: true,
-		DialectSqlite:   true,
-	}
-	for dialect, want := range saveable {
+	for _, dialect := range []string{DialectMysql, DialectMariaDB, DialectPostgres, DialectSqlite} {
 		s := &Schema{Dialect: dialect}
-		if got := s.saveable(); got != want {
-			t.Errorf("saveable(%q) = %v, want %v", dialect, got, want)
+		if !s.saveable() {
+			t.Errorf("saveable(%q) = false, want true", dialect)
 		}
 	}
 	// an unrecognized dialect normalizes to mysql, so it stays saveable; this

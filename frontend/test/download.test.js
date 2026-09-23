@@ -64,7 +64,7 @@ function mockDOM() {
 	};
 }
 
-test("downloadBlob creates object URL and clicks anchor", () => {
+test("downloadBlob creates object URL, clicks anchor, and revokes after a delay", async () => {
 	const m = mockDOM();
 	const blob = new Blob(["hello"], { type: "text/plain" });
 	downloadBlob(blob, "a.txt");
@@ -74,8 +74,15 @@ test("downloadBlob creates object URL and clicks anchor", () => {
 	assert.equal(m.created[0].download, "a.txt");
 	assert.ok(m.created[0].href.startsWith("blob:"));
 	assert.ok(m.created[0].clickCalled);
-	// revoked
-	assert.equal(m.urls.length, 0);
+	// the revoke is deferred (setTimeout) so the download can start: the URL
+	// must still be live right after the click, and revoked once it fires
+	assert.equal(m.urls.length, 1, "object URL not yet revoked on the same tick");
+	await new Promise((r) => setTimeout(r, 1100));
+	assert.equal(
+		m.urls.length,
+		0,
+		"object URL revoked after the deferred revoke",
+	);
 	m.restore();
 });
 

@@ -27,7 +27,7 @@ let sqlLoading = $derived(!store.sqlText);
 <style>
 	aside {
 		width: 420px;
-		border-left: 1px solid #2a3340;
+		border-left: 1px solid var(--color-border-strong);
 		display: flex;
 		flex-direction: column;
 	}
@@ -36,18 +36,18 @@ let sqlLoading = $derived(!store.sqlText);
 		gap: 4px;
 		align-items: center;
 		padding: 6px 8px;
-		background: #1a2028;
+		background: var(--color-surface);
 	}
 	.sqlhead .dialect {
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 		font-size: 11px;
-		border: 1px solid #3b4654;
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		padding: 0 5px;
 	}
 	.sqlhead button {
 		margin-left: auto;
-		background: #2b6cb0;
+		background: var(--color-primary);
 		color: #fff;
 		border: 0;
 		border-radius: 4px;
@@ -77,7 +77,7 @@ let sqlLoading = $derived(!store.sqlText);
 	}
 	.sk-line {
 		height: 12px;
-		background: #2a3340;
+		background: var(--color-border-strong);
 		border-radius: 4px;
 		animation: pulse 1.4s ease-in-out infinite;
 	}

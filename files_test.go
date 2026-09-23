@@ -63,11 +63,6 @@ func TestFilesCRUD(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"users"`) {
 		t.Fatalf("read: %d %s", rec.Code, rec.Body)
 	}
-	got, err := ParseDDL(mustGenSQL(sampleSchema())) // same source text
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = got
 
 	// traversal rejected
 	rec = httptest.NewRecorder()
@@ -174,7 +169,7 @@ func TestSaveFileRejects(t *testing.T) {
 		"no tables": {
 			"PUT", "/api/files/a.sql", `{"tables":[]}`, http.StatusBadRequest,
 		},
-		"unsaveable dialect": {
+		"unknown sqliteTypes normalizes": {
 			"PUT", "/api/files/a.sql",
 			`{"dialect":"sqlite","sqliteTypes":"bogus","tables":[{"id":"t1","name":"t","columns":[{"name":"id","type":"INT"}]}]}`,
 			// an unrecognized sqliteTypes is normalized, not rejected; this one

@@ -116,9 +116,9 @@ function shownName(ix) {
 
 <style>
 	dialog.idxedit {
-		background: #1a2028;
-		color: #d8dee6;
-		border: 1px solid #3b4654;
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		padding: 14px 16px;
 		min-width: 320px;
@@ -132,15 +132,15 @@ function shownName(ix) {
 		margin: 0 0 10px;
 		font-size: 13px;
 		font-weight: 600;
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 	}
 	.none {
 		margin: 0 0 10px;
 		font-size: 11px;
-		color: #7fa3c0;
+		color: var(--color-text-faint);
 	}
 	.ix {
-		border: 1px solid #3b4654;
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		padding: 8px;
 		margin-bottom: 8px;
@@ -154,12 +154,12 @@ function shownName(ix) {
 	}
 	.fld > span {
 		font-size: 11px;
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 	}
 	.fld input {
-		background: #101418;
-		color: #d8dee6;
-		border: 1px solid #3b4654;
+		background: var(--color-bg);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		padding: 4px 6px;
 		font: 12px ui-monospace, monospace;
@@ -167,14 +167,14 @@ function shownName(ix) {
 		box-sizing: border-box;
 	}
 	fieldset {
-		border: 1px solid #3b4654;
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		margin: 0 0 6px;
 		padding: 6px 8px;
 	}
 	legend {
 		font-size: 11px;
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 		padding: 0 4px;
 	}
 	.cols,
@@ -216,7 +216,7 @@ function shownName(ix) {
 		margin-top: 10px;
 	}
 	.done {
-		background: #2b6cb0;
+		background: var(--color-primary);
 		color: #fff;
 		border: 0;
 		border-radius: 5px;

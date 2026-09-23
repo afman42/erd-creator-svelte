@@ -37,6 +37,25 @@ async function closeCol(dlg) {
 	await expect(dlg).toHaveCount(0);
 }
 
+// Add a second table and set its first column as an FK to the first table —
+// the two-table fixture the export-paint tests need.
+async function addTableWithFk(page) {
+	await page.getByRole("button", { name: "+ Table" }).click();
+	const dlg = await openCol(page, 1, 0);
+	await dlg.locator("select.fk").selectOption({ index: 1 });
+	await closeCol(dlg);
+}
+
+// Click an export button and return the download and its bytes.
+async function downloadBytes(page, buttonName) {
+	const dl = page.waitForEvent("download");
+	await page.getByRole("button", { name: buttonName }).click();
+	const stream = await (await dl).createReadStream();
+	const chunks = [];
+	for await (const c of stream) chunks.push(c);
+	return { dl, buf: Buffer.concat(chunks) };
+}
+
 test("empty store → fresh default users table", async ({ page }) => {
 	await page.goto("/");
 	await expect(page.locator(".tname")).toHaveValue("users");
@@ -1058,14 +1077,8 @@ test("Export PNG downloads diagram as .png with PNG signature", async ({
 	page,
 }) => {
 	await page.goto("/");
-	const download = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export PNG" }).click();
-	const dl = await download;
+	const { dl, buf } = await downloadBytes(page, "Export PNG");
 	expect(dl.suggestedFilename()).toBe("mysql-schema.png");
-	const stream = await dl.createReadStream();
-	const chunks = [];
-	for await (const c of stream) chunks.push(c);
-	const buf = Buffer.concat(chunks);
 	// PNG signature 89 50 4E 47 0D 0A 1A 0A
 	expect(buf.subarray(0, 4).toString("hex")).toBe("89504e47");
 	expect(buf.length).toBeGreaterThan(1000);
@@ -1086,14 +1099,9 @@ test("Export SVG downloads the diagram as real SVG source", async ({
 	page,
 }) => {
 	await page.goto("/");
-	const download = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export SVG" }).click();
-	const dl = await download;
+	const { dl, buf } = await downloadBytes(page, "Export SVG");
 	expect(dl.suggestedFilename()).toBe("mysql-schema.svg");
-	const stream = await dl.createReadStream();
-	const chunks = [];
-	for await (const c of stream) chunks.push(c);
-	const text = Buffer.concat(chunks).toString("utf8");
+	const text = buf.toString("utf8");
 	// The failure this guards: toSvg() returns a data URL, so writing it out
 	// verbatim would produce a file starting "data:image/svg+xml..." that no
 	// viewer opens. Asserting it starts with <svg is the whole point — a byte
@@ -1123,38 +1131,19 @@ test("exported PNG actually paints the edge line and its labels", async ({
 	page,
 }) => {
 	await page.goto("/");
-	await page.getByRole("button", { name: "+ Table" }).click();
-	const dlg = page.locator("dialog.coledit");
-	await page
-		.locator("section.table")
-		.nth(1)
-		.locator(".row .edit")
-		.nth(0)
-		.click();
-	await expect(dlg).toBeVisible();
-	await dlg.locator("select.fk").selectOption({ index: 1 });
-	await dlg.getByRole("button", { name: "Done" }).click();
-	await expect(dlg).toHaveCount(0);
+	await addTableWithFk(page);
 
 	// label positions come from the SVG export; both formats are 1:1 and share
 	// the same coordinate space, so they can be used to sample the PNG
-	const svgDl = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export SVG" }).click();
-	const svgStream = await (await svgDl).createReadStream();
-	const svgChunks = [];
-	for await (const c of svgStream) svgChunks.push(c);
-	const svg = Buffer.concat(svgChunks).toString("utf8");
+	const { buf: svgBuf } = await downloadBytes(page, "Export SVG");
+	const svg = svgBuf.toString("utf8");
 	const labelPts = [
 		...svg.matchAll(/<text[^>]*x="([\d.]+)"[^>]*y="([\d.]+)"/g),
 	].map((m) => [Math.round(Number(m[1])), Math.round(Number(m[2]))]);
 	expect(labelPts.length).toBe(2);
 
-	const pngDl = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export PNG" }).click();
-	const pngStream = await (await pngDl).createReadStream();
-	const pngChunks = [];
-	for await (const c of pngStream) pngChunks.push(c);
-	const pngB64 = Buffer.concat(pngChunks).toString("base64");
+	const { buf: pngBuf } = await downloadBytes(page, "Export PNG");
+	const pngB64 = pngBuf.toString("base64");
 
 	const res = await page.evaluate(
 		async ([b64, pts]) => {
@@ -1222,14 +1211,8 @@ test("Export PNG still works alongside Export SVG", async ({ page }) => {
 	// Two export buttons sharing one `exporting` flag: adding the second must
 	// not break the first, so this re-asserts the PNG path end to end.
 	await page.goto("/");
-	const download = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export PNG" }).click();
-	const dl = await download;
+	const { dl, buf } = await downloadBytes(page, "Export PNG");
 	expect(dl.suggestedFilename()).toBe("mysql-schema.png");
-	const stream = await dl.createReadStream();
-	const chunks = [];
-	for await (const c of stream) chunks.push(c);
-	const buf = Buffer.concat(chunks);
 	expect(buf.subarray(0, 4).toString("hex")).toBe("89504e47");
 });
 

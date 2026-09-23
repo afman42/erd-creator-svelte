@@ -212,9 +212,9 @@ function remove() {
 
 <style>
 	dialog.coledit {
-		background: #1a2028;
-		color: #d8dee6;
-		border: 1px solid #3b4654;
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		padding: 14px 16px;
 		min-width: 300px;
@@ -227,7 +227,7 @@ function remove() {
 		margin: 0 0 10px;
 		font-size: 13px;
 		font-weight: 600;
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 	}
 	.fld {
 		display: grid;
@@ -238,13 +238,13 @@ function remove() {
 	}
 	.fld > span {
 		font-size: 11px;
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 	}
 	.fld input,
 	.fld select {
-		background: #101418;
-		color: #d8dee6;
-		border: 1px solid #3b4654;
+		background: var(--color-bg);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		padding: 4px 6px;
 		font: 12px ui-monospace, monospace;
@@ -254,14 +254,14 @@ function remove() {
 	.flags {
 		display: flex;
 		gap: 10px;
-		border: 1px solid #3b4654;
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		margin: 0 0 8px;
 		padding: 6px 8px;
 	}
 	.flags legend {
 		font-size: 11px;
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 		padding: 0 4px;
 	}
 	/* The PK caveat under the cardinality select. Muted and indented to sit
@@ -291,12 +291,12 @@ function remove() {
 		font: inherit;
 	}
 	.done {
-		background: #2b6cb0;
+		background: var(--color-primary);
 		color: #fff;
 	}
 	.rmcol {
 		background: transparent;
-		color: #f87171;
+		color: var(--color-danger);
 		margin-right: auto;
 	}
 	.rmcol:hover {

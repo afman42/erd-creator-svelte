@@ -196,12 +196,6 @@ test("edgePaths: a self edge still gets labels", () => {
 	assert.ok(Number.isFinite(e.from.x) && Number.isFinite(e.to.x));
 });
 
-test("constants match CSS", () => {
-	assert.equal(BOX_W, 280);
-	assert.equal(HDR_H, 28);
-	assert.equal(ROW_H, 42);
-});
-
 // ROW_CENTER is where an FK edge attaches inside its column row. It is
 // deliberately NOT ROW_H/2: ROW_H spans the row *and* its comment line (26+16),
 // so half of it (21) would land in the comment. It is half the 26px row.

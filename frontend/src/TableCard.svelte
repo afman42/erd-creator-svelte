@@ -53,15 +53,6 @@ const parentName = (c) =>
 			e.preventDefault();
 			store.selected = table.id;
 		}
-		if (e.target !== e.currentTarget) return;
-		if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)) {
-			e.preventDefault();
-			const step = e.shiftKey ? 20 : 10;
-			if (e.key === "ArrowUp") table.y = Math.max(0, table.y - step);
-			if (e.key === "ArrowDown") table.y += step;
-			if (e.key === "ArrowLeft") table.x = Math.max(0, table.x - step);
-			if (e.key === "ArrowRight") table.x += step;
-		}
 	}}
 >
 	<div
@@ -127,12 +118,13 @@ const parentName = (c) =>
 		   geometry.js). With content-box the 1px borders pushed the real box to
 		   282px and every child width was understated by its own padding. */
 		box-sizing: border-box;
-		background: #1a2028;
-		border: 1px solid #3b4654;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		box-shadow: 0 2px 8px #0008;
 	}
 	section.selected {
+		/* #63b3ed has no token (it is the selection/focus blue); kept literal. */
 		border-color: #63b3ed;
 	}
 	section.table:focus-visible {
@@ -145,7 +137,7 @@ const parentName = (c) =>
 		/* explicit height pins HDR_H in geometry.js */
 		height: 28px;
 		box-sizing: border-box;
-		background: #2b6cb0;
+		background: var(--color-primary);
 		border-radius: 5px 5px 0 0;
 		cursor: grab;
 	}
@@ -176,7 +168,7 @@ const parentName = (c) =>
 		line-height: 1;
 	}
 	.hdr button:hover {
-		color: #f87171;
+		color: var(--color-danger);
 	}
 	.hdr button:focus-visible,
 	.tname:focus-visible {
@@ -188,9 +180,9 @@ const parentName = (c) =>
 		height: 25px;
 		box-sizing: border-box;
 		background: transparent;
-		color: #66bb88;
+		color: var(--color-flag);
 		border: 0;
-		border-top: 1px dashed #3b4654;
+		border-top: 1px dashed var(--color-border);
 		padding: 3px;
 		cursor: pointer;
 		font: inherit;

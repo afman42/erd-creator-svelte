@@ -5,7 +5,6 @@
 // that is reassigned, so all state lives on `store` and mutations assign
 // properties (allowed) — never the exported binding itself.
 
-import { downloadBlob, downloadText, execCopy } from "./download.js";
 import {
 	cloneTable,
 	DEFAULT_TYPE,
@@ -16,8 +15,22 @@ import {
 	newTable,
 	uniqName,
 } from "./erd.js";
-import { applyCardinality, pkConflictsWith, stackStep } from "./geometry.js";
+import {
+	applyCardinality,
+	CANVAS_ORIGIN,
+	DUP_OFFSET,
+	pkConflictsWith,
+	stackStep,
+} from "./geometry.js";
 import { snap as snapHistory, undo as undoHistory } from "./history.js";
+
+/**
+ * Type shorthands for the client model shapes, defined in erd.js.
+ * @typedef {import("./erd.js").Table} Table
+ * @typedef {import("./erd.js").Column} Column
+ * @typedef {import("./erd.js").Ref} Ref
+ * @typedef {import("./erd.js").Index} Index
+ */
 
 // ---- state ----
 export const store = $state({
@@ -36,6 +49,9 @@ export const store = $state({
 layout(store.schema);
 
 // ---- server round-trips (debounced; local-first, banner on error) ----
+// Both refreshes follow the same contract: a fetch failure keeps the last-good
+// value (a transient server error must not blank the panel), an empty success
+// clears it.
 async function refreshLint() {
 	try {
 		const res = await fetch("/api/lint", {
@@ -43,11 +59,13 @@ async function refreshLint() {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ schema: store.schema }),
 		});
-		store.lint = res.ok ? await res.json() : [];
+		store.lint = res.ok ? await res.json() : store.lint;
 	} catch {
-		store.lint = [];
+		/* keep last lint */
 	}
 }
+// refreshSql returns whether the export succeeded so callers (copySql) can tell
+// a stale panel from a fresh copy instead of copying whatever was last shown.
 export async function refreshSql() {
 	try {
 		const res = await fetch("/export", {
@@ -61,17 +79,21 @@ export async function refreshSql() {
 				schema: store.schema,
 			}),
 		});
-		if (res.ok) store.sqlText = await res.text();
+		if (!res.ok) return false;
+		store.sqlText = await res.text();
+		return true;
 	} catch {
 		/* keep last good text */
+		return false;
 	}
 }
 
 // Wired from App's $effect (which tracks schema deep state + the local
-// showSql flag): debounce fan-out — lint 300ms, autosave 800ms, SQL 300ms.
-// skipTouch: set right before openFile/newFile swap store.schema; the App
-// $effect fires once on the swap — that is a load, not a user edit, so it must
-// not mark the file dirty or schedule a needless save.
+// showSql flag): debounce fan-out — lint, autosave and SQL-panel refresh each
+// wait for their own quiet window before firing (see LINT/SAVE/SQL_DEBOUNCE_MS
+// in autosave.js). skipTouch: set right before openFile/newFile swap
+// store.schema; the App $effect fires once on the swap — that is a load, not a
+// user edit, so it must not mark the file dirty or schedule a needless save.
 import {
 	flushCurrent as flushAutosave,
 	installFlush,
@@ -97,8 +119,8 @@ export function undo() {
 async function flushCurrent() {
 	await flushAutosave({ store, saveCurrent });
 }
-// Unload safety: a pending saveTimer dies with the page, dropping up to 800ms
-// of edits. Flush best-effort on the way out.
+// Unload safety: a pending saveTimer dies with the page, dropping up to
+// SAVE_DEBOUNCE_MS of edits. Flush best-effort on the way out.
 // ponytail: plain fetch may abort mid-unload; keepalive fetch (64KB cap) would
 // harden the final write — add if real tab-closes drop edits.
 installFlush(() => flushCurrent());
@@ -115,21 +137,30 @@ export function addTable() {
 	// derivation; it agreed with layout()'s `24 + GAP` only by coincidence
 	// (24+12=36), and both understated the real card by 3px.
 	const y = Math.max(
-		40,
+		CANVAS_ORIGIN.y,
 		...store.schema.tables.map((t) => t.y + stackStep(t.columns.length)),
 	);
 	store.schema.tables.push(
-		Object.assign(newTable(uniqName("table1", takenNames())), { x: 40, y }),
+		Object.assign(newTable(uniqName("table1", takenNames())), {
+			x: CANVAS_ORIGIN.x,
+			y,
+		}),
 	);
 }
+/**
+ * @param {Table} t
+ */
 export function dupTable(t) {
 	snap();
 	const c = cloneTable(t);
 	c.name = uniqName(`${t.name}_copy`, takenNames());
-	c.x = t.x + 30;
-	c.y = t.y + 30;
+	c.x = t.x + DUP_OFFSET;
+	c.y = t.y + DUP_OFFSET;
 	store.schema.tables.push(c);
 }
+/**
+ * @param {Table} t
+ */
 export function rmTable(t) {
 	snap();
 	store.schema.tables = store.schema.tables.filter((x) => x.id !== t.id);
@@ -137,6 +168,10 @@ export function rmTable(t) {
 		for (const c of o.columns) if (c.ref?.tableId === t.id) c.ref = null;
 	if (store.selected === t.id) store.selected = null;
 }
+/**
+ * @param {Table} t
+ * @param {Column} c
+ */
 export function rmColumn(t, c) {
 	if (t.columns.length === 1) {
 		flash(`${t.name} needs at least one column`, "err");
@@ -145,10 +180,16 @@ export function rmColumn(t, c) {
 	snap();
 	t.columns = t.columns.filter((x) => x.id !== c.id);
 }
+/**
+ * @param {Table} t
+ */
 export function addColumn(t) {
 	snap();
 	t.columns.push(newColumn());
 }
+/**
+ * @param {Table} t
+ */
 export function commitTableName(t, ev) {
 	const v = ev.target.value.trim();
 	if (v && !store.schema.tables.some((x) => x !== t && x.name === v)) {
@@ -157,6 +198,9 @@ export function commitTableName(t, ev) {
 	} else ev.target.value = t.name;
 	flashLint();
 }
+/**
+ * @param {Column} c
+ */
 export function commitColName(c, ev) {
 	const v = ev.target.value.trim();
 	if (v) {
@@ -165,10 +209,16 @@ export function commitColName(c, ev) {
 	} else ev.target.value = c.name;
 }
 // Comments accept empty (clearing one is legitimate), unlike names.
+/**
+ * @param {Column} c
+ */
 export function commitComment(c, ev) {
 	snap();
 	c.comment = ev.target.value.trim();
 }
+/**
+ * @param {Column} c
+ */
 export function setType(c, base) {
 	if (base === "ENUM") {
 		const cur = /^ENUM\((.*)\)$/i.exec(c.type)?.[1] ?? "";
@@ -203,6 +253,9 @@ export function setType(c, base) {
 // Only offered while postgres is selected: `INT[]` is PostgreSQL syntax and the
 // server refuses to emit it for the other dialects (ValidateFor), so exposing
 // the control elsewhere would let the user build a schema that cannot be saved.
+/**
+ * @param {Column} c
+ */
 export function toggleArray(c) {
 	snap();
 	c.type = c.type.endsWith("[]") ? c.type.slice(0, -2) : `${c.type}[]`;
@@ -214,6 +267,9 @@ export function toggleArray(c) {
 	}
 	flashLint();
 }
+/**
+ * @param {Column} c
+ */
 export function setRef(c, ev) {
 	snap();
 	const id = ev.target.value;
@@ -231,6 +287,9 @@ export function setRef(c, ev) {
 	if (id) c.ai = false;
 	flashLint();
 }
+/**
+ * @param {Column} c
+ */
 export function setRefAction(c, ev) {
 	snap();
 	c.ref.action = ev.target.value;
@@ -239,10 +298,16 @@ export function setRefAction(c, ev) {
 // empty option means "omit the clause" and is stored as "", because a schema
 // written before this field existed carries no ON UPDATE and must keep emitting
 // none. See the Ref comment in grammar.go for why the two actions differ.
+/**
+ * @param {Column} c
+ */
 export function setRefOnUpdate(c, ev) {
 	snap();
 	c.ref.onUpdate = ev.target.value;
 }
+/**
+ * @param {Column} c
+ */
 export function togglePk(c) {
 	snap();
 	c.pk = !c.pk;
@@ -260,6 +325,11 @@ export function togglePk(c) {
 // real change to the emitted DDL and must not happen silently. The old version
 // refused those picks instead, which left three of the four options permanently
 // unreachable on any PK column.
+/**
+ * @param {Table} t
+ * @param {Column} c
+ * @param {string} stateId
+ */
 export function setCardinality(t, c, stateId) {
 	snap();
 	const clearsPk = pkConflictsWith(t, c, stateId);
@@ -272,6 +342,9 @@ export function setCardinality(t, c, stateId) {
 // toggleFlag flips one of a column's boolean flags (nn/ux/ai/ix). Lives here
 // with the other mutations so every undo snapshot is taken in one place —
 // TableCard used to inline snap() plus the flip four times.
+/**
+ * @param {Column} c
+ */
 export function toggleFlag(c, flag) {
 	snap();
 	c[flag] = !c[flag];
@@ -295,6 +368,10 @@ function ensureIndexes(t) {
 // dropped: the same column twice in one index is almost certainly a mis-click,
 // and the server's validation would accept it while the DDL it produces is
 // useless.
+/**
+ * @param {Table} t
+ * @param {string[]} cols
+ */
 export function addIndex(t, cols) {
 	const unique = [...new Set(cols.filter(Boolean))];
 	if (unique.length < 2) {
@@ -305,6 +382,10 @@ export function addIndex(t, cols) {
 	ensureIndexes(t).push({ cols: unique });
 }
 
+/**
+ * @param {Table} t
+ * @param {Index} ix
+ */
 export function rmIndex(t, ix) {
 	snap();
 	const list = ensureIndexes(t);
@@ -315,6 +396,10 @@ export function rmIndex(t, ix) {
 // setIndexName sets an explicit name. Empty clears it back to the derived
 // idx_<table>_<cols> form, which is the default and needs no UI. No table
 // parameter: the name lives on the index itself, so only the index is needed.
+/**
+ * @param {Index} ix
+ * @param {string} name
+ */
 export function setIndexName(ix, name) {
 	snap();
 	ix.name = name.trim();
@@ -324,6 +409,10 @@ export function setIndexName(ix, name) {
 // Refuses to drop below two columns: a one-column index is Col.Ix, and letting
 // it become one here would emit the same DDL two different ways depending on
 // how it was created. Takes only the index for the same reason as setIndexName.
+/**
+ * @param {Index} ix
+ * @param {string} colName
+ */
 export function toggleIndexCol(ix, colName) {
 	const i = ix.cols.indexOf(colName);
 	if (i >= 0 && ix.cols.length <= 2) {
@@ -402,106 +491,21 @@ export async function deleteFile() {
 }
 
 // ---- clipboard + exports ----
-async function copyText(text, msg) {
-	try {
-		await navigator.clipboard.writeText(text);
-	} catch {
-		if (!execCopy(text)) {
-			flash("clipboard blocked — copy failed", "err");
-			return;
-		}
-	}
-	flash(msg);
-}
-export async function copyInserts() {
-	try {
-		const res = await fetch("/api/inserts", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ schema: store.schema }),
-		});
-		if (!res.ok) throw new Error(await res.text());
-		await copyText(await res.text(), "copied INSERT templates");
-	} catch (e) {
-		flash(`INSERTs failed: ${e.message}`, "err");
-	}
-}
-export async function copySql() {
-	await refreshSql();
-	await copyText(store.sqlText, "copied SQL");
-}
-// The name to save under. A loaded file keeps its own name (users.sql stays
-// users.sql); an unsaved scratch schema gets a name that says which grammar it
-// is in, since that is the one thing the bytes do not state up front.
-export function exportFilename() {
-	return store.currentFile || `${store.schema.dialect}-schema.sql`;
-}
-export async function exportDdl() {
-	store.exporting = true;
-	try {
-		const res = await fetch("/export", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				dialect: store.schema.dialect,
-				schema: store.schema,
-			}),
-		});
-		if (!res.ok) throw new Error(await res.text());
-		const name = exportFilename();
-		downloadText(await res.text(), name);
-		flash(`downloaded ${name}`);
-	} catch (e) {
-		flash(`export failed: ${e.message}`, "err");
-	} finally {
-		store.exporting = false;
-	}
-}
-export async function exportPng() {
-	if (!store.schema.tables.length) {
-		flash("nothing to export — add a table first", "err");
-		return;
-	}
-	store.exporting = true;
-	try {
-		// The store owns the DOM lookup and the schema; capture.js is handed
-		// both so it stays free of ambient document/store access and can be
-		// driven with a plain element in tests.
-		const el = document.querySelector(".canvas");
-		const { capturePng, pngFilename } = await import("./capture.js");
-		const blob = await capturePng(el, store.schema);
-		const name = pngFilename(store.currentFile, store.schema.dialect);
-		downloadBlob(blob, name);
-		flash(`downloaded ${name}`);
-	} catch (e) {
-		flash(`png export failed: ${e.message}`, "err");
-	} finally {
-		store.exporting = false;
-	}
-}
-// exportSvg is the vector twin of exportPng: same sizing, same empty-schema
-// guard, same filename rule with a .svg extension. It exists alongside PNG
-// rather than replacing it because the two answer different needs — SVG for
-// docs and slides where the diagram is rescaled, PNG where a bitmap is
-// required. The SVG is written as text, not as a data URL: see decodeSvgDataUrl.
-export async function exportSvg() {
-	if (!store.schema.tables.length) {
-		flash("nothing to export — add a table first", "err");
-		return;
-	}
-	store.exporting = true;
-	try {
-		const el = document.querySelector(".canvas");
-		const { captureSvg, svgFilename } = await import("./capture.js");
-		const svg = await captureSvg(el, store.schema);
-		const name = svgFilename(store.currentFile, store.schema.dialect);
-		// downloadText already sets a text charset; an SVG is XML, so it is
-		// passed through as-is with the .svg extension as the type signal.
-		downloadText(svg, name);
-		flash(`downloaded ${name}`);
-	} catch (e) {
-		flash(`svg export failed: ${e.message}`, "err");
-	} finally {
-		store.exporting = false;
-	}
-}
+// The implementations live in export.js (parallel to capture.js); the store
+// keeps the public API and wires its own store/flash/refreshSql so components
+// import these exact names without knowing about the split.
+import {
+	copyInserts as copyInsertsImpl,
+	copySql as copySqlImpl,
+	exportDdl as exportDdlImpl,
+	exportFilename as exportFilenameImpl,
+	exportPng as exportPngImpl,
+	exportSvg as exportSvgImpl,
+} from "./export.js";
+
+export const copyInserts = () => copyInsertsImpl(store, flash);
+export const copySql = () => copySqlImpl(store, refreshSql, flash);
+export const exportFilename = () => exportFilenameImpl(store);
+export const exportDdl = () => exportDdlImpl(store, flash);
+export const exportPng = () => exportPngImpl(store, flash);
+export const exportSvg = () => exportSvgImpl(store, flash);

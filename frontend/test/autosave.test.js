@@ -135,7 +135,7 @@ test("flushCurrent saves when dirty and has file", async () => {
 	const store = fakeStore("a.sql");
 	await flushCurrent({ store, saveCurrent: async () => saveCalled++ });
 	assert.equal(saveCalled, 1);
-	assert.equal(isDirty(), true); // flush does not reset dirty? actual sets via saveCurrent, but our mock doesn't. Check autosave flush leaves dirty? It calls saveCurrent but dirty stays true until setDirty false by caller. Just check save was called.
+	assert.equal(isDirty(), true); // flushCurrent does not clear dirty; the real saveCurrent does
 	setDirty(false);
 });
 

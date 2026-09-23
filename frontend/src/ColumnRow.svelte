@@ -29,26 +29,26 @@ let { column, parentName, onEdit } = $props();
 		box-sizing: border-box;
 	}
 	.row:hover {
-		background: #232b35;
+		background: var(--color-surface-hover);
 	}
 	.row .cname {
 		flex: 1 1 auto;
 		min-width: 24px;
 		font-size: 11px;
-		color: #d8dee6;
+		color: var(--color-text);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.row .cname.pk {
-		color: #fbbf24;
+		color: var(--color-warning);
 		font-weight: 600;
 	}
 	.row .ty {
 		flex: 0 0 auto;
 		max-width: 80px;
 		font: 9px ui-monospace, monospace;
-		color: #7fa3c0;
+		color: var(--color-text-faint);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -58,7 +58,7 @@ let { column, parentName, onEdit } = $props();
 		display: flex;
 		gap: 2px;
 		font: 8px ui-monospace, monospace;
-		color: #66bb88;
+		color: var(--color-flag);
 		max-width: 62px;
 		overflow: hidden;
 	}
@@ -66,7 +66,7 @@ let { column, parentName, onEdit } = $props();
 		flex: 0 0 auto;
 		max-width: 52px;
 		font: 9px ui-monospace, monospace;
-		color: #bb5588;
+		color: var(--color-accent);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -76,7 +76,7 @@ let { column, parentName, onEdit } = $props();
 		width: 16px;
 		box-sizing: border-box;
 		background: transparent;
-		color: #9fb0c0;
+		color: var(--color-text-muted);
 		border: 0;
 		cursor: pointer;
 		font-size: 11px;
@@ -94,7 +94,7 @@ let { column, parentName, onEdit } = $props();
 		box-sizing: border-box;
 		padding: 0 4px;
 		font: italic 10px system-ui, sans-serif;
-		color: #7fa3c0;
+		color: var(--color-text-faint);
 		line-height: 16px;
 		overflow: hidden;
 		text-overflow: ellipsis;

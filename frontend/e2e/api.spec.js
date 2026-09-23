@@ -68,8 +68,12 @@ test("files: traversal + bad name rejected, save/read/delete round-trip", async 
 	expect((await request.get("/api/files/api.spec.sql")).status()).toBe(404);
 });
 
-test("open of unparseable file → 400 with message", async ({ request }) => {
-	// write via API is always valid; corrupt file needs the dir — assert open path on missing name
+test("open of a missing file → 404 with the name in the message", async ({
+	request,
+}) => {
+	// the open endpoint answers 404 for a name that was never saved, and says
+	// which name — the UI surfaces the error with the file, so the message
+	// must carry it
 	const res = await request.get("/api/files/ghost.sql");
 	expect(res.status()).toBe(404);
 	expect(await res.text()).toContain("ghost.sql");

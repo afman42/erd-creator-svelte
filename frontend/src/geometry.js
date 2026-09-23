@@ -17,12 +17,50 @@
 // was unverifiable from either call site. Anything that needs a card's size
 // should call boxHeight() instead of open-coding the sum.
 
+/**
+ * Type shorthands for the core shapes. The shapes are defined once in erd.js
+ * (the client model's home); geometry.js consumes them.
+ * @typedef {import("./erd.js").Table} Table
+ * @typedef {import("./erd.js").Column} Column
+ * @typedef {import("./erd.js").Schema} Schema
+ */
+
 export const HDR_H = 28; // .hdr height
 export const ROW_H = 42; // .row (26px) + .cmt (16px) per column
 export const ADDCOL_H = 25; // .addcol ("+ column") footer
 export const BORDER_H = 2; // section.table border: 1px top + 1px bottom
 export const BOX_W = 280; // section.table width
 export const GAP = 12; // vertical gap between cards stacked in a layer
+
+// Layout origin: where the first card of each layer column starts. Both
+// erd.js's layout() and schema.svelte.js's addTable() used to open-code 40,
+// so the two callers could diverge (and one did, before stackStep()).
+export const CANVAS_ORIGIN = { x: 40, y: 40 };
+// How far a duplicated card is offset from its source. Was open-coded as
+// `+ 30` in dupTable; hoisted so the offset is a documented constant.
+export const DUP_OFFSET = 30;
+// X distance between layout layers (one table per layer). Was local to
+// layout(); hoisted so placement arithmetic lives beside the other metrics.
+export const COL_W = 340;
+
+// Nudge/move step shared by every mover of cards in App.svelte. This was
+// re-typed as a bare literal in the arrow-key handler; hoisted so the step has
+// one owner and the two keys (plain/shift) cannot drift.
+export const NUDGE_STEP = 10; // arrow-key nudge per press (shift = 2x)
+export const NUDGE_STEP_FAST = NUDGE_STEP * 2;
+
+// snapCoord rounds a card coordinate to a whole pixel. Cards are placed,
+// dragged and nudged in pointer units where sub-pixel deltas are common
+// (high-DPI mice, touch). Leaving a fractional position makes the saved .sql
+// and the export carry x/y decimals the Go model does not intend, so the final
+// position is snapped on the way in.
+/**
+ * @param {number} v
+ * @returns {number}
+ */
+export function snapCoord(v) {
+	return Math.round(v);
+}
 
 // Half a row: where an FK edge attaches inside its column row. ROW_H covers the
 // row plus its comment line, so the anchor is half the *row*, not half ROW_H.
@@ -68,6 +106,10 @@ export const EDGE_BOW = 30;
 export const EDGE_LANE = 44;
 
 // Total rendered height of a card with nColumns columns.
+/**
+ * @param {number} nColumns
+ * @returns {number}
+ */
 export function boxHeight(nColumns) {
 	return HDR_H + nColumns * ROW_H + ADDCOL_H + BORDER_H;
 }
@@ -100,6 +142,10 @@ export const LABEL_ANCHOR = "middle";
 
 // Vertical distance between the tops of two cards stacked in the same layer:
 // one card plus the gap below it.
+/**
+ * @param {number} nColumns
+ * @returns {number}
+ */
 export function stackStep(nColumns) {
 	return boxHeight(nColumns) + GAP;
 }
@@ -137,6 +183,11 @@ export function stackStep(nColumns) {
 //                honest reading is 0..N.
 //
 // t is the child (FK-holding) table, c the FK column.
+/**
+ * @param {import("./erd.js").Table} t
+ * @param {import("./erd.js").Column} c
+ * @returns {{ child: "0..1"|"0..N", parent: "0..1"|"1..1" }}
+ */
 export function cardinality(t, c) {
 	// A sole PK is unique; a composite-PK member is not.
 	const unique = isUniqueRef(t, c);
@@ -149,6 +200,11 @@ export function cardinality(t, c) {
 }
 
 // isSolePk: a sole primary key is unique, pinning the CHILD end to 0..1.
+/**
+ * @param {import("./erd.js").Table} t
+ * @param {import("./erd.js").Column} c
+ * @returns {boolean}
+ */
 export function isSolePk(t, c) {
 	return !!c.pk && t.columns.filter((x) => x.pk).length === 1;
 }
@@ -159,6 +215,11 @@ export function isSolePk(t, c) {
 // NOT: in a junction table PK(a, b) each column repeats freely, which is
 // exactly why it is M:N — reading `pk` alone as unique would label every
 // junction table 0..1 and invert the notation.
+/**
+ * @param {import("./erd.js").Table} t
+ * @param {import("./erd.js").Column} c
+ * @returns {boolean}
+ */
 export function isUniqueRef(t, c) {
 	return !!(c.ux || isSolePk(t, c));
 }
@@ -191,6 +252,11 @@ export const CARDINALITY_STATES = [
 // pkConflictsWith() — the dialog offers every option and clears the PK when a
 // pick needs it gone, so this answers "what does the PK allow", not "what may
 // the user click".
+/**
+ * @param {import("./erd.js").Table} t
+ * @param {import("./erd.js").Column} c
+ * @returns {string[]}
+ */
 export function reachableStates(t, c) {
 	const parent = c.pk ? "1..1" : null; // PK → emitted NOT NULL
 	const child = isSolePk(t, c) ? "0..1" : null; // sole PK → unique
@@ -207,11 +273,22 @@ export function reachableStates(t, c) {
 // distinction too: a composite-PK member can be asked for a 0..1 child end
 // without touching the PK, because PRIMARY KEY (a, b) does not make `a` unique
 // on its own.
+/**
+ * @param {import("./erd.js").Table} t
+ * @param {import("./erd.js").Column} c
+ * @param {string} stateId
+ * @returns {boolean}
+ */
 export function pkConflictsWith(t, c, stateId) {
 	return !reachableStates(t, c).includes(stateId);
 }
 
 // cardinalityState returns the id of the state a column is currently in.
+/**
+ * @param {import("./erd.js").Table} t
+ * @param {import("./erd.js").Column} c
+ * @returns {?string}
+ */
 export function cardinalityState(t, c) {
 	const { child, parent } = cardinality(t, c);
 	const found = CARDINALITY_STATES.find(
@@ -234,6 +311,12 @@ export function cardinalityState(t, c) {
 // the choice visible but unreachable. Clearing the PK keeps the model and the
 // emitted DDL in agreement — the one thing that must not break — while letting
 // every option be selected. setCardinality() flashes when this happens.
+/**
+ * @param {import("./erd.js").Table} t
+ * @param {import("./erd.js").Column} c
+ * @param {string} stateId
+ * @returns {boolean}
+ */
 export function applyCardinality(t, c, stateId) {
 	const state = CARDINALITY_STATES.find((s) => s.id === stateId);
 	if (!state) return false;
@@ -243,6 +326,10 @@ export function applyCardinality(t, c, stateId) {
 	return true;
 }
 
+/**
+ * @param {{ tables: import("./erd.js").Table[] }} schema
+ * @returns {Array<{d: string, self: boolean, arrowAtStart: boolean, from: {x: number, y: number, dy: number, text: string}, to: {x: number, y: number, dy: number, text: string}}>}
+ */
 export function edgePaths(schema) {
 	// Edges are ROUTED first and drawn second, because the lane an edge takes
 	// depends on how many other edges share its table pair — a fact only known

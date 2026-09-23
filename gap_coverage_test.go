@@ -47,28 +47,26 @@ func TestHandleMissingTarget(t *testing.T) {
 	if got, err := handleMissingTarget(full, root, "new.sql"); err != nil || got != full {
 		t.Errorf("expected success, got %q %v", got, err)
 	}
-	// parent != root: create subdir and use it
+	// parent != root: a parent under the store is refused because the resolved
+	// target would not be a direct store entry
 	sub := filepath.Join(dir, "sub")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	subRoot, _ := resolveStoreRoot(dir)
-	// full whose parent is sub, not root
 	full2 := filepath.Join(sub, "a.sql")
-	if _, err := handleMissingTarget(full2, subRoot, "a.sql"); err == nil {
+	if _, err := handleMissingTarget(full2, root, "a.sql"); err == nil {
 		t.Error("parent != root should error")
 	}
-	// cannot resolve parent: use non-existent root that EvalSymlinks fails
-	if _, err := handleMissingTarget("/nonexistent/path/a.sql", "/nonexistent", "a.sql"); err == nil {
-		t.Error("unresolvable parent should error")
+	// parent itself cannot be resolved (does not exist): EvalSymlinks fails
+	type missingCase struct {
+		full, root, name string
 	}
-	_ = root
-}
-
-func TestHandleMissingTargetCannotResolve(t *testing.T) {
-	// parent EvalSymlinks fails when Dir is itself a broken symlink? Use dir that doesn't exist
-	if _, err := handleMissingTarget("/tmp/__missing_XYZ__/a.sql", "/tmp/__missing_XYZ__", "a.sql"); err == nil {
-		t.Error("expected cannot resolve")
+	for _, tc := range []missingCase{
+		{filepath.Join(root, "nope", "a.sql"), filepath.Join(root, "nope"), "a.sql"},
+	} {
+		if _, err := handleMissingTarget(tc.full, tc.root, tc.name); err == nil {
+			t.Errorf("unresolvable parent should error: %v", tc)
+		}
 	}
 }
 
@@ -162,6 +160,11 @@ func TestIsValidTypeExprGaps(t *testing.T) {
 
 // ---- GenInserts branches ----
 
+// GenInserts emits one commented INSERT per table. The branch table must be
+// asserted per COLUMN VALUE, not by set-presence: the old check looked for each
+// rendered value anywhere in the output, so two branches swapping values (e.g.
+// DATE and DATETIME both emitting NOW()) went unnoticed. One full-row string
+// pins order and value together.
 func TestGenInsertsBranches(t *testing.T) {
 	s := &Schema{Tables: []Table{
 		{ID: "t1", Name: "t", Columns: []Col{
@@ -178,12 +181,10 @@ func TestGenInsertsBranches(t *testing.T) {
 		}},
 	}}
 	out := s.GenInserts()
-	// check each branch appears
-	wants := []string{"NULL", "'2026-01-01'", "NOW()", "'{}'", "''", "FALSE", "0.00"}
-	for _, w := range wants {
-		if !strings.Contains(out, w) {
-			t.Errorf("missing %q in %q", w, out)
-		}
+	// one row, all ten branches in position; two values swapping would fail here
+	want := "INSERT INTO `t` (`a`, `b`, `c`, `d`, `e`, `f`, `g`, `h`, `i`, `j`) VALUES (NULL, 0, 0.00, FALSE, '2026-01-01', NOW(), NOW(), '{}', '', '');"
+	if !strings.Contains(out, want) {
+		t.Errorf("insert row wrong:\n--- got ---\n%s\n--- want ---\n%s", out, want)
 	}
 	// empty table skipped
 	s2 := &Schema{Tables: []Table{{ID: "t1", Name: "empty"}}}
@@ -198,33 +199,31 @@ func TestGenInsertsBranches(t *testing.T) {
 
 // ---- findTable / fkTarget dead code ----
 
-func TestFindTableAndFkTarget(t *testing.T) {
+func TestFkTargetMapBranches(t *testing.T) {
 	tables := []Table{{ID: "t1", Name: "a"}, {ID: "t2", Name: "b"}}
-	if findTable(tables, "t1") == nil || findTable(tables, "nope") != nil {
-		t.Error("findTable")
-	}
-	// fkTarget with nil ref
-	if _, _, ok := fkTarget(tables, Col{}); ok {
+	m := tableMap(tables)
+	// nil ref
+	if _, _, ok := fkTargetMap(m, Col{}); ok {
 		t.Error("nil ref should be false")
 	}
-	// fkTarget with missing parent
-	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableID: "missing"}}); ok {
+	// missing parent
+	if _, _, ok := fkTargetMap(m, Col{Ref: &Ref{TableID: "missing"}}); ok {
 		t.Error("missing parent should be false")
 	}
-	// fkTarget with parent but no PK
+	// parent but no PK
 	tables[0].Columns = []Col{{Name: "id", Type: "INT"}}
-	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableID: "t1"}}); ok {
+	if _, _, ok := fkTargetMap(tableMap(tables), Col{Ref: &Ref{TableID: "t1"}}); ok {
 		t.Error("no PK should be false")
 	}
-	// fkTarget with composite PK
+	// composite PK
 	tables[0].Columns = []Col{{Name: "a", Type: "INT", Pk: true}, {Name: "b", Type: "INT", Pk: true}}
-	if _, _, ok := fkTarget(tables, Col{Ref: &Ref{TableID: "t1"}}); ok {
+	if _, _, ok := fkTargetMap(tableMap(tables), Col{Ref: &Ref{TableID: "t1"}}); ok {
 		t.Error("composite PK should be false")
 	}
 	// success
 	tables[0].Columns = []Col{{Name: "id", Type: "INT", Pk: true}}
 	c := Col{Ref: &Ref{TableID: "t1"}, Name: "fk"}
-	if _, _, ok := fkTarget(tables, c); !ok {
+	if _, _, ok := fkTargetMap(tableMap(tables), c); !ok {
 		t.Error("should succeed")
 	}
 }
@@ -239,7 +238,13 @@ func TestUnquoteHelpers(t *testing.T) {
 		t.Error("unquoteTick plain")
 	}
 	if unquoteDQ(`"a""b"`) != `a"b` {
-		t.Skip("unquoteDQ not exported as tested; check postgres helper")
+		t.Error("unquoteDQ escape")
+	}
+	if unquoteDQ(`"a b"`) != `a b` {
+		t.Error("unquoteDQ quoted-with-space")
+	}
+	if unquoteDQ("plain") != "plain" {
+		t.Error("unquoteDQ plain")
 	}
 }
 
@@ -381,20 +386,20 @@ func TestHandleSchemaAPIAndDecode(t *testing.T) {
 	if rec.Code != 200 {
 		t.Errorf("lint: %d %s", rec.Code, rec.Body.String())
 	}
-	// unknown path -> 404
+	// unknown path -> 404 (regression: a drift to 200/400 passed silently before)
 	req2 := httptest.NewRequest("POST", "/api/unknown", bytes.NewReader(body))
 	rec2 := httptest.NewRecorder()
 	handleSchemaAPI(rec2, req2)
-	// handleSchemaAPI checks path via map, unknown path returns 404
-	// need to send valid schema first, so decode succeeds
-	// Our test sends tables with valid name, should hit 404
-	if rec2.Code != 404 && rec2.Code != 400 {
-		t.Logf("unknown path code %d", rec2.Code)
+	if rec2.Code != http.StatusNotFound {
+		t.Errorf("unknown path code %d, want 404 (%s)", rec2.Code, rec2.Body.String())
 	}
 	// invalid schema
 	badS := Schema{Tables: []Table{{ID: "t1", Name: "bad\x01", Columns: []Col{}}}}
-	bad, _ := json.Marshal(map[string]any{"tables": badS.Tables})
-	req3 := httptest.NewRequest("POST", "/api/lint", bytes.NewReader(bad))
+	badBody, badErr := json.Marshal(map[string]any{"tables": badS.Tables})
+	if badErr != nil {
+		t.Fatalf("marshal: %v", badErr)
+	}
+	req3 := httptest.NewRequest("POST", "/api/lint", bytes.NewReader(badBody))
 	rec3 := httptest.NewRecorder()
 	handleSchemaAPI(rec3, req3)
 	if rec3.Code != 400 {
@@ -436,12 +441,15 @@ func TestOriginMatchesHostBranches(t *testing.T) {
 func TestSaveFileGaps(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
-	// zero tables already covered, but test via saveFile directly: invalid JSON, unsaveable is already saveable true for unknown->mysql
-	// Test dialect export-only: use schema with dialect that is not saveable? Currently all four are saveable, unknown normalizes to mysql so saveable. So no gap.
-	// Instead test saveFile with valid schema but ensure GenSQL error path is exercised via invalid type that Validate catches (already 400)
-	// Create a schema with control char in type that Validate rejects, ensure save leaves no file
+	// The save-reject paths live in files_test.go (TestSaveFileRejects covers
+	// bad JSON, no tables, unsaveable dialect); this test targets the
+	// server-side guarantee: a schema whose type Validate rejects must leave
+	// no file behind.
 	rec := httptest.NewRecorder()
-	badBody, _ := json.Marshal(Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "VARCHAR(1;DROP)"}}}}})
+	badBody, badErr := json.Marshal(Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "VARCHAR(1;DROP)"}}}}})
+	if badErr != nil {
+		t.Fatalf("marshal: %v", badErr)
+	}
 	req := httptest.NewRequest("PUT", "/api/files/bad.sql", bytes.NewReader(badBody))
 	h.ServeHTTP(rec, req)
 	if rec.Code != 400 {
@@ -450,10 +458,6 @@ func TestSaveFileGaps(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "bad.sql")); err == nil {
 		t.Error("bad file should not exist")
 	}
-	// Test GET via handleFiles with existing file that is not sql? Already covered
-	// Test saveFile success already covered, but ensure tmp cleanup not left
-	_ = httptest.NewRequest
-	_ = http.StatusBadRequest
 }
 
 // ---- export helpers gaps ----

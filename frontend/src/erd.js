@@ -1,6 +1,6 @@
 // erd.js — client-side UI helpers + auto-layout. All SQL grammar (generate,
 // parse, lint) lives in Go; the browser talks to /api and /export.
-import { stackStep } from "./geometry.js";
+import { CANVAS_ORIGIN, COL_W, stackStep } from "./geometry.js";
 
 export const TYPES = [
 	"INT",
@@ -64,17 +64,62 @@ export function newSchema(
 	return { dialect, sqliteTypes, tables };
 }
 
-export let nextTableId = 1;
-export let nextColId = 1;
-export function newTable(name) {
+/**
+ * @typedef {{
+ *   id: string,
+ *   name: string,
+ *   x: number,
+ *   y: number,
+ *   columns: Column[],
+ *   indexes: Index[],
+ * }} Table
+ */
+/**
+ * @typedef {{
+ *   id: string,
+ *   name: string,
+ *   type: string,
+ *   pk: boolean,
+ *   nn: boolean,
+ *   ai: boolean,
+ *   ux: boolean,
+ *   ix: boolean,
+ *   comment: string,
+ *   ref: ?Ref,
+ * }} Column
+ */
+/** @typedef {{ tableId: string, action: string, onUpdate: string }} Ref */
+/** @typedef {{ cols: string[], name?: string }} Index */
+
+// Sequential id source. Every id-producing function takes an optional `idSource`
+// so callers (tests especially) can inject a deterministic counter and never
+// depend on how many ids earlier calls consumed — the old module-global
+// counters made ids order-dependent across test runs. The default keeps ids
+// unique for the life of the page.
+let nextTableId = 1;
+let nextColId = 1;
+
+/**
+ * @returns {{ tableId: string, colId: string }}
+ */
+export function defaultIdSource() {
+	return { tableId: `t${nextTableId++}`, colId: `c${nextColId++}` };
+}
+
+/**
+ * @param {string} name
+ * @param {() => { tableId: string, colId: string }} [idSource]
+ * @returns {Table}
+ */
+export function newTable(name, idSource = defaultIdSource) {
 	return {
-		id: `t${nextTableId++}`,
+		id: idSource().tableId,
 		name,
 		x: 0,
 		y: 0,
 		columns: [
 			{
-				id: `c${nextColId++}`,
+				id: idSource().colId,
 				name: "id",
 				type: "INT",
 				pk: true,
@@ -93,9 +138,14 @@ export function newTable(name) {
 		indexes: [],
 	};
 }
-export function newColumn() {
+
+/**
+ * @param {() => { tableId: string, colId: string }} [idSource]
+ * @returns {Column}
+ */
+export function newColumn(idSource = defaultIdSource) {
 	return {
-		id: `c${nextColId++}`,
+		id: idSource().colId,
 		name: "column",
 		type: "VARCHAR(255)",
 		pk: false,
@@ -107,13 +157,19 @@ export function newColumn() {
 		ref: null,
 	};
 }
-export function cloneTable(t) {
+
+/**
+ * @param {Table} t
+ * @param {() => { tableId: string, colId: string }} [idSource]
+ * @returns {Table}
+ */
+export function cloneTable(t, idSource = defaultIdSource) {
 	return {
 		...t,
-		id: `t${nextTableId++}`,
+		id: idSource().tableId,
 		columns: t.columns.map((c) => ({
 			...c,
-			id: `c${nextColId++}`,
+			id: idSource().colId,
 			ref: c.ref ? { ...c.ref } : null,
 		})),
 		// Indexes must be deep-copied: the `...t` spread above copies the array
@@ -127,13 +183,18 @@ export function cloneTable(t) {
 // adoptIds: wire schema (tables carry id, columns don't) → client model.
 // Keeps table ids (refs point at them), allocates column ids, bumps counters
 // so later newTable/newColumn never collide.
-export function adoptIds(schema) {
+/**
+ * @param {{ tables: Table[] }} schema
+ * @param {() => { tableId: string, colId: string }} [idSource]
+ * @returns {*}
+ */
+export function adoptIds(schema, idSource = defaultIdSource) {
 	for (const t of schema.tables) {
 		if (/^t\d+$/.test(t.id))
 			nextTableId = Math.max(nextTableId, +t.id.slice(1) + 1);
-		else t.id = `t${nextTableId++}`;
+		else t.id = idSource().tableId;
 		for (const c of t.columns) {
-			if (!c.id) c.id = `c${nextColId++}`;
+			if (!c.id) c.id = idSource().colId;
 			else if (/^c\d+$/.test(c.id))
 				nextColId = Math.max(nextColId, +c.id.slice(1) + 1);
 		}
@@ -142,6 +203,9 @@ export function adoptIds(schema) {
 }
 
 // Auto-layout: layered by FK depth, referenced tables leftmost. No coords stored.
+/**
+ * @param {{ tables: Table[] }} schema
+ */
 export function layout(schema) {
 	const byId = Object.fromEntries(schema.tables.map((t) => [t.id, t]));
 	const depth = new Map();
@@ -163,11 +227,10 @@ export function layout(schema) {
 		if (!cols.has(layer)) cols.set(layer, []);
 		cols.get(layer).push(t);
 	}
-	const COL_W = 340;
 	for (const [layer, ts] of cols) {
-		let y = 40;
+		let y = CANVAS_ORIGIN.y;
 		for (const t of ts) {
-			t.x = 40 + layer * COL_W;
+			t.x = CANVAS_ORIGIN.x + layer * COL_W;
 			t.y = y;
 			// stackStep() owns the card-height + gap arithmetic (geometry.js).
 			// This was open-coded as `+ 24 + GAP`, which is 3px less than the
@@ -185,6 +248,11 @@ export function layout(schema) {
 //
 // `taken` may be an Array or a Set — callers with many tables pass a Set for
 // O(1) lookup (500 tables: 5× faster than Array.includes in bench).
+/**
+ * @param {string} base
+ * @param {string[] | Set<string>} taken
+ * @returns {string}
+ */
 export function uniqName(base, taken) {
 	const m = /^(.*?)(\d+)$/.exec(base);
 	const prefix = m ? m[1] : base;

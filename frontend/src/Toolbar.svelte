@@ -1,5 +1,10 @@
 <script>
-import { DEFAULT_SQLITE_TYPES, DIALECTS, isSaveable } from "./erd.js";
+import {
+	DEFAULT_SQLITE_TYPES,
+	DIALECTS,
+	isSaveable,
+	SQLITE_TYPES,
+} from "./erd.js";
 import {
 	addTable,
 	copyInserts,
@@ -76,8 +81,11 @@ const LABELS = {
 			aria-label="SQLite types mode"
 			data-testid="sqlite-types"
 		>
-			<option value="native">types: native</option>
-			<option value="portable">types: portable</option>
+			<!-- Enumerated from SQLITE_TYPES (erd.js) so the allowed modes live in
+			     one place; the two options are native and portable. -->
+			{#each SQLITE_TYPES as mode (mode)}
+				<option value={mode}>types: {mode}</option>
+			{/each}
 		</select>
 	{/if}
 	<button onclick={exportDdl} disabled={store.exporting} aria-label="Export">
@@ -101,8 +109,8 @@ const LABELS = {
 		gap: 8px;
 		align-items: center;
 		padding: 8px 12px;
-		background: #1a2028;
-		border-bottom: 1px solid #2a3340;
+		background: var(--color-surface);
+		border-bottom: 1px solid var(--color-border-strong);
 		position: sticky;
 		top: 0;
 		z-index: 5;
@@ -116,11 +124,11 @@ const LABELS = {
 		height: 4px;
 	}
 	header::-webkit-scrollbar-thumb {
-		background: #3b4654;
+		background: var(--color-border);
 	}
 	header button,
 	header .btn {
-		background: #2b6cb0;
+		background: var(--color-primary);
 		color: #fff;
 		border: 0;
 		border-radius: 5px;
@@ -131,14 +139,14 @@ const LABELS = {
 		white-space: nowrap;
 	}
 	header button:disabled {
-		background: #3b4654;
+		background: var(--color-border);
 		color: #778;
 		cursor: default;
 	}
 	header select.dialect {
-		background: #101418;
-		color: #d8dee6;
-		border: 1px solid #3b4654;
+		background: var(--color-bg);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 		border-radius: 5px;
 		padding: 5px 6px;
 		font: inherit;
@@ -155,13 +163,13 @@ const LABELS = {
 		flex: 0 1 auto;
 	}
 	.err {
-		color: #f87171;
+		color: var(--color-danger);
 	}
 	.ok {
-		color: #4ade80;
+		color: var(--color-success);
 	}
 	.warn {
-		color: #fbbf24;
+		color: var(--color-warning);
 	}
 	.sr-only {
 		position: absolute;

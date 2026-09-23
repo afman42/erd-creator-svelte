@@ -10,12 +10,16 @@ import {
 	LABEL_FILL,
 	LABEL_HALO,
 	LABEL_HALO_WIDTH,
+	NUDGE_STEP,
+	NUDGE_STEP_FAST,
+	snapCoord,
 } from "./geometry.js";
 import SqlPanel from "./SqlPanel.svelte";
 import {
 	refreshSql,
 	rmTable,
 	setSelected,
+	snap,
 	store,
 	touch,
 	undo,
@@ -61,11 +65,17 @@ function onMove(ev) {
 		// <4px = click (select), not a drag
 		if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < 4) return;
 		drag.moved = true;
+		// One undo step per drag, snapshot before the first position write so
+		// undo restores the pre-drag coordinates.
+		snap();
 	}
 	const t = store.schema.tables.find((x) => x.id === drag.id);
 	if (t) {
-		t.x = Math.max(0, drag.tx0 + ev.clientX - drag.x0);
-		t.y = Math.max(0, drag.ty0 + ev.clientY - drag.y0);
+		// Pure delta: only the pointer origin and the table's origin matter.
+		// The final position is snapped to whole pixels (snapCoord) so the
+		// saved .sql never carries sub-pixel coordinates from high-DPI input.
+		t.x = snapCoord(Math.max(0, drag.tx0 + ev.clientX - drag.x0));
+		t.y = snapCoord(Math.max(0, drag.ty0 + ev.clientY - drag.y0));
 	}
 }
 function onUp() {
@@ -98,7 +108,10 @@ function onKey(ev) {
 		const t = store.schema.tables.find((x) => x.id === store.selected);
 		if (t) {
 			ev.preventDefault();
-			const step = ev.shiftKey ? 20 : 10;
+			// One undo step per nudge press; snapshot before moving so undo
+			// restores the pre-nudge position.
+			snap();
+			const step = ev.shiftKey ? NUDGE_STEP_FAST : NUDGE_STEP;
 			if (ev.key === "ArrowUp") t.y = Math.max(0, t.y - step);
 			if (ev.key === "ArrowDown") t.y += step;
 			if (ev.key === "ArrowLeft") t.x = Math.max(0, t.x - step);
@@ -226,7 +239,7 @@ function onKey(ev) {
 		position: relative;
 		flex: 1;
 		overflow: auto;
-		background: radial-gradient(#232b35 1px, transparent 1px);
+		background: radial-gradient(var(--color-surface-hover) 1px, transparent 1px);
 		background-size: 20px 20px;
 		min-height: 300px;
 	}
@@ -252,11 +265,11 @@ function onKey(ev) {
 	   straddles the line it describes. Styled via a class, not an inline style:
 	   the CSP is style-src 'self' and would block the latter. */
 	.card {
-		fill: #9fb0c0;
+		fill: var(--color-text-muted);
 		font: 9px ui-monospace, monospace;
 		text-anchor: middle;
 		paint-order: stroke;
-		stroke: #101418;
+		stroke: var(--color-bg);
 		stroke-width: 2.5px;
 	}
 	.self {

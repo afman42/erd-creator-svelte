@@ -156,8 +156,10 @@ func parsePostgres(sql string) (*Schema, error) {
 		tbl := &s.Tables[cur]
 
 		if m := rePgPK.FindStringSubmatch(body); m != nil {
-			for _, name := range strings.Split(m[1], ",") {
-				markCol(tbl, unquoteDQ(name), func(c *Col) { c.Pk = true })
+			// Same quote-aware split as the index paths: a column named "a, b"
+			// is one PK element, not two.
+			for _, name := range splitIndexCols(m[1], unquoteDQ) {
+				markCol(tbl, name, func(c *Col) { c.Pk = true })
 			}
 			continue
 		}

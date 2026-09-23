@@ -14,7 +14,7 @@ import { BOX_W, boxHeight } from "./geometry.js";
 const PAD = 40;
 const BG = "#101418";
 
-/** Filename for PNG export, mirrors exportFilename() in schema.svelte.js */
+/** Filename for PNG export, mirrors exportFilename() in export.js */
 export function pngFilename(currentFile, dialect) {
 	if (currentFile) return currentFile.replace(/\.sql$/i, ".png");
 	return `${dialect || "erd"}-schema.png`;

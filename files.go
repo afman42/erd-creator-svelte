@@ -3,9 +3,9 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -182,9 +182,17 @@ func openFile(w http.ResponseWriter, full, name string) {
 // retried with a random suffix rather than reused, so a legitimate leftover
 // temp file does not block saving.
 func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var s Schema
-	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Same envelope decode as every POST endpoint: a full Schema JSON (what the
+	// browser PUTs) or the wrapped {"schema":{...}} shape, with dialect and
+	// sqliteTypes carried at the top level either way.
+	s, err := decodeSchemaJSON(b)
+	if err != nil {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}

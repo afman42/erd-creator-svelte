@@ -143,6 +143,28 @@ func TestLintNoPK(t *testing.T) {
 	}
 }
 
+// TestLintArraySuffixIsNotAMismatch pins the array-suffix rule: `INT[]` and
+// `INT` are the SAME element type — the `[]` is PostgreSQL collection syntax,
+// a dimension, not a distinct base type. baseOf kept the suffix, so every
+// array FK onto a plain scalar PK (posts.tag_ids INT[] → tags.id INT) was
+// flagged as a false mismatch. The suffix must be stripped before the element
+// comparison; a genuine element mismatch (INT[] FK onto a VARCHAR PK) still
+// fires.
+func TestLintArraySuffixIsNotAMismatch(t *testing.T) {
+	s := &Schema{Dialect: DialectPostgres, Tables: []Table{
+		{ID: "t1", Name: "tags", Columns: []Col{{Name: "id", Type: "INT", Pk: true}}},
+		{ID: "t2", Name: "posts", Columns: []Col{{Name: "tag_ids", Type: "INT[]", Nn: true, Ref: &Ref{TableID: "t1"}}}},
+	}}
+	if l := s.Lint(); len(l) != 0 {
+		t.Fatalf("INT[] FK onto INT PK flagged as mismatch: %v", l)
+	}
+	// A real element mismatch still fires after the suffix is stripped.
+	s.Tables[1].Columns[0].Type = "VARCHAR(255)[]"
+	if l := s.Lint(); len(l) != 1 || !strings.Contains(l[0], "posts.tag_ids") {
+		t.Fatalf("VARCHAR[] FK onto INT PK not flagged: %v", l)
+	}
+}
+
 func TestGenInserts(t *testing.T) {
 	out := sampleSchema().GenInserts()
 	if !strings.Contains(out, "INSERT INTO `users` (`id`, `email`, `status`) VALUES (NULL, '', '');") {
@@ -346,27 +368,26 @@ func TestIndexNameDerivation(t *testing.T) {
 
 // TestRejectsBadIndexes: index names and columns are identifiers, so they are
 // checked by the same machinery as table and column names. Which layer rejects
-// what is deliberate and worth pinning, because it is the same layering the
-// type field uses:
+// what is deliberate and worth pinning:
 //
+//   - a semicolon in a name is rejected by Validate at the boundary: a quoted
+//     identifier containing one is technically safe SQL, but it reads as an
+//     injection ("ok; DROP TABLE ...") and the old last-gate rejection was a
+//     confusing 400 far from the cause. No file on disk can contain one — the
+//     old gate blocked it at save and never wrote such a file — so failing
+//     early cannot strand an existing schema.
 //   - a control character (a newline) breaks the line-oriented format, so
 //     Validate rejects it outright
 //   - an empty column list is structurally invalid, so Validate rejects it
-//   - a semicolon is NOT rejected by Validate: it is safe inside a quoted
-//     identifier, exactly as it is in a table name (`a;b` is a legal table
-//     name here). It is caught by validateOutput at the last gate instead,
-//     because the emitted line would contain a mid-line separator.
 //
-// The property that matters is the last one: GenSQL must never emit any of
-// them. Asserting Validate catches the semicolon too would be asserting a
-// behaviour the table-name path does not have.
+// The property that matters is that GenSQL never emits any of them.
 func TestRejectsBadIndexes(t *testing.T) {
 	cases := []struct {
 		name        string
 		ix          Index
 		wantInvalid bool // Validate must also reject it
 	}{
-		{"semicolon in name", Index{Name: "ok; DROP TABLE users;--", Cols: []string{"a", "b"}}, false},
+		{"semicolon in name", Index{Name: "ok; DROP TABLE users;--", Cols: []string{"a", "b"}}, true},
 		{"newline in column", Index{Name: "ok", Cols: []string{"a\nb", "c"}}, true},
 		{"no columns", Index{Name: "ok", Cols: []string{}}, true},
 	}
@@ -545,5 +566,170 @@ func TestParseNormalizesFKActionCase(t *testing.T) {
 	}
 	if err := s.Validate(); err != nil {
 		t.Errorf("parsed schema fails validation: %v", err)
+	}
+}
+
+// ---- identifiers the line grammar must span ----
+
+// TestRoundTripQuotedIdentifierSpaces: identifiers may contain spaces, so the
+// emitters quote them and the parsers must read the FULL quoted token back.
+// This pins the HIGH round-trip bug: mysql/sqlite tokenised with `(\S+)`,
+// which stops at a space inside “ `user accounts` “ — the tool saved a file
+// it could not reopen.
+func TestRoundTripQuotedIdentifierSpaces(t *testing.T) {
+	base := []Table{
+		{ID: "t1", Name: "user accounts", Columns: []Col{
+			{Name: "full name", Type: "VARCHAR(40)", Pk: true},
+			{Name: "other col", Type: "INT"},
+		}},
+	}
+	for _, d := range []string{"mysql", "mariadb", "postgres", "sqlite"} {
+		s := &Schema{Dialect: d, Tables: base}
+		sql, err := s.GenSQL()
+		if err != nil {
+			t.Fatalf("%s: %v", d, err)
+		}
+		s2, err := ParseDDL(sql)
+		if err != nil {
+			t.Fatalf("%s: could not reopen its own output:\n%s", d, sql)
+		}
+		if s2.Tables[0].Name != "user accounts" {
+			t.Errorf("%s: table name mangled: %q", d, s2.Tables[0].Name)
+		}
+		if s2.Tables[0].Columns[0].Name != "full name" {
+			t.Errorf("%s: column name mangled: %q", d, s2.Tables[0].Columns[0].Name)
+		}
+		if got := mustGenSQL(s2); got != sql {
+			t.Errorf("%s: round-trip drift:\n%s\n----\n%s", d, sql, got)
+		}
+	}
+}
+
+// TestRoundTripEnumParenValue: an ENUM value containing a closing paren was
+// not parseable — the old type scan `[^)]*` stopped at the first ) even inside
+// a quoted literal, rejecting a type the model accepts and emits.
+func TestRoundTripEnumParenValue(t *testing.T) {
+	base := []Table{
+		{ID: "t1", Name: "t", Columns: []Col{
+			{Name: "st", Type: "ENUM('a)b','c')"},
+			{Name: "id", Type: "INT", Pk: true},
+		}},
+	}
+	for _, d := range []string{"mysql", "mariadb", "postgres", "sqlite"} {
+		s := &Schema{Dialect: d, Tables: base}
+		sql, err := s.GenSQL()
+		if err != nil {
+			t.Fatalf("%s: %v", d, err)
+		}
+		s2, err := ParseDDL(sql)
+		if err != nil {
+			t.Fatalf("%s: could not reopen ENUM with ) value:\n%s", d, sql)
+		}
+		got := s2.Tables[0].Columns[0].Type
+		if got != "ENUM('a)b','c')" {
+			t.Errorf("%s: enum value mangled: %q", d, got)
+		}
+	}
+}
+
+// TestRoundTripCommaInIndexedName: an index column or PK named `a, b` must not
+// split on its comma. This was the arity-routing bug: reIndex's comma split
+// turned one quoted `a, b` column into a composite index of two.
+func TestRoundTripCommaInIndexedName(t *testing.T) {
+	base := []Table{
+		{ID: "t1", Name: "t", Columns: []Col{
+			{Name: "a, b", Type: "INT", Ix: true},
+			{Name: "id", Type: "INT", Pk: true},
+		}},
+	}
+	for _, d := range []string{"mysql", "mariadb", "postgres", "sqlite"} {
+		s := &Schema{Dialect: d, Tables: base}
+		sql, err := s.GenSQL()
+		if err != nil {
+			t.Fatalf("%s: %v", d, err)
+		}
+		s2, err := ParseDDL(sql)
+		if err != nil {
+			t.Fatalf("%s: could not reopen comma-named index column:\n%s", d, sql)
+		}
+		if got := s2.Tables[0].Columns[0].Name; got != "a, b" {
+			t.Errorf("%s: column name split: %q", d, got)
+		}
+		if !s2.Tables[0].Columns[0].Ix || len(s2.Tables[0].Indexes) != 0 {
+			t.Errorf("%s: single-column index misrouted: %v", d, s2.Tables[0].Indexes)
+		}
+		if got := mustGenSQL(s2); got != sql {
+			t.Errorf("%s: round-trip drift:\n%s\n----\n%s", d, sql, got)
+		}
+	}
+}
+
+// ---- validation: what cannot be represented or emitted ----
+
+// TestRejectsDuplicateTableNames: two tables with the same name emit CREATE
+// TABLE twice (invalid DDL), and the parser already rejects the duplicate on
+// reopen — so validation rejects before emit, naming the table.
+func TestRejectsDuplicateTableNames(t *testing.T) {
+	s := &Schema{Tables: []Table{
+		{ID: "t1", Name: "dup", Columns: []Col{{Name: "a", Type: "INT"}}},
+		{ID: "t2", Name: "dup", Columns: []Col{{Name: "b", Type: "INT"}}},
+	}}
+	if err := s.Validate(); err == nil {
+		t.Error("duplicate table names must be rejected")
+	}
+}
+
+// TestRejectsDuplicateColumnNames: two columns with the same name emit the
+// definition twice, and markCol on reopen touches only the first.
+func TestRejectsDuplicateColumnNames(t *testing.T) {
+	s := &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
+		{Name: "a", Type: "INT"},
+		{Name: "a", Type: "VARCHAR(9)"},
+	}}}}
+	if err := s.Validate(); err == nil {
+		t.Error("duplicate column names must be rejected")
+	}
+}
+
+// TestRejectsSingleColumnTableIndex: a table-level index over one column is
+// unrepresentable — the model and every parser keep single-column indexes on
+// Col.Ix — so it is refused rather than saved as DDL that reopens differently.
+func TestRejectsSingleColumnTableIndex(t *testing.T) {
+	s := &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
+		{Name: "a", Type: "INT", Pk: true},
+	}, Indexes: []Index{
+		{Name: "ix", Cols: []string{"a"}},
+	}}}}
+	if err := s.Validate(); err == nil {
+		t.Error("single-column table index must be rejected")
+	}
+}
+
+// TestRejectsDuplicateIndexNames: two indexes deriving the same emitted name
+// would write KEY idx_... twice; the database rejects that, so validation does.
+func TestRejectsDuplicateIndexNames(t *testing.T) {
+	s := &Schema{Tables: []Table{{ID: "t1", Name: "t", Columns: []Col{
+		{Name: "a", Type: "INT"},
+		{Name: "b", Type: "INT"},
+		{Name: "c", Type: "INT"},
+	}, Indexes: []Index{
+		{Cols: []string{"a", "b"}},
+		{Cols: []string{"a", "b"}},
+	}}}}
+	if err := s.Validate(); err == nil {
+		t.Error("duplicate derived index names must be rejected")
+	}
+}
+
+// TestLintMissingTable: an FK whose parent table does not exist is dropped
+// from the DDL — and must now be REPORTED, not silently vanish. The no-PK and
+// composite-PK cases were reported; the missing-table case was the gap.
+func TestLintMissingTable(t *testing.T) {
+	s := &Schema{Tables: []Table{{ID: "t1", Name: "posts", Columns: []Col{
+		{Name: "user_id", Type: "INT", Ref: &Ref{TableID: "gone"}},
+	}}}}
+	l := s.Lint()
+	if len(l) != 1 || !strings.Contains(l[0], "gone") {
+		t.Fatalf("missing-table FK not reported: %v", l)
 	}
 }

@@ -191,48 +191,90 @@ func (s *Schema) ValidateFor(dialect string) error {
 	return nil
 }
 
+// validateIndexes checks one table's index list. Extracted so validateShape
+// stays a thin per-construct driver (the index checks alone were ~30 lines).
+func validateIndexes(t Table) error {
+	if len(t.Indexes) > maxIndexes {
+		return fmt.Errorf("table %q: too many indexes: %d (max %d)", t.Name, len(t.Indexes), maxIndexes)
+	}
+	// A single-column index does NOT belong here: the model keeps those on
+	// Col.Ix (see the Index comment in grammar.go), and every parser routes
+	// len==1 to Col.Ix — so a table-level single-column Index is
+	// unrepresentable. Accepting one would write DDL that reopens as a
+	// different model.
+	seenIndexes := map[string]bool{}
+	for ii, ix := range t.Indexes {
+		if len(ix.Cols) == 0 {
+			return fmt.Errorf("table %q: index %d has no columns", t.Name, ii+1)
+		}
+		if len(ix.Cols) == 1 {
+			return fmt.Errorf("table %q: index %d has one column; single-column indexes belong on the column", t.Name, ii+1)
+		}
+		if len(ix.Cols) > maxColumns {
+			return fmt.Errorf("table %q: index %d has too many columns: %d (max %d)", t.Name, ii+1, len(ix.Cols), maxColumns)
+		}
+		// The emitted name (explicit or derived) must be unique per table:
+		// two indexes deriving the same name write `KEY idx_...` twice,
+		// which the database rejects. indexName is what the emitters use,
+		// so this is checked against the same string they will emit.
+		emitted := indexName(t, ix)
+		if seenIndexes[emitted] {
+			return fmt.Errorf("table %q: duplicate index name %q", t.Name, emitted)
+		}
+		seenIndexes[emitted] = true
+		if ix.Name != "" {
+			if err := validateIdent("index name", ix.Name); err != nil {
+				return fmt.Errorf("table %q: %w", t.Name, err)
+			}
+		}
+		for ci, col := range ix.Cols {
+			if err := validateIdent("index column", col); err != nil {
+				return fmt.Errorf("table %q index %d column %d: %w", t.Name, ii+1, ci+1, err)
+			}
+		}
+	}
+	return nil
+}
+
 // validateShape is the dialect-independent half of validation: the checks that
 // hold no matter which grammar the schema will be written in.
 func (s *Schema) validateShape() error {
 	if len(s.Tables) > maxTables {
 		return fmt.Errorf("too many tables: %d (max %d)", len(s.Tables), maxTables)
 	}
+	seenTables := map[string]bool{}
 	for ti, t := range s.Tables {
 		if err := validateIdent("table name", t.Name); err != nil {
 			return fmt.Errorf("table %d: %w", ti+1, err)
 		}
+		// A duplicate table name cannot be emitted (CREATE TABLE twice) and on
+		// reopen the parser's byName rejects it — so reject it here, before any
+		// emitter sees it, with a message naming the table.
+		if seenTables[t.Name] {
+			return fmt.Errorf("duplicate table name %q", t.Name)
+		}
+		seenTables[t.Name] = true
 		if len(t.Columns) > maxColumns {
 			return fmt.Errorf("table %q: too many columns: %d (max %d)", t.Name, len(t.Columns), maxColumns)
 		}
 		// Index names and column lists are emitted as identifiers, so they go
 		// through the same allowlist as table/column names — an index name is
 		// the same injection surface as any other identifier.
-		if len(t.Indexes) > maxIndexes {
-			return fmt.Errorf("table %q: too many indexes: %d (max %d)", t.Name, len(t.Indexes), maxIndexes)
+		if err := validateIndexes(t); err != nil {
+			return err
 		}
-		for ii, ix := range t.Indexes {
-			if len(ix.Cols) == 0 {
-				return fmt.Errorf("table %q: index %d has no columns", t.Name, ii+1)
-			}
-			if len(ix.Cols) > maxColumns {
-				return fmt.Errorf("table %q: index %d has too many columns: %d (max %d)", t.Name, ii+1, len(ix.Cols), maxColumns)
-			}
-			if ix.Name != "" {
-				if err := validateIdent("index name", ix.Name); err != nil {
-					return fmt.Errorf("table %q: %w", t.Name, err)
-				}
-			}
-			for ci, col := range ix.Cols {
-				if err := validateIdent("index column", col); err != nil {
-					return fmt.Errorf("table %q index %d column %d: %w", t.Name, ii+1, ci+1, err)
-				}
-			}
-		}
+		seenCols := map[string]bool{}
 		for ci, c := range t.Columns {
 			where := fmt.Sprintf("table %q column %d", t.Name, ci+1)
 			if err := validateIdent("column name", c.Name); err != nil {
 				return fmt.Errorf("%s: %w", where, err)
 			}
+			// Duplicate column names produce `c` INT, `c` INT — invalid DDL in
+			// every dialect, and on reopen markCol matches only the first.
+			if seenCols[c.Name] {
+				return fmt.Errorf("table %q: duplicate column name %q", t.Name, c.Name)
+			}
+			seenCols[c.Name] = true
 			if err := validateType(c.Type); err != nil {
 				return fmt.Errorf("%s (%q): %w", where, c.Name, err)
 			}
@@ -293,6 +335,15 @@ func checkBasicString(what, v string, max int) error {
 func validateIdent(what, v string) error {
 	if v == "" {
 		return fmt.Errorf("empty %s", what)
+	}
+	// A semicolon is refused here rather than left to validateOutput's last
+	// gate: inside a quoted identifier it is technically safe, but the emitted
+	// line ends up looking like an injection ("ok; DROP TABLE ...") and the
+	// old last-gate rejection was a confusing 400 far from the cause. No file
+	// on disk has such a name — the old gate blocked every save — so refusing
+	// early cannot strand an existing schema.
+	if strings.ContainsRune(v, ';') {
+		return fmt.Errorf("%s contains a semicolon", what)
 	}
 	if err := checkBasicString(what, v, maxNameLen); err != nil {
 		// checkBasicString reports "contains a control character" without quoting;
@@ -365,15 +416,37 @@ func validateText(what, v string, max int) error {
 // It looks for a statement separator that is not at a line end, which is the
 // signature of a value that escaped its position. A legitimate emitter never
 // produces that: every statement it writes is terminated at the end of a line.
+//
+// The scan is quote-aware: a ";" inside a backtick- or double-quoted
+// identifier, or inside a string literal, is part of that token rather than a
+// separator — an index named `a;b` (valid per the identifier allowlist) must
+// not bounce here with a confusing "embedded separator" message.
 func validateOutput(sql string) error {
 	for i, line := range strings.Split(sql, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if hasControlChar(trimmed) {
 			return fmt.Errorf("generated DDL line %d contains a control character", i+1)
 		}
-		// a ";" mid-line is only valid inside a quoted string or a comment
-		if idx := strings.Index(trimmed, ";"); idx >= 0 && idx != len(trimmed)-1 {
-			if !strings.HasPrefix(trimmed, "--") && !strings.Contains(trimmed, "'") {
+		if strings.HasPrefix(trimmed, "--") {
+			continue // a comment may contain anything
+		}
+		var q byte = 0 // byte(0) = outside quotes; one of ' " ` while inside
+		for j := range trimmed {
+			c := trimmed[j]
+			if q != 0 {
+				if c == q {
+					if q == '\'' && j+1 < len(trimmed) && trimmed[j+1] == '\'' {
+						j++ // '' escape inside a string literal
+						continue
+					}
+					q = 0
+				}
+				continue
+			}
+			switch {
+			case c == '\'' || c == '"' || c == '`':
+				q = c
+			case c == ';' && j != len(trimmed)-1:
 				return fmt.Errorf("generated DDL line %d contains an embedded statement separator", i+1)
 			}
 		}

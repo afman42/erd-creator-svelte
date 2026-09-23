@@ -197,6 +197,7 @@ func (s *Schema) Lint() []string {
 			}
 			p := byID[c.Ref.TableID]
 			if p == nil {
+				out = append(out, fmt.Sprintf("%s.%s → table %s: missing table; FK omitted from DDL", t.Name, c.Name, c.Ref.TableID))
 				continue
 			}
 			var pks []Col
@@ -218,8 +219,13 @@ func (s *Schema) Lint() []string {
 				continue
 			}
 			pk := pks[0]
-			if baseOf(pk.Type) != baseOf(c.Type) {
-				out = append(out, fmt.Sprintf("%s.%s %s vs %s.%s %s", t.Name, c.Name, baseOf(c.Type), p.Name, pk.Name, baseOf(pk.Type)))
+			// Compare element types: the [] array suffix is PostgreSQL syntax that
+			// changes the column to a collection of the same base type, so an
+			// INT[] FK onto an INT PK is a match, not a mismatch. Without the
+			// strip, every array FK onto a non-array PK flagged a false mismatch.
+			fkBase, pkBase := baseOf(c.Type), baseOf(pk.Type)
+			if strings.TrimSuffix(fkBase, "[]") != strings.TrimSuffix(pkBase, "[]") {
+				out = append(out, fmt.Sprintf("%s.%s %s vs %s.%s %s", t.Name, c.Name, fkBase, p.Name, pk.Name, pkBase))
 			}
 		}
 	}
@@ -270,19 +276,6 @@ func (s *Schema) GenSQL() (string, error) {
 	return out, nil
 }
 
-// mustGenSQL is GenSQL for callers holding an already-validated schema, where
-// an error means a bug in the validator or an emitter rather than bad input.
-// It panics rather than returning a partial string, because a truncated file is
-// worse than a loud failure — but it is only used from tests and from paths
-// that validated immediately before, never on unvalidated input.
-func mustGenSQL(s *Schema) string {
-	out, err := s.GenSQL()
-	if err != nil {
-		panic("validated schema failed to emit: " + err.Error())
-	}
-	return out
-}
-
 // ---- seed INSERT templates ----
 
 // GenInserts renders one commented INSERT template per table with columns, for
@@ -324,15 +317,34 @@ func (s *Schema) GenInserts() string {
 
 // ---- parse: reads only GenSQL output ----
 
+// ddlRe compiles a parser pattern written with a ~ sentinel standing in for a
+// backtick, then swaps the sentinel in. A raw Go string literal cannot contain
+// a backtick, and every identifier this grammar emits is backtick-quoted, so
+// the patterns need a way to spell one. Postgres avoids the problem because its
+// quote is a double quote; the mysql/sqlite grammars cannot. The sentinel is
+// written as "~" to mirror the golden-test convention (TestGenSQLGolden).
+//
+// The identifier token the sentinel-protected alternatives spell is: a fully
+// quoted token (`a b`, backticks INCLUDED so unquoteTick sees them) or a bare
+// run without spaces/backticks for hand-written files that omit quotes.
+func ddlRe(pattern string) *regexp.Regexp {
+	return regexp.MustCompile(strings.ReplaceAll(pattern, "~", "`"))
+}
+
 var (
 	reInsert   = regexp.MustCompile(`(?i)^INSERT INTO `)
-	reCreate   = regexp.MustCompile(`(?i)^CREATE TABLE (\S+) \($`)
+	reCreate   = ddlRe(`(?i)^CREATE TABLE ((?:~(?:[^~]|~~)*~|[^\s~]+)) \($`)
 	reEndTable = regexp.MustCompile(`(?i)^\) ENGINE=InnoDB;?$`)
 	rePK       = regexp.MustCompile(`(?i)^PRIMARY KEY \((.+)\)$`)
-	reUKey     = regexp.MustCompile(`(?i)^UNIQUE KEY (\S+) \((.+)\)$`)
-	reIndex    = regexp.MustCompile(`(?i)^(?:KEY|INDEX) (\S+) \((.+)\)$`)
-	reFK       = regexp.MustCompile(`(?i)^CONSTRAINT \S+ FOREIGN KEY \((\S+)\) REFERENCES (\S+) \((\S+)\)( ON DELETE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?( ON UPDATE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?$`)
-	reColumn   = regexp.MustCompile(`(?i)^(\S+) ([A-Z]+(?:\([^)]*\))?)( NOT NULL)?( AUTO_INCREMENT)?( UNIQUE)?( COMMENT '((?:[^']|'')*)')?$`)
+	reUKey     = ddlRe(`(?i)^UNIQUE KEY ((?:~(?:[^~]|~~)*~|[^\s~]+)) \((.+)\)$`)
+	reIndex    = ddlRe(`(?i)^(?:KEY|INDEX) ((?:~(?:[^~]|~~)*~|[^\s~]+)) \((.+)\)$`)
+	reFK       = ddlRe(`(?i)^CONSTRAINT (?:~(?:[^~]|~~)*~|[^\s~]+) FOREIGN KEY \(((?:~(?:[^~]|~~)*~|[^\s~]+))\) REFERENCES ((?:~(?:[^~]|~~)*~|[^\s~]+)) \(((?:~(?:[^~]|~~)*~|[^\s~]+))\)( ON DELETE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?( ON UPDATE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?$`)
+	// The type is `[A-Z]+` + an argument list whose parentheses may contain
+	// quoted strings — ENUM('a)b') has a ) inside a literal — so the argument
+	// scan treats '...' (with '' escaping) as opaque and only stops at an
+	// UNQUOTED ) . `[^)]*` could not: it stopped at the first ) even inside a
+	// value, rejecting a type the model accepts and the emitter writes.
+	reColumn   = ddlRe(`(?i)^((?:~(?:[^~]|~~)*~|[^\s~]+)) ([A-Z]+(?:\((?:'[^']*'|[^)])*\))?)( NOT NULL)?( AUTO_INCREMENT)?( UNIQUE)?( COMMENT '((?:[^']|'')*)')?$`)
 	reKeyword  = regexp.MustCompile(`(?i)^(PRIMARY KEY|UNIQUE KEY|CONSTRAINT|KEY|INDEX|FOREIGN KEY)\b`)
 	reTypeNorm = regexp.MustCompile(`(?i)^([A-Za-z]+)(\(.*\))?$`)
 )
@@ -384,8 +396,10 @@ var fkActions = map[string]bool{
 }
 
 // validateFKAction checks one referential action. Empty is allowed for ON
-// UPDATE (it means "omit the clause"); ON DELETE resolves its default before
-// this is called, so empty is rejected there by the caller's own normalization.
+// UPDATE (it means "omit the clause"); the ON DELETE default is applied at
+// emit time (fkAction), so an empty value passes validation here — this is the
+// only place the raw wire value is seen, so it must not reject what the
+// defaulting accepts.
 func validateFKAction(what, v string) error {
 	if v == "" {
 		return nil
@@ -530,8 +544,10 @@ func isSkippableLine(line string) bool {
 
 func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, n int) error {
 	if m := rePK.FindStringSubmatch(body); m != nil {
-		for _, name := range strings.Split(m[1], ",") {
-			markCol(tbl, unquoteTick(name), func(c *Col) { c.Pk = true })
+		// PK lists are comma-separated like index lists, so they get the same
+		// quote-aware split: a column named `a, b` must stay one name.
+		for _, name := range splitIndexCols(m[1], unquoteTick) {
+			markCol(tbl, name, func(c *Col) { c.Pk = true })
 		}
 		return nil
 	}
@@ -601,10 +617,17 @@ func attachPendingFKs(s *Schema, byName, byID map[string]int, pending []pendingF
 	}
 }
 
-func markCol(t *Table, name string, f func(*Col)) {
+// markCol applies f to the named column. Returns false when the column does
+// not exist — callers that parse a PK/UX/KEY/INDEX clause must turn that into
+// an error (a clause naming a ghost column used to be silently dropped, losing
+// the PK/index with no diagnostic), while attachPendingFKs deliberately treats
+// a missing child column as a dangling FK to drop, not a file defect.
+func markCol(t *Table, name string, f func(*Col)) bool {
 	for i := range t.Columns {
 		if t.Columns[i].Name == name {
 			f(&t.Columns[i])
+			return true
 		}
 	}
+	return false
 }

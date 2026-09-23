@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newSchema, newTable } from "../src/erd.js";
-import { clearHistory, snap, undo } from "../src/history.js";
+import { clearHistory, snap, snapRaw, undo } from "../src/history.js";
 
 test("history snap/undo round-trips schema", () => {
 	clearHistory();
@@ -38,14 +38,13 @@ test("undo skips corrupt snapshot", () => {
 	clearHistory();
 	const s = newSchema("mysql", [newTable("a")]);
 	snap(s);
-	// push a corrupt entry manually via snap of circular? Instead directly test undo recovery:
-	// we need to inject corrupt JSON. We can do snap then manually corrupt stack via second snap of bad?
-	// history.js stack is not exposed, but undo() catches JSON.parse error and recurses.
-	// To trigger, we can snap a schema that when stringified and then manually tampered? Not possible without access.
-	// Instead test that undo handles empty gracefully and that valid still works after clear.
-	clearHistory();
-	snap(s);
-	assert.ok(undo());
+	// snapRaw is the test seam: it pushes a pre-serialized string, so a
+	// genuinely corrupt entry can be injected. undo() must skip it via the
+	// catch→recurse path and return the valid snapshot beneath.
+	snapRaw("{bad json");
+	const prev = undo();
+	assert.ok(prev, "undo skipped the corrupt entry and returned the valid one");
+	assert.equal(prev.tables[0].name, "a");
 	assert.equal(undo(), null);
 });
 
