@@ -533,3 +533,19 @@ git history, not here.
 - 50/50 rebalance: grammar (model/generate/parse/lint/inserts) moved to Go
   (`grammar.go`), `.sql` store added (`files.go`), JS grammar half deleted,
   file-picker UX replaced by server file list — pays the grammar-drift debt.
+- First-class relationship editor (2026-09-23): toolbar `+ Relationship` dialog
+  creates 1:1 / 1:N / N:N from a two-table pick. 1:1 writes `UQ`+`NN` on the new
+  FK column, 1:N writes `NN` (both via `createRelationship`, which reuses the
+  exact flags `cardinality()` reads — nothing stored, `.sql` untouched). N:N
+  uses `createManyToMany` to build a `<A>_<B>` junction whose PK *is* the two
+  FK columns, and the card badge is **derived** (`isJunctionTable`: PK of
+  exactly two FK columns, referenced by nobody), so a hand-built or reopened
+  junction gets the `N:N` chip with no model or format change. The column
+  dialog's Relationship block shows the derived state with a 1:1/1:N radio
+  (a `UQ` flip); the two states the radio cannot express (`0..N / 0..1`,
+  `0..1 / 0..1`) stay reachable through the raw `UQ`/`NN` checkboxes.
+  Guarded by Go round-trip tests for all three grammars (junction keeps
+  `Pk`+`Ref` through emit→parse), 11 frontend unit cases, and 7 e2e tests
+  (button gating, 1:N flow, 1:1 UNIQUE, same-table rejection, N:N chip +
+  edges + reload persistence, flag toggles, relationship edit/delete);
+  decision record in `tasks/plan.md`.

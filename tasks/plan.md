@@ -1,77 +1,121 @@
-# Implementation Plan: Export ERD Diagram to PNG
+# Implementation Plan: First-class Relationship Cardinality (1:1, 1:N, N:N)
 
 ## Overview
 
-Add PNG export for the ERD canvas (tables + FK bezier edges) alongside existing DDL export. Currently `Export` downloads `.sql` via `schema.svelte.js:exportDdl()` → Blob → `<a download>`; no image export exists. Users asking "export sql to png" mean rasterizing the diagram (not SQL text) so it can be pasted into docs/slides. Build one vertical slice at a time: utility → button → tests/docs.
+Make the three canonical relationship types first-class in the editor. Today the
+tool already renders min-max cardinality (`0..1`, `1..1`, `0..N`) on FK edges,
+derived from column flags (`UQ`/sole-PK/`NOT NULL`) — no stored cardinality. The
+three canonical types are all expressible, but only by hand:
+
+- **1:1** = FK column with `UQ` + `NOT NULL` → child `0..1` / parent `1..1`
+- **1:N** = FK column with `NOT NULL` → child `0..N` / parent `1..1`
+- **N:N** = junction table, composite `PRIMARY KEY (a_id, b_id)`, two FKs, neither unique
+
+This plan adds creation gestures that build those shapes from a type picker, and
+a **derived** N:N first-class rendering (badge + docs). Nothing new is stored.
 
 ## Architecture Decisions
 
-- **Client-side rasterization, not server:** Go has no canvas state (positions live in `store.schema` + `geometry.js:BOX_W/ROW_H`). Client already renders SVG edges + absolute `section.table` cards. Capturing DOM to PNG keeps single source of truth, avoids duplicating layout in Go, and works offline.
-- **Library: `html-to-image` (or `modern-screenshot`) over `html2canvas`:** Smaller, handles `foreignObject` + CSS better, no CSP `unsafe-inline` needed, exports SVG already in DOM. Fallback is manual `canvas` draw using `geometry.js:boxHeight/stackStep/edgePaths` if library proves heavy.
-- **Coexist with SQL Export:** Keep `Export` as `.sql` download; add new `Export PNG` button. Renaming existing Export would break muscle memory and tests (`e2e/app.spec.js:549`). Two buttons share filename logic `exportFilename()` → `name.replace(/\.sql$/i,'.png')`.
-- **CSP `default-src 'self'` safe:** Blob URL + `<a download>` already verified for SQL export (`schema.svelte.js:446 downloadText`). Same path for PNG, no `Content-Disposition` needed, no `style-src` inline.
+- **N:N is derived, never stored.** A table is a junction iff its PK is exactly
+  two columns and both are FKs (`isJunctionTable(t)`). This survives `.sql`
+  round-trip — both `PRIMARY KEY (a, b)` and `FOREIGN KEY … REFERENCES` parse
+  back in every grammar — so the diagram stays faithful after save/load with no
+  format change and no second source of truth that could contradict the DDL.
+  This is the same invariant the existing derived cardinality protects; a
+  stored `relationships: []` array would need a `.sql` format extension and is
+  rejected.
+- **The creators are pure functions that write the flags `cardinality()`
+  already reads.** `createRelationship` maps 1:1 → `nn + ux`, 1:N → `nn`
+  on the new FK column — the flag vocabulary stays single-sourced in
+  `geometry.js`. `createManyToMany` builds the junction shape directly. Every
+  flag it writes is one `cardinality()` already reads.
+- **REMOVED (full merge): the per-column cardinality dropdown is gone.** The
+  4-state dropdown used to express states the type picker cannot — `0..N / 0..1`
+  (optional FK) and `0..1 / 0..1` — as the fine-grained edit view. Both states
+  stay reachable via raw UQ/NN flags (pinned by unit test), the RelationshipModal
+  live preview (`previewLabels`) owns the creation vocabulary, and the writer
+  pair (`setCardinality`/`applyCardinality`, `pkConflictsWith`/`reachableStates`)
+  was deleted. The old "keep vs remove" scope call below is reversed with reason.
+- **N:N renders as a derived badge, not a merged curve.** The two junction FKs
+  already draw correct crow's-foot edges (junction's ends are the many side).
+  Collapsing A→junction→B into one curve would fight the lane/edge routing.
+  The badge + card tint + docs is honest, cheap, and survives export (it is DOM
+  like every other card element).
+- **`1..N` stays out.** SQL cannot enforce "every parent has at least one
+  child"; the honest rendering of "1:N" remains child `0..N` / parent `1..1`.
+  Docs say so; no stored state pretends otherwise.
 
 ## Task List
 
-> **Status (2026-09-20): all five tasks executed and shipped.** Task-by-task
-> checkboxes below are left as written (this was the plan, not the record); the
-> record is `tasks/todo.md` and git history. One risk in the table below
-> **fired and shipped broken** — see the annotation on it.
+### Phase 1: Foundation — relationship creators (pure)
 
-### Phase 1: Foundation — PNG capture utility
-
-- [x] Task 1: Add PNG capture helper (pure + DOM)
-- [x] Task 2: Add Export PNG button wiring
+- [x] Task 1: `createRelationship` (1:1 / 1:N) pure helper + tests
+- [x] Task 2: "New relationship…" dialog wiring + e2e
 
 ### Checkpoint: Foundation
 
-- [x] Utility captures `.canvas` to Blob without empty/transparent output
-- [x] Button appears, downloads `*.png`, respects `currentFile` naming
-- [x] No regression: `Export` still downloads `.sql`, `Copy SQL` still copies
+- [x] Picking type 1:1 / 1:N creates a correct FK column (right flags, name, ref)
+- [x] Round-trip: created relationship survives save → reload → re-parse
+- [x] No regression: `node --test`, `pnpm build`, `go test`
 
-### Phase 2: Core Features — Polish & fidelity
+### Phase 2: Core — first-class N:N
 
-- [x] Task 3: Handle edge cases (empty schema, offscreen, dark bg)
-- [x] Task 4: Unit + e2e coverage for PNG
+- [x] Task 3: `createManyToMany` + `isJunctionTable` + juncton-table naming + round-trip test
+- [x] Task 4: N:N editor entry, junction badge render, e2e
 
 ### Checkpoint: Core Features
 
-- [x] PNG contains tables + edges, dark background preserved, not clipped
-- [x] Tests green: `node --test` + `go test` + `playwright -g Export`
+- [x] N:N gesture builds junction table; `isJunctionTable` true after round-trip
+- [x] Junction card shows `N:N` badge / tooltip; FK edges unchanged
+- [x] Unit + e2e green; `go vet` clean
 
-### Phase 3: Polish — Docs & release
+### Phase 3: Polish — docs
 
-- [x] Task 5: Update README + help text, rebuild dist
+- [x] Task 5: README relationship section (1:1 / 1:N / N:N recipes, 1..N note)
 
 ### Checkpoint: Complete
 
-- [x] README documents Export SQL vs Export PNG
-- [x] `pnpm build` + `go test ./...` clean
+- [x] All acceptance criteria met
+- [x] `make test` + `go vet` clean
+- [x] Ready for review
 
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 | ------ | -------- | ------------ |
-| html-to-image fails on Svelte scoped CSS / SVG marker | High | Spike 1h: capture `.canvas` in dev, verify edges/marker `crow` render; fallback to manual canvas draw via `geometry.js` |
-| **PNG clipped (canvas 200% SVG, scrollable)** | Med | Compute bounds from `store.schema.tables` + `boxHeight()` + `edgePaths`, not viewport; add 40px padding. **⚠️ THIS RISK FIRED AND SHIPPED BROKEN.** The mitigation was written but only half-applied: `captureBounds()` was created and unit-tested, then never passed to `toBlob`, so `html-to-image` fell back to its own `clientWidth/clientHeight` sizing — i.e. exactly the viewport it was meant to avoid. A 9-table diagram on a 1280x800 window exported 1280×759 with the last two tables cropped. The risk was correctly identified, the mitigation was correctly described, and the code still shipped the bug because nothing asserted the *size* of the output. Fixed 2026-09-20: `captureSize()` now feeds explicit `width`/`height`, plus `style:{overflow:"hidden"}`; guarded by an e2e test that fails if the sizing is removed. **Lesson: a mitigation is not done when the helper exists — it is done when the caller uses it and a test asserts the outcome.** |
-| CSP blocks Blob download | Low | Already retired for SQL export — same `downloadText` path, verified `default-src` does not govern downloads |
-| Large diagram → memory/OOM | Low | Cap canvas size, use `pixelRatio:1`, warn if >4000px; debounced not needed (one-shot click). **Not implemented** — no size cap exists. Largest measured case (11 tables) produced a 114 kB PNG, so the trigger has not fired; `pixelRatio:1` is in place. |
-| Library adds bundle weight | Med | Use dynamic `import()` for PNG lib so SQL path pays 0 bytes; measure `dist/assets` delta. **Done** — `html-to-image` is a separate 12.5 kB chunk, absent from the main bundle. |
+| Derived junction detector misfires (e.g. an unrelated 2-col composite-PK FK pair) | Med | `isJunctionTable` requires *exactly* 2 PK columns, both with `ref`, and table not referenced-as-child elsewhere — rule enforced by unit tests on the 4-state fixture set |
+| Round-trip drift: junction flag lost on save/load | High | Property-style test: `parse(emit(schema))` keeps `isJunctionTable` true across all three grammars; add to `grammar_*_test.go` |
+| N:N gesture on self-reference (A→A) | Low | Reject in the dialog: "pick two distinct tables" |
+| Duplicate junction name (`users_posts` taken) | Low | Reuse `takenNames()` → flash error, no silent rename |
+| Badge breaks PNG export if styled only by class | Med | Follow the existing rule: colors duplicated as constants in `geometry.js` + `tokens.css` (the crow-marker fix precedent), test asserts equality. **REVISED at build time:** the chip is a plain DOM element in `section.table`, and both exports (PNG and SVG) are DOM captures via html-to-image — CSS classes render. The crow-marker precedent applies only to paint INSIDE the `<svg>` (its fill/marker are attribute-inked from `geometry.js`); the chip is not in the SVG, so no constant duplication is needed. Track as a deviation, not an unresolved risk — if an export path ever stops applying stylesheets, this resurfability is the same tradeoff every card carries. |
 
 ## Open Questions
 
-- Filename: `mydb.png` vs `mydb-erd.png`? Propose `currentFile.replace(/\.sql$/i,'.png')` else `erd-erd.png`? Need human pick. **Resolved:** `mydb.sql`→`mydb.png`; unsaved scratch → `<dialect>-schema.png` (not `erd-erd.png`).
-- Button label/placement: `Export PNG` next to `Export` or dropdown? Propose adjacent button to keep vertical slice small. **Resolved:** adjacent button.
-- Quality: need transparent vs `#101418` background? Current canvas is `radial-gradient` + dark cards — capture should preserve dark bg. **Resolved:** `#101418` opaque.
+- **Scope call (RESOLVED: keep, REVISED: removed in full merge):** the picked option said the relationship editor
+  *supersedes* the low-level state dropdown. Plan recommended keeping the
+  dropdown (it owns `0..N / 0..1` and `0..1 / 0..1`, which 1:1/1:N/N:N cannot
+  express). Human confirmed **keep it** — the relationship dialog is the
+  creation gesture, the dropdown stays as the fine-grained edit view.
+  **REVISED (full merge, human-approved):** dropdown removed; both orphan states
+  stay reachable via raw UQ/NN flags, preview (`previewLabels`) owns creation,
+  writers (`setCardinality`/`applyCardinality`, `pkConflictsWith`/`reachableStates`) deleted.
+- N:N junction FK column type: copy referenced PK's type when available, else
+  `INT`? Plan: yes, copy.
+- Where the N:N badge lives: card header chip (`M:N` text + tooltip) vs edge
+  label. Plan: header chip.
 
 ## Parallelization Opportunities
 
-- Task 3 edge-case handling and Task 4 test writing can parallelize after Task 2 lands (contract: `exportPng()` returns `Promise<Blob>`).
-- Docs (Task 5) parallel with tests once capture verified.
+- Tasks 1 and 3 share the pure-function shape and are independent — parallel
+  agents possible (contract: both write only `geometry.js`/`erd.js`-style pure
+  fns; UI wiring is Tasks 2/4 and stays sequential).
+- Task 5 (docs) is parallel with Tasks 3-4 once 1-2 land.
 
 ## References
 
-- Current export: `frontend/src/schema.svelte.js:437 downloadText`, `exportDdl:464`, `exportFilename:461`
-- Canvas: `frontend/src/App.svelte:91 .canvas` + `geometry.js:32 boxHeight/42 edgePaths`
-- Cards: `frontend/src/TableCard.svelte:88 section.table` 280px, `geometry.js:24 BOX_W`
-- Toolbar: `frontend/src/Toolbar.svelte:71 Export` button, tests `frontend/e2e/app.spec.js:549`
+- Flags & states: `frontend/src/geometry.js` `cardinality`, `CARDINALITY_STATES`, `cardinalityState`; `frontend/src/relationships.js` `previewLabels`, `createRelationship`, `createManyToMany`
+- FK creation today: `frontend/src/schema.svelte.js` `addColumn`, `setRef`, `addRelationship`, `addManyToMany`
+- Model: `frontend/src/erd.js:68 Table`, `:78 Column`, `:91 Ref`, `:130 newColumn`
+- Round-trip proof: `grammar_sqlite.go:42` FK/`PRIMARY KEY` regexes; `TASKS.md` cardinality trail
+- Tests: `frontend/test/erd.test.js:778 crowMarker`, `frontend/e2e/app.spec.js:238` FK fixture pattern
+- Verification: `make test` (pnpm test + build + `go test -count=1 ./...`), `go vet ./...`, `npx playwright test -g "Relationship"`

@@ -89,19 +89,22 @@ string.
   unaffected.)
 - **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
   actions; bezier edge renders automatically; type-mismatch lint (server-side)
-  in the header. Once an FK is set, a **`Cardinality`** select offers the four
-  states a relationship can be in (`0..N / 0..1`, `0..N / 1..1`, `0..1 / 0..1`,
-  `0..1 / 1..1`) and writes the `UQ` / `NN` flags for you — so you can set the
-  relationship without knowing that `UQ` means `0..1`. It stores nothing new:
-  the select is a *view* of those flags, which is why it can never disagree with
-  the emitted DDL, and why the `.sql` format is unchanged.
+  in the header. Once an FK is set, the column dialog's **Relationship**
+  block shows the derived state (`0..N / 0..1`, `0..N / 1..1`, `0..1 / 0..1`,
+  `0..1 / 1..1`) with a `1:N` / `1:1` radio that flips the `UQ` flag for you —
+  so you can set the relationship without knowing that `UQ` means `0..1`.
+  It stores nothing new: the readout is a *view* of those flags, which is why
+  it can never disagree with the emitted DDL, and why the `.sql` format is
+  unchanged. The two states the radio cannot express (`0..N / 0..1`,
+  `0..1 / 0..1`) stay reachable through the raw `UQ` / `NN` flag checkboxes.
 
-  All four states are selectable on any column, including a primary key. A PK
-  cannot honour three of them — it is emitted `NOT NULL` **and** `UNIQUE` in
-  every dialect, so a PK is always `0..1 / 1..1` — so picking one of the other
-  states **clears the PK** and warns you, rather than the option being disabled
-  or the pick being silently overridden. The model and the emitted DDL therefore
-  never disagree, which is the property the whole design protects. A **composite**
+  All four states stay reachable through the raw `UQ` / `NN` flag
+  checkboxes on any column, including a primary key. A PK is always
+  `0..1 / 1..1` — it is emitted `NOT NULL` **and** `UNIQUE` in every
+  dialect regardless of the checkboxes — so flags on a PK column do not
+  move the edge labels; turning the PK itself off is an explicit checkbox
+  toggle. The model and the emitted DDL therefore never disagree, which is
+  the property the whole design protects. A **composite**
   -PK member is a partial case: `PRIMARY KEY (a, b)` does not make `a` unique on
   its own, so its child end can be made `0..1` without touching the PK, while
   relaxing its parent end clears it. `1..N` is deliberately absent — SQL cannot
@@ -122,6 +125,20 @@ string.
   way would label every junction table as one-to-one. And the child minimum is
   always `0`: SQL cannot express "every parent must have at least one child",
   so printing `1..N` would assert something no database can enforce.
+
+  The toolbar's **`+ Relationship`** button offers the three canonical types as
+  a single gesture instead of hand-setting flags: pick a child (referencing)
+  table, a parent (referenced) table, and a type.
+  **`1:1`** appends the FK column and writes `UQ` + `NOT NULL`, so the pair
+  renders `0..1 / 1..1`; **`1:N`** writes `NOT NULL` only, rendering
+  `0..N / 1..1`. **`N:N`** creates a junction table named `<A>_<B>` whose
+  primary key *is* the two FK columns (`users_posts` with `PK (user_id,
+  post_id)`, neither unique) — the shape SQL uses for many-to-many. Junction
+  cards carry a small `N:N` badge, **derived** from that shape
+  (`isJunctionTable`: PK of exactly two FK columns, referenced by nobody), so
+  a hand-built or reopened junction gets the badge too and nothing new is
+  stored or added to the `.sql` format. The junction's own edges read
+  `0..N` on the junction side of each FK — the junction end is the many side.
 
   Edges whose two cards overlap in x (the default stacked layout, and any
   partial overlap) are **bowed** clear of the card border, and a
@@ -261,6 +278,7 @@ string.
 ```
 frontend/src/geometry.js     (box metrics + FK edge paths + cardinality) (pure, testable)
 frontend/src/erd.js          (UI helpers + naming + dialects + layout)(pure, testable)
+frontend/src/relationships.js  (pure creators createRelationship/createManyToMany + isJunctionTable)
 frontend/src/capture.js      (PNG/SVG capture via html-to-image, bounds via geometry)
 frontend/src/download.js     (download + clipboard helpers)         (pure)
 frontend/src/history.js      (undo stack, JSON snapshots)           (pure)
@@ -268,6 +286,10 @@ frontend/src/autosave.js     (debounced lint/save/sql, dirty flag) (pure)
 frontend/src/schema.svelte.js(store: model state, mutations, fetch glue)
 frontend/src/Toolbar.svelte  (header bar, file/dialect actions)
 frontend/src/TableCard.svelte(table card, column rows, dialog hosts)
+frontend/src/ColumnRow.svelte(column row: badges, FK target, edit button)
+frontend/src/EmptyState.svelte (empty-schema placeholder)
+frontend/src/SqlPanel.svelte   (SQL preview panel)
+frontend/src/RelationshipModal.svelte(1:1 / 1:N / N:N creation dialog)
 frontend/src/ColumnEditModal.svelte(per-column controls dialog)
 frontend/src/TableIndexModal.svelte(composite-index dialog)
 frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
