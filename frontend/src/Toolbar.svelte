@@ -97,6 +97,10 @@ const LABELS = {
 	{#if store.currentFile}
 		<span class="ok" data-testid="current-file" role="status" aria-live="polite">{store.currentFile}</span>
 	{/if}
+	{#if store.dirty && store.currentFile}
+		<!-- autosave has 800ms to land; until then the file differs from disk -->
+		<span class="warn" data-testid="dirty" role="status" aria-live="polite">unsaved</span>
+	{/if}
 	{#if store.error}<span class={store.errorKind} role={store.errorKind === 'err' ? 'alert' : 'status'} aria-live={store.errorKind === 'err' ? 'assertive' : 'polite'}>{store.error}</span>{/if}
 	{#if store.lint.length && !store.error}
 		<span class="warn" role="status" aria-live="polite">lint: {store.lint.join("; ")}</span>

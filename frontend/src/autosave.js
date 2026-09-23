@@ -44,6 +44,7 @@ export function markSkipTouch() {
  * @typedef {object} AutosaveStore
  * @property {string} currentFile
  * @property {object} schema
+ * @property {boolean} dirty  reactive mirror of the dirty flag (Toolbar indicator)
  */
 
 /**
@@ -75,6 +76,9 @@ export function touch(
 		saveTimer = setTimeout(() => saveCurrent(true), SAVE_DEBOUNCE_MS);
 	}
 	dirty = true;
+	// Reactive mirror for the Toolbar's unsaved indicator; the module flag
+	// stays the source of truth for flush gating.
+	store.dirty = true;
 	if (showSql) {
 		clearTimeout(sqlTimer);
 		sqlTimer = setTimeout(() => refreshSql(), SQL_DEBOUNCE_MS);

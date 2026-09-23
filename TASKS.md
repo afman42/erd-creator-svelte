@@ -92,28 +92,6 @@ git history, not here.
       necessary. Add a per-response nonce then — do not add `unsafe-inline`,
       which would undo the XSS protection the header exists for.
 
-- [ ] **E2E silently reuses a foreign server.** `playwright.config.js` sets
-      `reuseExistingServer: true` and hardcodes port 8731, so if anything is
-      already listening there the suite runs against *that* process — wrong
-      binary, wrong `-dir` — with no warning. Reproduced: started a server on
-      8731 with a different `-dir`, and playwright would have reused it. This
-      cost real time during the security review (a stale build was measured
-      three times before the cause was found). Trigger: already firing. Fix is
-      to derive the port from the config, probe it before the run, and fail
-      loudly if something is already bound rather than adopting it.
-
-- [ ] **A deleted file is unrecoverable.** `deleteFile` confirms, then
-      `os.Remove`s — no trash, no backup, and `history.length = 0` drops the
-      undo snapshots that described it. Trigger: a user loses work to a
-      mis-click, or the store is shared. Fix is a move to a `.trash/` sibling
-      with a retention sweep, not a soft-delete flag (the file IS the model, so
-      a half-deleted file in the listing would be worse).
-
-- [ ] **Final save can be lost on tab close.** Marked `ponytail` in
-      `schema.svelte.js`: a plain `fetch` may abort mid-unload, dropping up to
-      800ms of edits. Trigger: real reports of edits lost on tab close. Fix is
-      `keepalive: true` on the flush (64 KiB cap, ample here).
-
 - [ ] **`.gitignore` has no secret patterns.** No `.env`, `*.pem` or `*.key`
       entry, and none exist today — so this is preventive, not a leak. Trigger:
       the first secret-bearing file is introduced (a TLS key from the TLS item
@@ -121,6 +99,36 @@ git history, not here.
       remember a committed secret must be rotated, not just deleted.
 
 ## Done elsewhere (trail, not tracking)
+
+- **Delete moves to a trash, not destruction.** `deleteFile` (files.go) now
+  renames the schema into `dir/.trash/` — a plain sibling directory, not a
+  soft-delete flag, so a deleted file leaves the listing AND the store, while
+  a mis-click is recoverable with `mv .trash/x.sql ./`. A retention sweep
+  (`sweepTrash`, 7 days) runs after every delete; a name collision with an
+  earlier recycle gets a millisecond suffix instead of overwriting it. The
+  trash path is symlink-contained the same way the store is (`trashPath`
+  resolves and refuses a `.trash` link that escapes). API contract unchanged:
+  DELETE of a missing file still 404s, list/read no longer see the file.
+  Pinned by `TestFilesCRUD` (extended), `TestTrashSweep`,
+  `TestTrashSymlinkEscapes`, `TestTrashNameCollision`.
+
+- **E2E refuses a foreign server on the port.** `server-probe.mjs` runs in
+  Playwright globalSetup: nothing bound → Playwright starts its own; a bound
+  server must serve THIS checkout's `dist/index.html` byte-for-byte or the run
+  refuses loudly with instructions. This was the suite adopt-a-stale-build
+  hazard (measured against a wrong `-dir` before). Leftover `.sql` files in
+  the e2e store are expected (the previous run's tests) and do not block
+  reuse — beforeEach wipes the store at the start of every test.
+  `ERD_E2E_REUSE=1` bypasses for developers who know what they started. The
+  port lives in one place (`E2E_PORT`) and is imported by both the config and
+  the probe. Unit-tested in `frontend/test/server-probe.test.js` against real
+  local HTTP servers.
+
+- **The dirty flag is visible.** `store.dirty` mirrors autosave's module flag
+  (the mirror is written exactly where the flag changes: touch → true, save
+  success → false, file open → false), and the Toolbar shows an `unsaved`
+  badge while it is set. Pinned by an e2e (indicator appears on edit, clears
+  after the debounced autosave) and a unit assertion in autosave.test.js.
 
 - Reciprocal FKs drew as a single curve, with the arrowhead on the wrong end.
   Reported from the UI: *"when table users column id in reference to table posts

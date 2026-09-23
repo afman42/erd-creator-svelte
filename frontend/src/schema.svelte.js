@@ -46,6 +46,10 @@ export const store = $state({
 	selected: null,
 	lint: [],
 	exporting: false,
+	// Mirror of autosave's dirty flag, made reactive so the Toolbar can render
+	// an unsaved indicator. autosave.js owns the truth (it drives the flush
+	// gates); the mirror is written at exactly the two places the flag changes.
+	dirty: false,
 });
 layout(store.schema);
 

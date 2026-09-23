@@ -215,9 +215,13 @@ string.
   turning the toggle on clears both.
 - **Files** — schema store in `-dir` (default `./schemas`): Files dropdown +
   New/Save/Del; saves debounce-autosave the current file — switching or
-  deleting a file flushes the pending save first. The server generates and
-  parses the file's DDL in its own dialect; `Copy INSERTs` emits seed-row
-  templates (MySQL syntax)
+  deleting a file flushes the pending save first. **Delete moves the file to a
+  `.trash/` sibling (7-day retention, swept on delete) instead of unlinking**
+  — a mis-click is recoverable with `mv .trash/name.sql ./` — and the toolbar
+  shows an `unsaved` badge while an edit is pending autosave. The server
+  generates and parses the file's DDL in its own dialect; `Copy INSERTs` emits
+  seed-row templates (MySQL syntax) and a red `unsaved` note appears while the
+  file differs from disk.
 - **Dialects** — one dropdown selects the DDL flavor, and it drives everything:
   what Save writes, the SQL panel, Copy SQL, Export (downloads a `.sql`
   file named after the current file, or `<dialect>-schema.sql` for unsaved

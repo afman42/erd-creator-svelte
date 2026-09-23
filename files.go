@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 var validName = regexp.MustCompile(`^[\w.-]{1,64}\.sql$`)
@@ -113,13 +114,20 @@ func handleFiles(dir string) http.Handler {
 		case http.MethodPut:
 			saveFile(w, dir, full, r)
 		case http.MethodDelete:
-			// Remove the link itself, never what it points at: os.Remove is
-			// already unlink(2), but the resolved path is used so a link to
-			// outside the store is rejected above rather than deleted.
-			if err := os.Remove(full); err != nil {
-				http.Error(w, err.Error(), http.StatusNotFound)
+			// Move to .trash rather than unlink: a deleted schema is the whole
+			// model, and a mis-click or a racy overwrite currently destroys it
+			// with no recourse. The rename is same-filesystem (the trash lives
+			// inside the store), so it is atomic and cannot fail halfway. A
+			// missing file stays a 404; everything else is a server fault.
+			if err := trashFile(dir, full, name); err != nil {
+				if os.IsNotExist(err) {
+					http.Error(w, "file not found: "+name, http.StatusNotFound)
+				} else {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
 				return
 			}
+			sweepTrash(dir)
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -273,6 +281,97 @@ func createTemp(dir string) (*os.File, error) {
 		return nil, err
 	}
 	return os.CreateTemp(root, ".save-*.tmp")
+}
+
+// trashName is the prefix given to a recycled schema. The trash is a plain
+// sibling directory, not a soft-delete flag: a schema the listing no longer
+// shows must also not half-exist in the DB, so moved files leave the store
+// entirely.
+const trashDirName = ".trash"
+
+// trashRetention is how long a deleted schema stays recyclable before
+// sweepTrash removes it. Long enough to notice a mis-click, short enough that
+// the trash cannot grow unbounded in a long-lived store.
+const trashRetention = 7 * 24 * time.Hour
+
+// trashPath resolves dir/.trash, creating it if absent, and refuses a trash
+// that resolves outside the store — a symlink planted at .trash must not
+// redirect a delete to an arbitrary directory, exactly as storePath refuses a
+// symlinked file. The resolved real path is returned so callers act on the
+// real directory, not the link.
+func trashPath(dir string) (string, error) {
+	root, err := resolveStoreRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	td := filepath.Join(root, trashDirName)
+	real, err := filepath.EvalSymlinks(td)
+	if err != nil {
+		// Doesn't exist yet: create it under the already-resolved root, so the
+		// new directory cannot be a link.
+		if err := os.MkdirAll(td, 0o755); err != nil {
+			return "", fmt.Errorf("trash: %w", err)
+		}
+		return td, nil
+	}
+	if !isInsideStore(real, root) {
+		return "", fmt.Errorf("trash %q escapes the store", trashDirName)
+	}
+	return real, nil
+}
+
+// trashFile moves a resolved store file into the trash. The destination keeps
+// the original name so a recovery is a plain `mv`, and a collision with a
+// previous recycle of the same name is disambiguated with a millisecond
+// suffix rather than overwriting it.
+func trashFile(dir, full, name string) error {
+	td, err := trashPath(dir)
+	if err != nil {
+		return err
+	}
+	dst := filepath.Join(td, name)
+	if _, err := os.Stat(dst); err == nil {
+		dst = filepath.Join(td, fmt.Sprintf("%s.%d", name, time.Now().UnixMilli()))
+	}
+	if err := os.Rename(full, dst); err != nil {
+		// Returned unwrapped: the caller classifies it (os.IsNotExist for a
+		// missing source → 404). Wrapping in fmt.Errorf would hide the errno.
+		return err
+	}
+	return nil
+}
+
+// sweepTrash removes trash entries older than trashRetention. Called after
+// every delete: the common case is an empty or young trash, so this is a
+// bounded directory listing, cheap enough to run per request. A failure is
+// logged, not fatal — a stale trash costs disk, not correctness.
+func sweepTrash(dir string) {
+	td, err := trashPath(dir)
+	if err != nil {
+		// Path resolution failing (e.g. the store was removed) means there is
+		// nothing to sweep; ignore it.
+		return
+	}
+	entries, err := os.ReadDir(td)
+	if err != nil {
+		log.Printf("sweep trash %s: %v", td, err)
+		return
+	}
+	cutoff := time.Now().Add(-trashRetention)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			if err := os.Remove(filepath.Join(td, e.Name())); err != nil {
+				log.Printf("sweep trash %s: %v", e.Name(), err)
+			}
+		}
+	}
 }
 
 // ensureDir creates the schema store; refuses to run without it.

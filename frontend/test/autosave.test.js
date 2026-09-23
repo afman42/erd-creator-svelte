@@ -37,7 +37,7 @@ test("touch sets dirty and schedules lint", async () => {
 		saveCurrent: () => saveCalled++,
 	});
 	assert.equal(isDirty(), true);
-	// lint is debounced 300ms, save 800ms
+	assert.equal(store.dirty, true, "reactive mirror must follow the flag");
 	await new Promise((r) => setTimeout(r, 350));
 	assert.equal(lintCalled, 1);
 	assert.equal(saveCalled, 0);

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func jsonBody(v any) *bytes.Reader {
@@ -78,7 +79,138 @@ func TestFilesCRUD(t *testing.T) {
 		t.Errorf("delete: %d", rec.Code)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "blog.sql")); err == nil {
-		t.Error("file still on disk")
+		t.Error("file still in store after delete")
+	}
+	// recycled into .trash, not destroyed: the schema is the whole model, so a
+	// delete must be reversible by hand (mv .trash/blog.sql ./) — the API only
+	// stops addressing it
+	trashF, err := os.Stat(filepath.Join(dir, trashDirName, "blog.sql"))
+	if err != nil {
+		t.Fatalf("file not in trash after delete: %v", err)
+	}
+	if trashF.ModTime().Unix() <= 0 {
+		t.Error("trash entry has no mtime")
+	}
+	// gone from the listing: a deleted file must not still be offered
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files", nil))
+	if strings.Contains(rec.Body.String(), "blog.sql") {
+		t.Errorf("deleted file still listed: %s", rec.Body)
+	}
+}
+
+// TestTrashSweep: the trash keeps recycled schemas for trashRetention, then
+// sweepTrash removes them. A file inside the retention window survives; one
+// past it is gone.
+func TestTrashSweep(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	seed := func(name string) {
+		s := sampleSchema()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/"+name, jsonBody(s)))
+		if rec.Code != 204 {
+			t.Fatalf("seed %s: %d", name, rec.Code)
+		}
+	}
+	del := func(name string) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/files/"+name, nil))
+		if rec.Code != 204 {
+			t.Fatalf("delete %s: %d", name, rec.Code)
+		}
+	}
+	// old.sql and new.sql both go to the trash
+	seed("old.sql")
+	seed("new.sql")
+	del("old.sql")
+	del("new.sql")
+	// backdate old.sql's trash entry past the retention window
+	back := time.Now().Add(-trashRetention - time.Hour)
+	old := filepath.Join(dir, trashDirName, "old.sql")
+	if err := os.Chtimes(old, back, back); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	// deleting a third file triggers the sweep; old.sql must be gone, new.sql kept
+	seed("third.sql")
+	del("third.sql")
+	if _, err := os.Stat(old); err == nil {
+		t.Error("expired trash entry not swept")
+	}
+	if _, err := os.Stat(filepath.Join(dir, trashDirName, "new.sql")); err != nil {
+		t.Error("fresh trash entry swept prematurely")
+	}
+}
+
+// TestTrashSymlinkEscapes: a .trash symlink planted outside the store must not
+// redirect a delete. storePath already refuses a link at the FILE, but the
+// trash dir itself is a new target: if .trash is a link to elsewhere, the
+// rename would move the schema out of the store. trashPath resolves it and
+// refuses.
+func TestTrashSymlinkEscapes(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, trashDirName)); err != nil {
+		t.Fatal(err)
+	}
+	h := handleFiles(dir)
+	s := sampleSchema()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/x.sql", jsonBody(s)))
+	if rec.Code != 204 {
+		t.Fatalf("save: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/files/x.sql", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("delete with escaping trash: %d, want 500", rec.Code)
+	}
+	// the schema must not have moved into the planted trash
+	if b, err := os.ReadFile(filepath.Join(outside, "x.sql")); err == nil {
+		t.Errorf("file moved into escaping trash: %q", b)
+	}
+	// and the original must still be there — deletion failed, so no data lost
+	if _, err := os.Stat(filepath.Join(dir, "x.sql")); err != nil {
+		t.Error("original gone after refused delete")
+	}
+}
+
+// TestTrashNameCollision: deleting a file whose name is already in the trash
+// must not overwrite the earlier recycle — a mis-click recovery must be able
+// to fetch EITHER copy by name.
+func TestTrashNameCollision(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	put := func() {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/x.sql", jsonBody(sampleSchema())))
+		if rec.Code != 204 {
+			t.Fatalf("save: %d", rec.Code)
+		}
+	}
+	del := func() {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/files/x.sql", nil))
+		if rec.Code != 204 {
+			t.Fatalf("delete: %d", rec.Code)
+		}
+	}
+	put()
+	del()
+	put()
+	del()
+	entries, err := os.ReadDir(filepath.Join(dir, trashDirName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	trashFiles := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			trashFiles++
+		}
+	}
+	if trashFiles != 2 {
+		t.Errorf("trash has %d entries, want 2 (both recycles kept)", trashFiles)
 	}
 }
 

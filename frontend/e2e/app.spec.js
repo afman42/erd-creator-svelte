@@ -799,6 +799,38 @@ test("rapid edits then file switch lose nothing (stale-save guard)", async ({
 		.toBe("alpha2");
 });
 
+// The dirty indicator: store.dirty mirrors autosave's flag so the Toolbar can
+// say "unsaved". It appears the moment an edit lands and clears once the
+// debounced save lands — the user must be able to tell pending state from
+// persisted state, which is exactly what was invisible before.
+test("dirty indicator appears on edit and clears after autosave", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	const dirty = page.getByTestId("dirty");
+	await expect(dirty).toHaveCount(0);
+
+	// the indicator is for saved files (autosave only applies to one);
+	// a scratch schema with no file shows nothing
+	page.once("dialog", (d) => d.accept("dirty"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("dirty.sql");
+	await expect(dirty).toHaveCount(0);
+
+	await page.getByRole("button", { name: "+ Table" }).click();
+	await expect(dirty).toBeVisible(); // edit landed, not yet saved
+
+	// autosave fires after 800ms of quiet; the indicator must clear with it
+	await expect
+		.poll(async () => {
+			const body = await (await request.get("/api/files/dirty.sql")).json();
+			return body.tables.length === 2;
+		})
+		.toBe(true);
+	await expect(dirty).toHaveCount(0);
+});
+
 test("Copy SQL succeeds via execCommand fallback without clipboard permission", async ({
 	page,
 }) => {

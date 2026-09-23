@@ -63,10 +63,20 @@ export async function saveCurrent(store, flash, silent = false) {
 			},
 		);
 		if (!res.ok) throw new Error(await res.text());
-		if (gen === editGeneration()) setDirty(false);
+		if (gen === editGeneration()) {
+			setDirty(false);
+			// Reactive mirror for the Toolbar's unsaved indicator, written at
+			// the only place the flag goes false.
+			store.dirty = false;
+		}
 		if (!silent) flash(`saved ${store.currentFile}`);
 	} catch (e) {
-		if (!silent) flash(`save failed: ${e.message}`, "err");
+		if (!silent) {
+			flash(
+				`save failed: ${e instanceof Error ? e.message : String(e)}`,
+				"err",
+			);
+		}
 	}
 }
 
@@ -105,9 +115,10 @@ export async function openFile(store, name, flash) {
 		store.currentFile = name;
 		store.error = "";
 		setDirty(false);
+		store.dirty = false; // reactive mirror (Toolbar indicator)
 		clearHistory();
 	} catch (e) {
-		flash(`Open failed: ${e.message}`, "err");
+		flash(`Open failed: ${e instanceof Error ? e.message : String(e)}`, "err");
 		await refreshFiles(store);
 	}
 }
