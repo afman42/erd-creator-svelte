@@ -25,7 +25,6 @@ import {
 } from "../src/erd.js";
 import {
 	ADDCOL_H,
-	applyCardinality,
 	BORDER_H,
 	BOX_W,
 	boxHeight,
@@ -39,9 +38,7 @@ import {
 	isSolePk,
 	LABEL_FILL,
 	LABEL_HALO,
-	pkConflictsWith,
 	ROW_H,
-	reachableStates,
 	stackStep,
 } from "../src/geometry.js";
 
@@ -534,11 +531,14 @@ const TOKENS_SRC = readFileSync(
 	"utf8",
 );
 
-// ---- cardinality states: the dropdown's round-trip ----
+// ---- cardinality states: flags → labels ----
 //
-// The select is a VIEW of the ux/nn flags, not a second source of truth. These
-// pin the inverse relationship, which is the property that makes that true: for
-// every state, applying it and reading it back must give the same state.
+// Cardinality is DERIVED from the ux/nn flags, never stored or written through
+// a select: the RelationshipModal writes the flags at creation, the flag
+// checkboxes in ColumnEditModal steer them afterwards, and cardinality() reads
+// them back. These pin the read side, which is the property that keeps the
+// diagram honest: for every flag combination, the labels must be the same
+// ones the flags imply.
 
 test("cardinalityState reads all four states from the flags", () => {
 	const mk = (flags) => {
@@ -561,131 +561,72 @@ test("cardinalityState reads all four states from the flags", () => {
 	}
 });
 
-// The load-bearing property: apply(state) then read back must be that state.
-// If this fails, the dropdown can disagree with what the diagram shows.
-test("every cardinality state round-trips through applyCardinality", () => {
-	for (const state of CARDINALITY_STATES) {
-		// start from a plain non-pk, non-unique column
-		const c = { pk: false, nn: false, ux: false };
-		const t = { columns: [c] };
+// The flag vocabulary is the whole write API now: ux decides the child end,
+// nn (or pk, which every emitter writes NOT NULL for) decides the parent end.
+// Pin the map directly — no writer pair to round-trip through.
+test("ux/nn flags map to the four states", () => {
+	const t = (c) => ({ columns: [c] });
+	const cases = [
+		[{ ux: false, nn: false, pk: false }, "0..N / 0..1"],
+		[{ ux: false, nn: true, pk: false }, "0..N / 1..1"],
+		[{ ux: true, nn: false, pk: false }, "0..1 / 0..1"],
+		[{ ux: true, nn: true, pk: false }, "0..1 / 1..1"],
+	];
+	for (const [flags, want] of cases) {
+		const c = { pk: false, nn: false, ux: false, ...flags };
 		assert.equal(
-			applyCardinality(t, c, state.id),
-			true,
-			`applyCardinality refused ${state.id}`,
-		);
-		assert.equal(
-			cardinalityState(t, c),
-			state.id,
-			`applying ${state.id} did not read back as itself`,
+			cardinalityState(t(c), c),
+			want,
+			`flags ${JSON.stringify(flags)}`,
 		);
 	}
 });
 
 // A sole PK pins the relationship: unique (one child) and emitted NOT NULL
-// (mandatory parent), so 0..1 / 1..1 is the only state it can honour. Asking for
-// any other state is ALLOWED — it CLEARS the PK rather than being refused, which
-// is what makes all four options selectable — and the flags then express the
-// state, so the model still agrees with its own DDL.
-test("a sole PK accepts every state, clearing the PK when it must", () => {
+// (mandatory parent), so 0..1 / 1..1 is the only state it can read as. The
+// flags still steer the labels around it — clearing the PK is a flag edit
+// now, not a select pick.
+test("a sole PK reads as 0..1 / 1..1", () => {
 	const c = { pk: true, nn: true, ux: false };
 	const t = { columns: [c] };
 	assert.equal(cardinalityState(t, c), "0..1 / 1..1");
 	assert.equal(isSolePk(t, c), true);
-	// its own state leaves the PK alone
-	assert.equal(applyCardinality(t, c, "0..1 / 1..1"), true);
-	assert.equal(c.pk, true);
-	// every other state drops the PK, so the flags can express it
-	for (const state of CARDINALITY_STATES) {
-		if (state.id === "0..1 / 1..1") continue;
-		const fresh = { pk: true, nn: true, ux: false };
-		const tt = { columns: [fresh] };
-		assert.equal(
-			applyCardinality(tt, fresh, state.id),
-			true,
-			`sole PK should accept ${state.id} by clearing itself`,
-		);
-		assert.equal(fresh.pk, false, `${state.id} should have cleared the PK`);
-		assert.equal(
-			cardinalityState(tt, fresh),
-			state.id,
-			`after clearing the PK, ${state.id} should read back as itself`,
-		);
-	}
+	// unsetting ux/nn/pk by hand moves the labels, same rule as any column
+	const plain = { pk: false, nn: false, ux: false };
+	const tt = { columns: [plain] };
+	assert.equal(cardinalityState(tt, plain), "0..N / 0..1");
 });
 
 // A composite-PK member is NOT unique on its own, so its child end is 0..N and
-// stays steerable — that is what makes a junction table expressible. Its PARENT
-// end is pinned to 1..1 though, because every emitter writes NOT NULL for any
-// PK column (`c.Nn || c.Pk`), not just a sole one. So the child end is free
-// WITHOUT touching the PK, while relaxing the parent end needs the PK gone.
-test("a composite-PK member steers its child end without dropping the PK", () => {
+// stays steerable via ux — that is what makes a junction table expressible.
+// Its PARENT end is pinned to 1..1 though, because every emitter writes NOT
+// NULL for any PK column (`c.Nn || c.Pk`), not just a sole one.
+test("a composite-PK member reads 0..N / 1..1 and steers via ux", () => {
 	const a = { pk: true, nn: true, ux: false };
 	const b = { pk: true, nn: true, ux: false };
 	const t = { columns: [a, b] };
 	assert.equal(isSolePk(t, a), false);
 	assert.equal(cardinalityState(t, a), "0..N / 1..1");
-	// the child end can be made unique, and the PK survives: PK(a, b) does not
-	// make `a` unique on its own, so ux is a separate, compatible fact
-	assert.equal(applyCardinality(t, a, "0..1 / 1..1"), true);
+	// ux flips the child end without touching the PK
+	a.ux = true;
 	assert.equal(a.pk, true);
 	assert.equal(cardinalityState(t, a), "0..1 / 1..1");
-	// relaxing the parent end cannot coexist with the PK, so it clears it
-	assert.equal(applyCardinality(t, a, "0..1 / 0..1"), true);
-	assert.equal(a.pk, false);
+	// clearing pk+nn relaxes the parent end
+	a.pk = false;
+	a.nn = false;
 	assert.equal(cardinalityState(t, a), "0..1 / 0..1");
 });
 
-test("applyCardinality rejects an unknown state", () => {
-	const c = { pk: false, nn: false, ux: false };
-	assert.equal(applyCardinality({ columns: [c] }, c, "1..N"), false);
-	assert.equal(applyCardinality({ columns: [c] }, c, ""), false);
+test("CARDINALITY_STATES lists the four derivable states", () => {
+	assert.deepEqual(CARDINALITY_STATES.map((s) => s.id).sort(), [
+		"0..1 / 0..1",
+		"0..1 / 1..1",
+		"0..N / 0..1",
+		"0..N / 1..1",
+	]);
 });
 
-// pkConflictsWith is what tells the store to warn "primary key cleared", and it
-// is the exact negation of reachableStates — the same rule the dialog used to
-// disable options from, seen from the other side. Pinning them together keeps
-// the warning honest: it must fire precisely when the PK is dropped.
-test("pkConflictsWith negates reachableStates and predicts the PK clear", () => {
-	const shapes = [
-		{ label: "plain", cols: [{ pk: false, nn: false, ux: false }], i: 0 },
-		{ label: "sole pk", cols: [{ pk: true, nn: true, ux: false }], i: 0 },
-		{
-			label: "composite pk",
-			cols: [
-				{ pk: true, nn: true, ux: false },
-				{ pk: true, nn: true, ux: false },
-			],
-			i: 0,
-		},
-	];
-	for (const { label, cols, i } of shapes) {
-		const t = { columns: cols };
-		const reachable = reachableStates(t, cols[i]);
-		assert.ok(reachable.length > 0, `${label}: no reachable states`);
-		for (const s of CARDINALITY_STATES) {
-			// Rebuild with the SAME column count: a one-column table would turn a
-			// composite-PK member into a sole PK, changing the rule under test.
-			const fresh = cols.map((c) => ({ ...c }));
-			const tt = { columns: fresh };
-			const conflicts = pkConflictsWith(tt, fresh[i], s.id);
-			assert.equal(
-				conflicts,
-				!reachable.includes(s.id),
-				`${label}: pkConflictsWith(${s.id}) disagrees with reachableStates`,
-			);
-			const hadPk = fresh[i].pk;
-			applyCardinality(tt, fresh[i], s.id);
-			// the PK is dropped exactly when a conflict was reported
-			assert.equal(
-				fresh[i].pk,
-				hadPk && !conflicts,
-				`${label}: ${s.id} changed the PK but pkConflictsWith said ${conflicts}`,
-			);
-		}
-	}
-});
-
-// The bug the dropdown work uncovered: a hand-written file can parse to
+// The bug the column work uncovered: a hand-written file can parse to
 // `pk=true, nn=false` (`id INT, PRIMARY KEY (id)`), and every emitter writes
 // NOT NULL for a PK regardless. Reading `nn` alone made the diagram say 0..1
 // where the DDL said 1..1 — the diagram lied.
@@ -695,10 +636,6 @@ test("a PK column reads as 1..1 even when nn was never set", () => {
 	// this is the regression: nn is false, but the DDL is NOT NULL
 	assert.equal(cardinality(t, c).parent, "1..1");
 	assert.equal(cardinalityState(t, c), "0..1 / 1..1");
-	// and touching its cardinality normalises nn, so the model stops disagreeing
-	// with its own output
-	assert.equal(applyCardinality(t, c, "0..1 / 1..1"), true);
-	assert.equal(c.nn, true);
 });
 
 // ---- relationship edge visibility ----

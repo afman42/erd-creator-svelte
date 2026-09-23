@@ -21,9 +21,10 @@ import {
 	store,
 } from "./schema.svelte.js";
 
-let { showSql, onToggleSql } = $props();
+let { showSql, onToggleSql, onToggleRelationship } = $props();
 
 // Display names; the values are the server's dialect identifiers.
+/** @type {Record<string, string>} */
 const LABELS = {
 	mysql: "MySQL",
 	mariadb: "MariaDB",
@@ -35,6 +36,12 @@ const LABELS = {
 <header aria-label="ERD toolbar">
 	<h1 class="sr-only">ERD Creator</h1>
 	<button onclick={addTable} aria-label="+ Table">+ Table</button>
+	<button
+		onclick={onToggleRelationship}
+		disabled={store.schema.tables.length < 2}
+		aria-label="+ Relationship"
+		title="Create a 1:1, 1:N or N:N relationship between two tables"
+	>+ Relationship</button>
 	<label class="sr-only" for="file-select">Open schema file</label>
 	<select
 		id="file-select"

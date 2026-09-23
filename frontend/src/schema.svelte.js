@@ -15,14 +15,9 @@ import {
 	newTable,
 	uniqName,
 } from "./erd.js";
-import {
-	applyCardinality,
-	CANVAS_ORIGIN,
-	DUP_OFFSET,
-	pkConflictsWith,
-	stackStep,
-} from "./geometry.js";
+import { CANVAS_ORIGIN, DUP_OFFSET, stackStep } from "./geometry.js";
 import { snap as snapHistory, undo as undoHistory } from "./history.js";
+import { createManyToMany, createRelationship } from "./relationships.js";
 
 /**
  * Type shorthands for the client model shapes, defined in erd.js.
@@ -105,6 +100,7 @@ import {
 	touch as touchAutosave,
 } from "./autosave.js";
 
+/** @param {boolean} showSql */
 export function touch(showSql) {
 	touchAutosave(showSql, { store, refreshLint, refreshSql, saveCurrent });
 }
@@ -191,6 +187,46 @@ export function rmColumn(t, c) {
 export function addColumn(t) {
 	snap();
 	t.columns.push(newColumn());
+}
+/**
+ * commitCreate applies a creator result: a failure flashes its error and
+ * leaves the schema untouched (no dead undo entry); a success snapshots for
+ * undo and re-lints. Shared by addRelationship and addManyToMany.
+ * @param {{ ok: boolean, error?: string }} r
+ * @returns {boolean}
+ */
+function commitCreate(r) {
+	if (!r.ok) {
+		flash(r.error, "err");
+		return false;
+	}
+	snap();
+	flashLint();
+	return true;
+}
+/**
+ * addRelationship creates a first-class 1:1 or 1:N relationship by appending
+ * the FK column createRelationship() builds.
+ * @param {string} childId
+ * @param {string} parentId
+ * @param {"1:1" | "1:N"} type
+ * @returns {boolean}
+ */
+export function addRelationship(childId, parentId, type) {
+	return commitCreate(
+		createRelationship(store.schema, childId, parentId, type),
+	);
+}
+/**
+ * addManyToMany creates the junction table (composite PK over two FK columns)
+ * that makes a pair of tables N:N, via createManyToMany. The junction badge on
+ * the card is derived from the same shape (isJunctionTable), never stored.
+ * @param {string} aId
+ * @param {string} bId
+ * @returns {boolean}
+ */
+export function addManyToMany(aId, bId) {
+	return commitCreate(createManyToMany(store.schema, aId, bId));
 }
 /**
  * @param {Table} t
@@ -297,7 +333,7 @@ export function setRef(c, ev) {
  */
 export function setRefAction(c, ev) {
 	snap();
-	c.ref.action = ev.target.value;
+	if (c.ref) c.ref.action = ev.target.value;
 }
 // setRefOnUpdate sets ON UPDATE. Unlike setRefAction there is no default: the
 // empty option means "omit the clause" and is stored as "", because a schema
@@ -308,7 +344,16 @@ export function setRefAction(c, ev) {
  */
 export function setRefOnUpdate(c, ev) {
 	snap();
-	c.ref.onUpdate = ev.target.value;
+	if (c.ref) c.ref.onUpdate = ev.target.value;
+}
+// unsetRef deletes the relationship without dropping the column: clears the
+// FK so the edge disappears but name/type/flags stay. Separate from setRef
+// (retarget) and rmColumn (drop) — the column modal's Remove relationship.
+export function unsetRef(c) {
+	if (!c.ref) return;
+	snap();
+	c.ref = null;
+	flashLint();
 }
 /**
  * @param {Column} c
@@ -320,33 +365,16 @@ export function togglePk(c) {
 	flashLint();
 }
 
-// setCardinality applies one of the four cardinality states by writing the
-// ux/nn flags that cardinality() reads. Nothing beyond those flags is stored, so
-// the diagram cannot disagree with the emitted DDL, and the .sql file — which
-// has nowhere to put a cardinality — needs no change.
-//
-// Every state is accepted. A pick the column's PK cannot honour clears the PK
-// (applyCardinality does that) and says so, because dropping a primary key is a
-// real change to the emitted DDL and must not happen silently. The old version
-// refused those picks instead, which left three of the four options permanently
-// unreachable on any PK column.
-/**
- * @param {Table} t
- * @param {Column} c
- * @param {string} stateId
- */
-export function setCardinality(t, c, stateId) {
-	snap();
-	const clearsPk = pkConflictsWith(t, c, stateId);
-	if (!applyCardinality(t, c, stateId)) return;
-	if (clearsPk)
-		flash("primary key cleared — a PK is always 0..1 / 1..1", "warn");
-	else flashLint();
-}
-
 // toggleFlag flips one of a column's boolean flags (nn/ux/ai/ix). Lives here
 // with the other mutations so every undo snapshot is taken in one place —
 // TableCard used to inline snap() plus the flip four times.
+//
+// Cardinality is steered through these flags directly now (the old
+// setCardinality/applyCardinality writer pair was removed with the
+// ColumnEditModal select): UQ → child 0..1 else 0..N; NN (or PK, which the
+// emitters always write NOT NULL for) → parent 1..1 else 0..1 — the rule
+// cardinality() in geometry.js reads. The RelationshipModal writes the same
+// flags at creation; nothing is stored beyond them.
 /**
  * @param {Column} c
  */
@@ -364,6 +392,7 @@ export function toggleFlag(c, flag) {
 
 // ensureIndexes returns the table's index list, creating it on a table that
 // predates the field (a schema loaded from an older file has no `indexes`).
+/** @param {Table} t */
 function ensureIndexes(t) {
 	if (!Array.isArray(t.indexes)) t.indexes = [];
 	return t.indexes;
@@ -429,6 +458,10 @@ export function toggleIndexCol(ix, colName) {
 	else ix.cols.push(colName);
 }
 
+/**
+ * @param {string} msg
+ * @param {string} kind
+ */
 export function flash(msg, kind = "ok") {
 	store.error = msg;
 	store.errorKind = kind;
@@ -436,6 +469,7 @@ export function flash(msg, kind = "ok") {
 		if (store.error === msg) store.error = "";
 	}, 1400);
 }
+/** @param {?string} id */
 export function setSelected(id) {
 	store.selected = id;
 }
@@ -443,6 +477,7 @@ export function setSelected(id) {
 // bytes change), so it snapshots for undo and refreshes the SQL panel when it
 // is open — previously the panel kept showing the old dialect because nothing
 // reacted to the change.
+/** @param {string} d */
 export function setDialect(d) {
 	if (store.schema.dialect === d) return;
 	snap();
@@ -453,6 +488,7 @@ export function setDialect(d) {
 // setSqliteTypes switches how SQLite renders the types it has no storage class
 // for. Like setDialect this is a real mutation — the saved bytes change — so it
 // snapshots for undo and refreshes the SQL panel when it is open.
+/** @param {string} mode */
 export function setSqliteTypes(mode) {
 	if (store.schema.sqliteTypes === mode) return;
 	snap();
@@ -482,6 +518,7 @@ refreshFiles().then(() => {
 	openFile(newest.name);
 });
 
+/** @param {string} name */
 export async function openFile(name) {
 	await openFileImpl(store, name, flash);
 }

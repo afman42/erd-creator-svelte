@@ -123,10 +123,11 @@ test("min-max cardinality labels render on FK edges", async ({ page }) => {
 	expect(texts.sort()).toEqual(["0..1", "1..1"]);
 });
 
-// The cardinality dropdown is a VIEW of the ux/nn flags, never a stored field —
-// the .sql file has nowhere to keep a cardinality. So changing it must change
-// the flags, and the diagram labels must follow immediately.
-test("cardinality dropdown drives the flags and the diagram labels", async ({
+// Cardinality is derived from the ux/nn flags, never stored — the .sql file
+// has nowhere to keep it. The RelationshipModal writes the flags at creation
+// (with a live preview); the flag checkboxes steer them afterwards. So
+// changing flags must move the diagram labels immediately.
+test("flag checkboxes drive the flags and the diagram labels", async ({
 	page,
 }) => {
 	await page.goto("/");
@@ -134,15 +135,10 @@ test("cardinality dropdown drives the flags and the diagram labels", async ({
 	const dlg = await openCol(page, 1, 0);
 	await dlg.locator("select.fk").selectOption({ index: 1 });
 
-	const card = dlg.locator("[data-testid=cardinality]");
-	await expect(card).toBeVisible();
-
-	// 0..N / 0..1 → child becomes many, parent optional. The column starts as a
-	// sole PK, so this pick also CLEARS the PK: a PK is emitted NOT NULL and
-	// UNIQUE, so it can only be 0..1 / 1..1 and must go for this state to stick.
-	// The expected label order is SORTED: "0..1" sorts before "0..N" because
-	// "1" < "N".
-	await card.selectOption("0..N / 0..1");
+	// untick PK + NN → child many, parent optional. The expected label order
+	// is SORTED: "0..1" sorts before "0..N" because "1" < "N".
+	await dlg.locator('.flags label[title="primary key"] input').uncheck();
+	await dlg.locator('.flags label[title="not null"] input').uncheck();
 	await closeCol(dlg);
 	await expect
 		.poll(async () =>
@@ -150,17 +146,10 @@ test("cardinality dropdown drives the flags and the diagram labels", async ({
 		)
 		.toEqual(["0..1", "0..N"]);
 
-	// the PK really went with it
+	// tick UQ + NN → both ends change
 	const dlg2 = await openCol(page, 1, 0);
-	await expect(
-		dlg2.locator('.flags label[title="primary key"] input'),
-	).not.toBeChecked();
-
-	// 0..1 / 1..1 → both ends change
-	await expect(dlg2.locator("[data-testid=cardinality]")).toHaveValue(
-		"0..N / 0..1",
-	);
-	await dlg2.locator("[data-testid=cardinality]").selectOption("0..1 / 1..1");
+	await dlg2.locator('.flags label[title="unique"] input').check();
+	await dlg2.locator('.flags label[title="not null"] input').check();
 	await closeCol(dlg2);
 	await expect
 		.poll(async () =>
@@ -173,44 +162,34 @@ test("cardinality dropdown drives the flags and the diagram labels", async ({
 	await expect(page.locator("aside pre")).toContainText("NOT NULL UNIQUE");
 });
 
-// Every state is selectable, including the ones a PK cannot honour. The PK is
-// cleared when a pick needs it gone, with a visible warning, so the choice is
-// never silently overridden and the diagram keeps matching the emitted DDL.
-test("every cardinality option is selectable; a conflicting pick clears PK", async ({
+// The RelationshipModal shows a live preview of the labels Create will draw,
+// derived from the picked type — no mutation until Create.
+test("relationship dialog previews the resulting labels before creating", async ({
 	page,
+	request,
 }) => {
+	await seedTwoTables(request);
 	await page.goto("/");
-	await page.getByRole("button", { name: "+ Table" }).click();
-	const dlg = await openCol(page, 1, 0);
-	await dlg.locator("select.fk").selectOption({ index: 1 });
-
-	// the column is a sole PK → it reads 0..1 / 1..1, nothing is disabled, and
-	// the hint warns the PK will be dropped if another state is chosen
-	const opts = dlg.locator("[data-testid=cardinality] option");
-	await expect(opts).toHaveCount(4);
-	const disabled = await opts.evaluateAll((els) =>
-		els.filter((e) => e.disabled).map((e) => e.value),
+	const dlg = await openRelDialog(page);
+	const preview = dlg.locator("[data-testid=rel-preview]");
+	await expect(preview).toBeVisible();
+	// default 1:N: child many, parent mandatory
+	await expect(dlg.locator("[data-testid=rel-preview-caption]")).toContainText(
+		"0..N",
 	);
-	expect(disabled).toEqual([]);
-	await expect(dlg.locator("[data-testid=cardinality]")).toHaveValue(
-		"0..1 / 1..1",
+	await expect(dlg.locator("[data-testid=rel-preview-caption]")).toContainText(
+		"1..1",
 	);
-	await expect(dlg.locator("[data-testid=pk-hint]")).toBeVisible();
-
-	// pick a state the PK cannot honour → the PK is cleared and the hint is gone
-	await dlg.locator("[data-testid=cardinality]").selectOption("0..N / 0..1");
-	await expect(
-		dlg.locator('.flags label[title="primary key"] input'),
-	).not.toBeChecked();
-	await expect(dlg.locator("[data-testid=cardinality]")).toHaveValue(
-		"0..N / 0..1",
+	await dlg.locator("[data-testid=rel-type]").selectOption("1:1");
+	await expect(dlg.locator("[data-testid=rel-preview-caption]")).toContainText(
+		"0..1",
 	);
-	await expect(dlg.locator("[data-testid=pk-hint]")).toHaveCount(0);
-	// and the user was told, rather than the PK vanishing silently. The banner
-	// is a WARNING, not an error: the pick succeeded.
-	await expect(page.locator("header .warn")).toContainText(
-		"primary key cleared",
+	await dlg.locator("[data-testid=rel-type]").selectOption("N:N");
+	await expect(dlg.locator("[data-testid=rel-preview-caption]")).toContainText(
+		"users_posts",
 	);
+	// preview only: nothing created yet
+	await expect(page.locator(".tname")).toHaveCount(2);
 });
 
 // A self-referencing FK (parent_id → same table) is an ordinary pattern — a
@@ -1357,4 +1336,165 @@ test("Export PNG captures the whole diagram, not just the viewport", async ({
 	expect(buf.subarray(12, 16).toString("ascii")).toBe("IHDR");
 	const pngHeight = buf.readUInt32BE(20);
 	expect(pngHeight).toBeGreaterThanOrEqual(Math.ceil(contentBottom));
+});
+
+// ---- first-class relationships (1:1 / 1:N) ----
+
+// Seed the two-table fixture the relationship dialog tests need. Table ids
+// follow the server's own scheme (t1, t2): the store rewrites hand-written
+// ids on write, so an id like "u" would come back from a reload as "t1" and
+// break reload/round-trip assertions.
+async function seedTwoTables(request) {
+	const put = await request.put("/api/files/rel.sql", {
+		data: {
+			dialect: "mysql",
+			tables: [
+				{
+					id: "t1",
+					name: "users",
+					columns: [{ name: "id", type: "INT", pk: true, nn: true, ai: true }],
+				},
+				{
+					id: "t2",
+					name: "posts",
+					columns: [{ name: "id", type: "INT", pk: true, nn: true, ai: true }],
+				},
+			],
+		},
+	});
+	expect(put.ok()).toBeTruthy();
+}
+
+// Open the relationship dialog from the toolbar and return it.
+async function openRelDialog(page) {
+	await page.getByRole("button", { name: "+ Relationship" }).click();
+	const dlg = page.locator("dialog.reledit");
+	await expect(dlg).toBeVisible();
+	return dlg;
+}
+
+test("relationship button disabled until a second table exists", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await expect(
+		page.getByRole("button", { name: "+ Relationship" }),
+	).toBeDisabled();
+});
+
+test("new 1:N relationship appends the FK column and round-trips through the server", async ({
+	page,
+	request,
+}) => {
+	await seedTwoTables(request);
+	await page.goto("/");
+	await expect(page.locator(".tname")).toHaveCount(2);
+
+	// defaults: first table as child (users), second as parent (posts), 1:N
+	const dlg = await openRelDialog(page);
+	await expect(dlg.locator("[data-testid=rel-child]")).toHaveValue("t1");
+	await expect(dlg.locator("[data-testid=rel-parent]")).toHaveValue("t2");
+	await dlg.locator("[data-testid=rel-create]").click();
+	await expect(dlg).toHaveCount(0);
+
+	// the child card gained the FK row
+	await expect(page.locator("section.table").nth(0)).toContainText("post_id");
+
+	// the exported SQL (server-side parse of the live schema) carries the
+	// column, NOT NULL and the REFERENCES clause
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText("post_id");
+	await expect(page.locator("aside pre")).toContainText("NOT NULL");
+	await expect(page.locator("aside pre")).toContainText("REFERENCES");
+
+	// and the autosaved file round-trips: reload shows the column again
+	await expect(async () => {
+		const res = await request.get("/api/files/rel.sql");
+		expect(res.ok()).toBeTruthy();
+		expect(await res.text()).toContain("post_id");
+	}).toPass({ timeout: 5000 });
+	await page.reload();
+	await expect(page.locator("section.table").nth(0)).toContainText("post_id");
+});
+
+test("new 1:1 relationship adds UNIQUE to the FK column", async ({
+	page,
+	request,
+}) => {
+	await seedTwoTables(request);
+	await page.goto("/");
+	await expect(page.locator(".tname")).toHaveCount(2);
+
+	const dlg = await openRelDialog(page);
+	await dlg.locator("[data-testid=rel-type]").selectOption("1:1");
+	await dlg.locator("[data-testid=rel-create]").click();
+
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await expect(page.locator("aside pre")).toContainText("post_id");
+	await expect(page.locator("aside pre")).toContainText("UNIQUE");
+});
+
+test("same-table relationship pick is rejected without mutating the schema", async ({
+	page,
+	request,
+}) => {
+	await seedTwoTables(request);
+	await page.goto("/");
+	await expect(page.locator(".tname")).toHaveCount(2);
+
+	const before = await page.locator(".row").count();
+	const dlg = await openRelDialog(page);
+	await dlg.locator("[data-testid=rel-child]").selectOption("t1");
+	await dlg.locator("[data-testid=rel-parent]").selectOption("t1");
+	await expect(dlg.locator(".warnhint")).toBeVisible();
+	await dlg.locator("[data-testid=rel-create]").click();
+
+	// dialog stays open over the error, no new row anywhere
+	await expect(dlg).toBeVisible();
+	await expect(page.locator("header .err")).toContainText(
+		"child and parent must be distinct tables",
+	);
+	await expect(page.locator(".row")).toHaveCount(before);
+});
+
+test("new N:N relationship builds a junction table with a derived badge", async ({
+	page,
+	request,
+}) => {
+	await seedTwoTables(request);
+	await page.goto("/");
+	await expect(page.locator(".tname")).toHaveCount(2);
+
+	const dlg = await openRelDialog(page);
+	await dlg.locator("[data-testid=rel-type]").selectOption("N:N");
+	await dlg.locator("[data-testid=rel-create]").click();
+	await expect(dlg).toHaveCount(0);
+
+	// junction card appeared with the two FK rows and the derived N:N chip
+	await expect(page.locator(".tname")).toHaveCount(3);
+	await expect(page.locator(".tname").nth(2)).toHaveValue("users_posts");
+	const chip = page.locator("[data-testid=junction-chip]");
+	await expect(chip).toHaveText("N:N");
+
+	// the two junction FKs draw one edge each (crow's foot at the junction end)
+	await expect(page.locator("svg path.edge")).toHaveCount(2);
+
+	// the exported SQL carries the composite PK over both FKs
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	const sql = page.locator("aside pre");
+	await expect(sql).toContainText(
+		/PRIMARY KEY\s*\([^)]*user_id[^)]*post_id[^)]*\)/,
+	);
+	await expect(sql).toContainText("REFERENCES");
+	await expect(sql).toContainText("user_id");
+	await expect(sql).toContainText("post_id");
+
+	// and reload re-derives the chip from the parsed file — nothing stored
+	await expect(async () => {
+		const res = await request.get("/api/files/rel.sql");
+		expect(res.ok()).toBeTruthy();
+		expect(await res.text()).toContain("users_posts");
+	}).toPass({ timeout: 5000 });
+	await page.reload();
+	await expect(page.locator("[data-testid=junction-chip]")).toHaveText("N:N");
 });

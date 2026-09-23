@@ -14,12 +14,12 @@
 // needs no inline styles (the CSP is style-src 'self', so it could not have
 // them anyway).
 import { baseType, isInt, TYPES } from "./erd.js";
-import { CARDINALITY_STATES, cardinalityState } from "./geometry.js";
+import { cardinalityState } from "./geometry.js";
+import { isJunctionTable } from "./relationships.js";
 import {
 	commitColName,
 	commitComment,
 	rmColumn,
-	setCardinality,
 	setRef,
 	setRefAction,
 	setRefOnUpdate,
@@ -28,6 +28,7 @@ import {
 	toggleArray,
 	toggleFlag,
 	togglePk,
+	unsetRef,
 } from "./schema.svelte.js";
 
 let { table, column, onClose } = $props();
@@ -35,15 +36,23 @@ let { table, column, onClose } = $props();
 const actions = ["CASCADE", "RESTRICT", "SET NULL", "NO ACTION"];
 const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 
-// The current cardinality state, derived from the flags — never stored.
-const cardState = $derived(cardinalityState(table, column));
+// The relationship IS this column's FK: target + flags read back through
+// cardinality(), so edit = retarget/flags/actions, delete = clear FK (keeps
+// column) or Remove column (drops it). Junction members get a hint: dropping
+// one FK demotes the table from N:N to a plain child.
+//
+// relKind reads ux only (UQ → 1:1 else 1:N): a sole PK also pins the child
+// end to 0..1 via isUniqueRef, but PK is a column identity, not a type the
+// radio should claim — the radio would then read 1:N while the edge says
+// 0..1. The legend (cardinalityState) always shows the truth.
+const relState = $derived(column.ref ? cardinalityState(table, column) : null);
+const relKind = $derived(!column.ref ? null : column.ux ? "1:1" : "1:N");
+const inJunction = $derived(isJunctionTable(table, store.schema));
 
-// Every state is selectable, including the ones a PK cannot honour. PRIMARY KEY
-// implies NOT NULL and UNIQUE in every dialect, so a PK's own state is always
-// 0..1 / 1..1 — picking any other state CLEARS the PK rather than being
-// disabled. The hint below the select says so, because a native <select> has no
-// way to show "this will also untick PK" on the option itself.
-const pkPinsState = $derived(!!column.pk);
+function setRelKind(kind) {
+	if (!column.ref) return;
+	if ((kind === "1:1") !== column.ux) toggleFlag(column, "ux");
+}
 
 let dlg = $state(null);
 
@@ -141,33 +150,41 @@ function remove() {
 	</label>
 
 	{#if column.ref}
-		<label class="fld">
-			<span>Cardinality</span>
-			<!-- Derived from the flags, never stored: the .sql file has nowhere
-			     to keep a cardinality, so this select WRITES ux/nn and reads
-			     them back. All four options are selectable; one a PK cannot
-			     honour clears the PK (see setCardinality). -->
-			<select
-				class="card"
-				data-testid="cardinality"
-				value={cardState ?? ""}
-				onchange={(e) => setCardinality(table, column, e.currentTarget.value)}
-			>
-				{#each CARDINALITY_STATES as s (s.id)}
-					<option value={s.id}>{s.id}</option>
-				{/each}
-			</select>
-		</label>
-
-		{#if pkPinsState}
-			<!-- A PK is emitted NOT NULL and UNIQUE, so it is always 0..1 / 1..1.
-			     Say the PK will be dropped BEFORE the click, since the select
-			     itself cannot. -->
-			<p class="pkhint" data-testid="pk-hint">
-				a primary key is always 0..1 / 1..1 — choosing another state clears PK
-			</p>
-		{/if}
-
+		<fieldset class="rel">
+			<legend>Relationship · {relState}</legend>
+			<div class="relkinds">
+				<label class="relkind" class:on={relKind === "1:N"}>
+					<input
+						type="radio"
+						name="rel-kind-{column.id}"
+						checked={relKind === "1:N"}
+						onchange={() => setRelKind("1:N")}
+						data-testid="rel-kind-1N"
+					/>
+					<span>1:N</span>
+				</label>
+				<label class="relkind" class:on={relKind === "1:1"}>
+					<input
+						type="radio"
+						name="rel-kind-{column.id}"
+						checked={relKind === "1:1"}
+						onchange={() => setRelKind("1:1")}
+						data-testid="rel-kind-11"
+					/>
+					<span>1:1</span>
+				</label>
+				<button
+					type="button"
+					class="rmrel"
+					onclick={() => unsetRef(column)}
+					data-testid="rel-remove"
+					title="Delete this relationship (keeps the column)"
+				>Remove relationship</button>
+			</div>
+			{#if inJunction}
+				<p class="jhint">Junction member — removing this FK demotes {table.name} from N:N to a plain table.</p>
+			{/if}
+		</fieldset>
 		<label class="fld">
 			<span>ON DELETE</span>
 			<select
@@ -264,18 +281,64 @@ function remove() {
 		color: var(--color-text-muted);
 		padding: 0 4px;
 	}
-	/* The PK caveat under the cardinality select. Muted and indented to sit
-	   under the control, not the label. */
-	.pkhint {
-		margin: -2px 0 8px 84px;
-		font-size: 11px;
-		color: #c9a227;
-	}
 	.flags label {
 		display: flex;
 		gap: 4px;
 		align-items: center;
 		font-size: 11px;
+	}
+	/* Relationship block: the FK's type (UQ flag) + delete for this edge.
+	   Same bordered fieldset vocabulary as .flags so it reads as one group. */
+	.rel {
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		margin: 0 0 8px;
+		padding: 6px 8px;
+	}
+	.rel legend {
+		font-size: 11px;
+		color: var(--color-text-muted);
+		padding: 0 4px;
+		font-family: ui-monospace, monospace;
+	}
+	.relkinds {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+	.relkind {
+		display: flex;
+		gap: 4px;
+		align-items: center;
+		font: 600 11px ui-monospace, monospace;
+		color: var(--color-text-muted);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		padding: 3px 8px;
+		cursor: pointer;
+	}
+	.relkind.on {
+		border-color: var(--color-primary);
+		background: #233448;
+		color: #fff;
+	}
+	.rmrel {
+		background: transparent;
+		color: var(--color-danger);
+		border: 0;
+		cursor: pointer;
+		font-size: 11px;
+		margin-left: auto;
+		padding: 3px 6px;
+		border-radius: 4px;
+	}
+	.rmrel:hover {
+		background: #2a1a1d;
+	}
+	.jhint {
+		margin: 6px 0 0;
+		font-size: 11px;
+		color: var(--color-warning);
 	}
 	footer {
 		display: flex;

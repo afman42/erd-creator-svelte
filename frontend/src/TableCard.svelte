@@ -14,6 +14,7 @@
 // dropping it would move every row below it.
 import ColumnEditModal from "./ColumnEditModal.svelte";
 import ColumnRow from "./ColumnRow.svelte";
+import { isJunctionTable } from "./relationships.js";
 import {
 	addColumn,
 	commitTableName,
@@ -75,6 +76,14 @@ const parentName = (c) =>
 			spellcheck="false"
 			aria-label="Table name {table.name}"
 		/>
+		{#if isJunctionTable(table, store.schema)}
+			<span
+				class="chip"
+				data-testid="junction-chip"
+				title="many-to-many junction (derived from composite FK PK)"
+				role="note"
+			>N:N</span>
+		{/if}
 		<button
 			title="composite indexes"
 			aria-label="composite indexes for {table.name}"
@@ -151,6 +160,18 @@ const parentName = (c) =>
 		font-size: 13px;
 		padding: 5px 8px;
 		outline: none;
+	}
+	/* Derived marker, not a flag: isJunctionTable() decides. Fits inside the
+	   28px header (HDR_H) so the height model in geometry.js is untouched. */
+	.chip {
+		flex: 0 0 auto;
+		margin-right: 4px;
+		padding: 1px 5px;
+		border-radius: 8px;
+		background: var(--color-accent);
+		color: var(--color-bg);
+		font: 9px ui-monospace, monospace;
+		line-height: 14px;
 	}
 	.hdr button {
 		display: inline-flex;

@@ -353,3 +353,33 @@ func TestMysqlFilesUnaffected(t *testing.T) {
 		t.Errorf("legacy file parsed as %q, want mysql", parsed.Dialect)
 	}
 }
+
+// TestPostgresJunctionRoundTrip: a many-to-many junction — composite PK over
+// exactly two FK columns, the shape the client's createManyToMany builds — must
+// keep both Pk and Ref through emit→parse, or the derived N:N badge would be
+// lost on reopen.
+func TestPostgresJunctionRoundTrip(t *testing.T) {
+	s := &Schema{Dialect: DialectPostgres, Tables: []Table{
+		{ID: "t1", Name: "users", Columns: []Col{{Name: "id", Type: "INT", Pk: true, Nn: true, Ai: true}}},
+		{ID: "t2", Name: "posts", Columns: []Col{{Name: "id", Type: "INT", Pk: true, Nn: true, Ai: true}}},
+		{ID: "t3", Name: "users_posts", Columns: []Col{
+			{Name: "user_id", Type: "INT", Pk: true, Nn: true, Ref: &Ref{TableID: "t1", Action: "CASCADE"}},
+			{Name: "post_id", Type: "INT", Pk: true, Nn: true, Ref: &Ref{TableID: "t2", Action: "CASCADE"}},
+		}},
+	}}
+	sql := mustGenSQL(s)
+	s2, err := ParseDDL(sql)
+	if err != nil {
+		t.Fatalf("junction round-trip: %v\n%s", err, sql)
+	}
+	j := s2.Tables[2]
+	if len(j.Columns) != 2 {
+		t.Fatalf("junction lost its composite PK on round-trip: %d columns\n%s", len(j.Columns), sql)
+	}
+	for i, want := range []string{"user_id", "post_id"} {
+		c := j.Columns[i]
+		if c.Pk != true || c.Ref == nil || c.Ref.TableID == "" {
+			t.Errorf("junction member %q lost PK/FK on round-trip", want)
+		}
+	}
+}

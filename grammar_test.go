@@ -349,7 +349,9 @@ func TestSingleColumnIndexStaysColIx(t *testing.T) {
 }
 
 // TestIndexNameDerivation: an unnamed index gets idx_<table>_<cols>; an
-// explicit name is used verbatim.
+// explicit name is used verbatim. The frontend preview mirrors this rule
+// (TableIndexModal.svelte shownName: `idx_${table}_${cols.join("_")}`) —
+// keep the two in agreement or the dialog shows a name the DDL won't use.
 func TestIndexNameDerivation(t *testing.T) {
 	s := compositeIndexSchema()
 	sql := mustGenSQL(s)

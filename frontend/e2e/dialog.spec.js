@@ -122,3 +122,39 @@ test("FK dropdown excludes the column's own table", async ({ page }) => {
 	expect(names).toContain("users"); // the other table is offered
 	await closeCol(dlg);
 });
+
+test("relationship section edits type and deletes the edge without dropping the column", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "+ Table" }).click();
+
+	// create the FK through the column dialog: the default new column is
+	// id/INT/PK/AI, and a sole PK is unique — so the edge reads 1:1 even
+	// though no UQ flag is set (relKind reads ux only, the legend tells truth)
+	let dlg = await openCol(page, 1, 0);
+	await dlg.locator("select.fk").selectOption({ index: 1 });
+	await expect(dlg.locator("fieldset.rel legend")).toContainText("0..1 / 1..1");
+	await closeCol(dlg);
+	await expect(page.locator("svg path.edge")).toHaveCount(1);
+
+	// edit: clear PK (sole-PK uniqueness goes), then the radio 1:N ↔ 1:1
+	// flips UQ and the edge label follows
+	dlg = await openCol(page, 1, 0);
+	await dlg.locator("label").filter({ hasText: "PK" }).locator("input").click();
+	await expect(dlg.locator("fieldset.rel legend")).toContainText("0..N / 1..1");
+	await dlg.locator('[data-testid="rel-kind-11"]').click();
+	await expect(dlg.locator("fieldset.rel legend")).toContainText("0..1 / 1..1");
+	await expect(page.locator("svg text.card").first()).toContainText("0..1");
+	await closeCol(dlg);
+
+	// delete: Remove relationship clears the FK, keeps the column
+	dlg = await openCol(page, 1, 0);
+	await dlg.getByTestId("rel-remove").click();
+	await expect(dlg.locator("fieldset.rel")).toHaveCount(0);
+	await closeCol(dlg);
+	await expect(page.locator("svg path.edge")).toHaveCount(0);
+	await expect(
+		page.locator("section.table").nth(1).locator(".row"),
+	).toHaveCount(1);
+});

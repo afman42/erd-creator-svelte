@@ -14,6 +14,7 @@ import {
 	NUDGE_STEP_FAST,
 	snapCoord,
 } from "./geometry.js";
+import RelationshipModal from "./RelationshipModal.svelte";
 import SqlPanel from "./SqlPanel.svelte";
 import {
 	refreshSql,
@@ -28,7 +29,13 @@ import TableCard from "./TableCard.svelte";
 import Toolbar from "./Toolbar.svelte";
 
 let showSql = $state(false);
+let showRelationship = $state(false);
+/** @type {{ id: string, x0: number, y0: number, tx0: number, ty0: number, moved: boolean } | null} */
 let drag = $state(null);
+
+function toggleRelationship() {
+	showRelationship = !showRelationship;
+}
 
 const edges = $derived(edgePaths(store.schema));
 
@@ -44,6 +51,9 @@ function toggleSql() {
 	if (showSql) refreshSql();
 }
 
+/**
+ * @param {import("./erd.js").Table} t
+ */
 function startDrag(t, ev) {
 	if (ev.target.closest("button")) return;
 	// Pure delta: only the pointer origin and the table's origin matter. The
@@ -69,7 +79,8 @@ function onMove(ev) {
 		// undo restores the pre-drag coordinates.
 		snap();
 	}
-	const t = store.schema.tables.find((x) => x.id === drag.id);
+	const id = drag.id;
+	const t = store.schema.tables.find((x) => x.id === id);
 	if (t) {
 		// Pure delta: only the pointer origin and the table's origin matter.
 		// The final position is snapped to whole pixels (snapCoord) so the
@@ -81,7 +92,8 @@ function onMove(ev) {
 function onUp() {
 	if (!drag) return;
 	const moved = drag.moved;
-	const t = store.schema.tables.find((x) => x.id === drag.id);
+	const id = drag.id;
+	const t = store.schema.tables.find((x) => x.id === id);
 	drag = null;
 	if (t && !moved) setSelected(t.id);
 }
@@ -91,7 +103,7 @@ function onKey(ev) {
 	// false and Delete would delete the whole TABLE out from under the dialog;
 	// Escape would likewise clear the selection on its way to closing it.
 	if (document.querySelector("dialog[open]")) return;
-	const tag = document.activeElement?.tagName;
+	const tag = document.activeElement?.tagName ?? "";
 	const editing = /INPUT|SELECT|TEXTAREA/.test(tag);
 	if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {
 		const t = store.schema.tables.find((x) => x.id === store.selected);
@@ -123,7 +135,7 @@ function onKey(ev) {
 
 <svelte:window onpointermove={onMove} onpointerup={onUp} onkeydown={onKey} />
 
-<Toolbar showSql={showSql} onToggleSql={toggleSql} />
+<Toolbar showSql={showSql} onToggleSql={toggleSql} onToggleRelationship={toggleRelationship} />
 
 <main>
 	<div class="canvas" class:dragging={!!drag}>
@@ -221,6 +233,10 @@ function onKey(ev) {
 
 	{#if showSql}
 		<SqlPanel />
+	{/if}
+
+	{#if showRelationship}
+		<RelationshipModal onClose={() => (showRelationship = false)} />
 	{/if}
 </main>
 
