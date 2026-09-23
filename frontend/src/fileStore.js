@@ -19,6 +19,14 @@ import {
 } from "./erd.js";
 import { clearHistory } from "./history.js";
 
+/**
+ * @typedef {typeof import("./schema.svelte.js").store} Store
+ * @typedef {(msg: string, kind?: "ok" | "err") => void} Flash
+ */
+
+/**
+ * @param {Store} store
+ */
 export async function refreshFiles(store) {
 	try {
 		const res = await fetch("/api/files");
@@ -28,6 +36,11 @@ export async function refreshFiles(store) {
 	}
 }
 
+/**
+ * @param {Store} store
+ * @param {Flash} flash
+ * @param {boolean} [silent]
+ */
 export async function saveCurrent(store, flash, silent = false) {
 	if (!store.currentFile) {
 		flash("no file selected — use New", "err");
@@ -57,6 +70,10 @@ export async function saveCurrent(store, flash, silent = false) {
 	}
 }
 
+/**
+ * @param {Store} store
+ * @param {Flash} flash
+ */
 async function flushCurrent(store, flash) {
 	clearAutosaveTimers();
 	if (isDirty() && store.currentFile) {
@@ -68,6 +85,11 @@ async function flushCurrent(store, flash) {
 	}
 }
 
+/**
+ * @param {Store} store
+ * @param {string} name
+ * @param {Flash} flash
+ */
 export async function openFile(store, name, flash) {
 	if (!name) return;
 	await flushCurrent(store, flash);
@@ -90,6 +112,10 @@ export async function openFile(store, name, flash) {
 	}
 }
 
+/**
+ * @param {Store} store
+ * @param {Flash} flash
+ */
 export async function newFile(store, flash) {
 	const name = (prompt("New schema file name:", "schema") || "")
 		.trim()
@@ -109,6 +135,10 @@ export async function newFile(store, flash) {
 	await refreshFiles(store);
 }
 
+/**
+ * @param {Store} store
+ * @param {Flash} flash
+ */
 export async function deleteFile(store, flash) {
 	if (!store.currentFile) return;
 	if (!confirm(`Delete ${store.currentFile}?`)) return;

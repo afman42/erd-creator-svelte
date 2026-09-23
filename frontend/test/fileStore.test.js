@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { editGeneration, isDirty, setDirty, touch } from "../src/autosave.js";
 import { saveCurrent } from "../src/fileStore.js";
-import {
-	editGeneration,
-	isDirty,
-	setDirty,
-	touch,
-} from "../src/autosave.js";
 
 // saveCurrent takes (store, flash, silent). driveSave returns a handle with
 // resolvers so a test can complete the fetch calls in any order.
@@ -77,6 +72,10 @@ test("touch bumps editGeneration, saveCurrent reads it", async () => {
 		refreshSql: () => {},
 		saveCurrent: () => {},
 	});
-	assert.equal(editGeneration(), g0 + 1, "editGeneration must advance on touch");
+	assert.equal(
+		editGeneration(),
+		g0 + 1,
+		"editGeneration must advance on touch",
+	);
 	setDirty(false);
 });

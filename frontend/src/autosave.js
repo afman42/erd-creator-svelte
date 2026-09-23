@@ -9,7 +9,12 @@
 const LINT_DEBOUNCE_MS = 300;
 const SAVE_DEBOUNCE_MS = 800;
 const SQL_DEBOUNCE_MS = 300;
-let lintTimer, saveTimer, sqlTimer;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let lintTimer;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let saveTimer;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let sqlTimer;
 let dirty = false;
 let skipNextTouch = false;
 // Edit generation: bumped on every non-skipped touch. saveCurrent captures it
@@ -21,9 +26,13 @@ let editGen = 0;
 export function isDirty() {
 	return dirty;
 }
+/**
+ * @param {boolean} v
+ */
 export function setDirty(v) {
 	dirty = v;
 }
+/** @returns {number} */
 export function editGeneration() {
 	return editGen;
 }
@@ -31,6 +40,22 @@ export function markSkipTouch() {
 	skipNextTouch = true;
 }
 
+/**
+ * @typedef {object} AutosaveStore
+ * @property {string} currentFile
+ * @property {object} schema
+ */
+
+/**
+ * Schedule the debounced lint/save/SQL-panel work after an edit. `store` is
+ * the reactive schema store; the callbacks are the work itself.
+ * @param {boolean} showSql
+ * @param {object} deps
+ * @param {AutosaveStore} deps.store
+ * @param {() => void} deps.refreshLint
+ * @param {() => unknown} deps.refreshSql
+ * @param {(silent?: boolean) => Promise<unknown>} deps.saveCurrent
+ */
 export function touch(
 	showSql,
 	{ store, refreshLint, refreshSql, saveCurrent },
@@ -42,7 +67,7 @@ export function touch(
 	editGen++;
 	clearTimeout(lintTimer);
 	lintTimer = setTimeout(() => {
-		lintTimer = null;
+		lintTimer = undefined;
 		refreshLint();
 	}, LINT_DEBOUNCE_MS);
 	if (store.currentFile) {
@@ -59,12 +84,18 @@ export function touch(
 export function clearTimers() {
 	if (lintTimer) {
 		clearTimeout(lintTimer);
-		lintTimer = null;
+		lintTimer = undefined;
 	}
 	clearTimeout(saveTimer);
 	clearTimeout(sqlTimer);
 }
 
+/**
+ * Flush any pending save now (used on unload and before file switches).
+ * @param {object} deps
+ * @param {AutosaveStore} deps.store
+ * @param {(silent?: boolean) => Promise<unknown>} deps.saveCurrent
+ */
 export async function flushCurrent({ store, saveCurrent }) {
 	clearTimers();
 	if (dirty && store.currentFile) {
@@ -76,6 +107,9 @@ export async function flushCurrent({ store, saveCurrent }) {
 	}
 }
 
+/**
+ * @param {() => unknown} flushFn
+ */
 export function installFlush(flushFn) {
 	window.addEventListener("pagehide", () => void flushFn());
 	window.addEventListener("beforeunload", () => void flushFn());

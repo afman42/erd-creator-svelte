@@ -35,6 +35,7 @@ import { snap as snapHistory, undo as undoHistory } from "./history.js";
 // ---- state ----
 export const store = $state({
 	currentFile: "", // "name.sql" | "" (unsaved scratch)
+	/** @type {{name: string, mtime?: string}[]} */
 	files: [], // [{name, mtime}]
 	// The dialect lives on the schema, not beside it: one dropdown then drives
 	// save, the SQL panel, copy and export, and the file remembers its grammar.

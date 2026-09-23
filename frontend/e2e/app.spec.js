@@ -48,9 +48,13 @@ async function addTableWithFk(page) {
 
 // Click an export button and return the download and its bytes.
 async function downloadBytes(page, buttonName) {
-	const dl = page.waitForEvent("download");
+	const dlPromise = page.waitForEvent("download");
 	await page.getByRole("button", { name: buttonName }).click();
-	const stream = await (await dl).createReadStream();
+	// await first: the event payload is the Download object, and the callers
+	// call suggestedFilename() on it — returning the raw promise made every
+	// PNG/SVG export test fail with "suggestedFilename is not a function"
+	const dl = await dlPromise;
+	const stream = await dl.createReadStream();
 	const chunks = [];
 	for await (const c of stream) chunks.push(c);
 	return { dl, buf: Buffer.concat(chunks) };
@@ -751,6 +755,48 @@ test("edit switched away from within the autosave window is not lost", async ({
 	await expect(page.getByTestId("current-file")).toHaveText("dl1.sql");
 	const body = await (await request.get("/api/files/dl0.sql")).json();
 	expect(body.tables[0].columns[0].name).toBe("col_renamed");
+});
+
+// The stale-save-response guard (fileStore.js: saveCurrent only clears dirty
+// when no edit happened while the save was in flight) is pinned exactly by a
+// unit test with a deferred fetch. That same race, driven through the real
+// server, is what this pins without interception: two edits land inside the
+// 800ms autosave window (so they coalesce into one save, and the second edit
+// is newer than the first save's snapshot), then the user switches files.
+// The flush on switch must persist the NEWEST edit — with the guard removed,
+// a stale response for the first edit clears dirty and the flush is skipped,
+// leaving the second edit stranded in memory.
+test("rapid edits then file switch lose nothing (stale-save guard)", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	let n = 0;
+	page.on("dialog", (d) => d.accept(`race${n++}`));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("race0.sql");
+
+	const tname = page.locator(".tname").first();
+	await tname.fill("alpha");
+	await tname.blur();
+	// second edit lands within the debounce window: no save may have fired
+	// between the two (the app coalesces them)
+	await tname.fill("alpha2");
+	await tname.blur();
+	await expect(page.locator(".tname")).toHaveValue("alpha2");
+
+	// switch files BEFORE the 800ms autosave fires — pending edit must flush
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("race1.sql");
+
+	// the flushed file carries the NEWEST edit, not the first snapshot
+	await expect
+		.poll(
+			async () =>
+				(await (await request.get("/api/files/race0.sql")).json()).tables[0]
+					.name,
+		)
+		.toBe("alpha2");
 });
 
 test("Copy SQL succeeds via execCommand fallback without clipboard permission", async ({
