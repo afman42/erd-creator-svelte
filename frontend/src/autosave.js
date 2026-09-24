@@ -43,7 +43,7 @@ export function markSkipTouch() {
 /**
  * @typedef {object} AutosaveStore
  * @property {string} currentFile
- * @property {object} schema
+ * @property {import('./erd.js').Schema} schema
  * @property {boolean} dirty  reactive mirror of the dirty flag (Toolbar indicator)
  */
 

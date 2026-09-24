@@ -540,14 +540,12 @@ import {
 	copyInserts as copyInsertsImpl,
 	copySql as copySqlImpl,
 	exportDdl as exportDdlImpl,
-	exportFilename as exportFilenameImpl,
 	exportPng as exportPngImpl,
 	exportSvg as exportSvgImpl,
 } from "./export.js";
 
 export const copyInserts = () => copyInsertsImpl(store, flash);
 export const copySql = () => copySqlImpl(store, refreshSql, flash);
-export const exportFilename = () => exportFilenameImpl(store);
 export const exportDdl = () => exportDdlImpl(store, flash);
 export const exportPng = () => exportPngImpl(store, flash);
 export const exportSvg = () => exportSvgImpl(store, flash);

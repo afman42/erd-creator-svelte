@@ -14,21 +14,19 @@ import { BOX_W, boxHeight } from "./geometry.js";
 const PAD = 40;
 const BG = "#101418";
 
-/** Filename for PNG export, mirrors exportFilename() in export.js */
-export function pngFilename(currentFile, dialect) {
-	if (currentFile) return currentFile.replace(/\.sql$/i, ".png");
-	return `${dialect || "erd"}-schema.png`;
+/** Shared stem rule for raster/vector export filenames (private). */
+function filenameWithExt(currentFile, dialect, ext) {
+	if (currentFile) return currentFile.replace(/\.sql$/i, `.${ext}`);
+	return `${dialect || "erd"}-schema.${ext}`;
 }
 
-/**
- * Filename for SVG export. Same rule as pngFilename with a different extension;
- * kept as its own function so the two are pinned independently in tests rather
- * than sharing one implementation that a typo could break for both.
- */
-export function svgFilename(currentFile, dialect) {
-	if (currentFile) return currentFile.replace(/\.sql$/i, ".svg");
-	return `${dialect || "erd"}-schema.svg`;
-}
+/** Filename for PNG export, mirrors exportFilename() in export.js */
+export const pngFilename = (currentFile, dialect) =>
+	filenameWithExt(currentFile, dialect, "png");
+
+/** Filename for SVG export, pinned independently from pngFilename in tests. */
+export const svgFilename = (currentFile, dialect) =>
+	filenameWithExt(currentFile, dialect, "svg");
 
 /**
  * Unwrap the data URL html-to-image's toSvg() returns into plain SVG source.

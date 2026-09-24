@@ -2,6 +2,7 @@
 // parse, lint) lives in Go; the browser talks to /api and /export.
 import { CANVAS_ORIGIN, COL_W, stackStep } from "./geometry.js";
 
+/** @type {string[]} */
 export const TYPES = [
 	"INT",
 	"BIGINT",
@@ -29,7 +30,9 @@ export const DEFAULT_TYPE = {
 // That agreement is the whole point: the two disagreed twice. The UI called
 // MariaDB export-only while the server would have saved it as mysql, and sqlite
 // was genuinely refused until it gained a parser.
+/** @type {string[]} */
 export const DIALECTS = ["mysql", "mariadb", "postgres", "sqlite"];
+/** @type {string[]} */
 export const SAVEABLE_DIALECTS = ["mysql", "mariadb", "postgres", "sqlite"];
 export const DEFAULT_DIALECT = "mysql";
 export const isSaveable = (d) => SAVEABLE_DIALECTS.includes(d);
@@ -49,6 +52,7 @@ export const isInt = (t) => INT_RE.test(baseType(t));
 //     before the choice existed. LOSSY: the model type is gone on reopen.
 //
 // ENUM is unaffected either way (TEXT + CHECK), since SQLite has no enum type.
+/** @type {string[]} */
 export const SQLITE_TYPES = ["native", "portable"];
 export const DEFAULT_SQLITE_TYPES = "native";
 
@@ -64,6 +68,19 @@ export function newSchema(
 	return { dialect, sqliteTypes, tables };
 }
 
+/**
+ * @typedef {{
+ *   dialect: string,
+ *   sqliteTypes: string,
+ *   tables: Table[],
+ * }} Schema
+ */
+/**
+ * @typedef {{
+ *   tableId: string,
+ *   colId: string,
+ * }} IdSource
+ */
 /**
  * @typedef {{
  *   id: string,
@@ -88,7 +105,7 @@ export function newSchema(
  *   ref: ?Ref,
  * }} Column
  */
-/** @typedef {{ tableId: string, action: string, onUpdate: string }} Ref */
+/** @typedef {{ tableId: string, action: string, onUpdate?: string }} Ref */
 /** @typedef {{ cols: string[], name?: string }} Index */
 
 // Sequential id source. Every id-producing function takes an optional `idSource`
@@ -100,7 +117,7 @@ let nextTableId = 1;
 let nextColId = 1;
 
 /**
- * @returns {{ tableId: string, colId: string }}
+ * @returns {IdSource}
  */
 export function defaultIdSource() {
 	return { tableId: `t${nextTableId++}`, colId: `c${nextColId++}` };
@@ -108,7 +125,7 @@ export function defaultIdSource() {
 
 /**
  * @param {string} name
- * @param {() => { tableId: string, colId: string }} [idSource]
+ * @param {() => IdSource} [idSource]
  * @returns {Table}
  */
 export function newTable(name, idSource = defaultIdSource) {
@@ -140,7 +157,7 @@ export function newTable(name, idSource = defaultIdSource) {
 }
 
 /**
- * @param {() => { tableId: string, colId: string }} [idSource]
+ * @param {() => IdSource} [idSource]
  * @returns {Column}
  */
 export function newColumn(idSource = defaultIdSource) {
@@ -160,7 +177,7 @@ export function newColumn(idSource = defaultIdSource) {
 
 /**
  * @param {Table} t
- * @param {() => { tableId: string, colId: string }} [idSource]
+ * @param {() => IdSource} [idSource]
  * @returns {Table}
  */
 export function cloneTable(t, idSource = defaultIdSource) {
@@ -184,8 +201,8 @@ export function cloneTable(t, idSource = defaultIdSource) {
 // Keeps table ids (refs point at them), allocates column ids, bumps counters
 // so later newTable/newColumn never collide.
 /**
- * @param {{ tables: Table[] }} schema
- * @param {() => { tableId: string, colId: string }} [idSource]
+ * @param {Schema} schema
+ * @param {() => IdSource} [idSource]
  * @returns {*}
  */
 export function adoptIds(schema, idSource = defaultIdSource) {
@@ -204,7 +221,7 @@ export function adoptIds(schema, idSource = defaultIdSource) {
 
 // Auto-layout: layered by FK depth, referenced tables leftmost. No coords stored.
 /**
- * @param {{ tables: Table[] }} schema
+ * @param {Schema} schema
  */
 export function layout(schema) {
 	const byId = Object.fromEntries(schema.tables.map((t) => [t.id, t]));

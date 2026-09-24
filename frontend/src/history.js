@@ -20,12 +20,14 @@ export function snapRaw(json) {
 }
 
 export function undo() {
-	if (!stack.length) return null;
-	try {
-		return adoptIds(JSON.parse(stack.pop()));
-	} catch {
-		return undo();
+	while (stack.length) {
+		try {
+			return adoptIds(JSON.parse(stack.pop()));
+		} catch (e) {
+			console.debug("undo skip corrupt snapshot", e);
+		}
 	}
+	return null;
 }
 
 export function clearHistory() {

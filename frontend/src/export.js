@@ -33,7 +33,10 @@ export async function copyInserts(store, flash) {
 		if (!res.ok) throw new Error(await res.text());
 		await copyText(await res.text(), "copied INSERT templates", flash);
 	} catch (e) {
-		flash(`INSERTs failed: ${e.message}`, "err");
+		flash(
+			`INSERTs failed: ${e instanceof Error ? e.message : String(e)}`,
+			"err",
+		);
 	}
 }
 
@@ -72,7 +75,10 @@ export async function exportDdl(store, flash) {
 		downloadText(await res.text(), name);
 		flash(`downloaded ${name}`);
 	} catch (e) {
-		flash(`export failed: ${e.message}`, "err");
+		flash(
+			`export failed: ${e instanceof Error ? e.message : String(e)}`,
+			"err",
+		);
 	} finally {
 		store.exporting = false;
 	}
@@ -95,7 +101,10 @@ export async function exportPng(store, flash) {
 		downloadBlob(blob, name);
 		flash(`downloaded ${name}`);
 	} catch (e) {
-		flash(`png export failed: ${e.message}`, "err");
+		flash(
+			`png export failed: ${e instanceof Error ? e.message : String(e)}`,
+			"err",
+		);
 	} finally {
 		store.exporting = false;
 	}
@@ -122,7 +131,10 @@ export async function exportSvg(store, flash) {
 		downloadText(svg, name);
 		flash(`downloaded ${name}`);
 	} catch (e) {
-		flash(`svg export failed: ${e.message}`, "err");
+		flash(
+			`svg export failed: ${e instanceof Error ? e.message : String(e)}`,
+			"err",
+		);
 	} finally {
 		store.exporting = false;
 	}

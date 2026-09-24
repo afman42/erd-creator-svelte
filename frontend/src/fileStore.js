@@ -155,13 +155,21 @@ export async function deleteFile(store, flash) {
 	if (!confirm(`Delete ${store.currentFile}?`)) return;
 	clearAutosaveTimers();
 	const name = store.currentFile;
-	const res = await fetch(`/api/files/${encodeURIComponent(name)}`, {
-		method: "DELETE",
-	});
-	// A failed DELETE leaves the file on disk and the editor still pointed at
-	// it, so currentFile/history are only cleared on success.
-	if (!res.ok) {
-		flash(`delete failed: ${await res.text()}`, "err");
+	try {
+		const res = await fetch(`/api/files/${encodeURIComponent(name)}`, {
+			method: "DELETE",
+		});
+		// A failed DELETE leaves the file on disk and the editor still pointed at
+		// it, so currentFile/history are only cleared on success.
+		if (!res.ok) {
+			flash(`delete failed: ${await res.text()}`, "err");
+			return;
+		}
+	} catch (e) {
+		flash(
+			`delete failed: ${e instanceof Error ? e.message : String(e)}`,
+			"err",
+		);
 		return;
 	}
 	store.currentFile = "";
