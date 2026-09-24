@@ -10,6 +10,7 @@
 //
 // A native <dialog> for the same reasons as ColumnEditModal.svelte: showModal()
 // puts it in the top layer, traps focus and wires Escape to cancel.
+import { showDialog } from "./dialog.js";
 import {
 	EDGE_STROKE,
 	LABEL_FILL,
@@ -51,10 +52,12 @@ const junctionName = $derived(
 	type === "N:N" ? `${childName}_${parentName}` : null,
 );
 
+/** @type {HTMLDialogElement | null} */
 let dlg = $state(null);
 
+// showModal() is imperative, so it cannot be an attribute — see showDialog().
 $effect(() => {
-	if (dlg && !dlg.open) dlg.showModal();
+	showDialog(dlg);
 });
 
 // Human description per type, shown under the select so the flags written
@@ -78,10 +81,14 @@ function swap() {
 }
 
 function create() {
+	// The N:N arm takes the junction creator; the else arm is 1:1 | 1:N, so
+	// the type narrows to addRelationship's parameter without a cast.
 	const ok =
 		type === "N:N"
 			? addManyToMany(childId, parentId)
-			: addRelationship(childId, parentId, type);
+			: type === "1:1"
+				? addRelationship(childId, parentId, "1:1")
+				: addRelationship(childId, parentId, "1:N");
 	if (ok) onClose();
 }
 </script>
@@ -164,7 +171,7 @@ function create() {
 			class="sr-only"
 			data-testid="rel-type"
 			value={type}
-			onchange={(e) => (type = e.currentTarget.value)}
+			onchange={(e) => (type = /** @type {"1:1" | "1:N" | "N:N"} */ (e.currentTarget.value))}
 			aria-hidden="true"
 			tabindex="-1"
 		>

@@ -14,10 +14,10 @@ let sqlLoading = $derived(!store.sqlText);
 	</div>
 	{#if sqlLoading}
 		<div class="skeleton" aria-busy="true" aria-label="Loading SQL">
-			<div class="sk-line" style="width: 70%"></div>
-			<div class="sk-line" style="width: 85%"></div>
-			<div class="sk-line" style="width: 60%"></div>
-			<div class="sk-line short" style="width: 45%"></div>
+			<div class="sk-line w70"></div>
+			<div class="sk-line w85"></div>
+			<div class="sk-line w60"></div>
+			<div class="sk-line short w45"></div>
 		</div>
 	{:else}
 		<pre aria-live="polite">{store.sqlText}</pre>
@@ -81,6 +81,10 @@ let sqlLoading = $derived(!store.sqlText);
 		border-radius: 4px;
 		animation: pulse 1.4s ease-in-out infinite;
 	}
+	.sk-line.w70 { width: 70%; }
+	.sk-line.w85 { width: 85%; }
+	.sk-line.w60 { width: 60%; }
+	.sk-line.w45 { width: 45%; }
 	.sk-line.short {
 		height: 10px;
 	}

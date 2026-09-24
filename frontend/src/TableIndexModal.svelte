@@ -12,6 +12,7 @@
 // separate indexes. So an index is a table-level list, and a one-column index
 // deliberately stays on Col.ix. The server routes by arity on the way back in,
 // which is what keeps both shapes round-tripping.
+import { showDialog } from "./dialog.js";
 import {
 	addIndex,
 	rmIndex,
@@ -28,13 +29,12 @@ let { table, onClose } = $props();
 let draft = $state([]);
 
 const indexes = $derived(table.indexes ?? []);
-
+/** @type {HTMLDialogElement | null} */
 let dlg = $state(null);
 
-// showModal() is imperative, so it cannot be an attribute. Guarded on `open`
-// because the effect re-runs when a mutation re-renders the dialog.
+// showModal() is imperative, so it cannot be an attribute — see showDialog().
 $effect(() => {
-	if (dlg && !dlg.open) dlg.showModal();
+	showDialog(dlg);
 });
 
 function toggleDraft(name) {
@@ -110,7 +110,7 @@ function shownName(ix) {
 	</fieldset>
 
 	<footer>
-		<button class="done" onclick={() => dlg.close()}>Done</button>
+		<button class="done" onclick={() => dlg?.close()}>Done</button>
 	</footer>
 </dialog>
 

@@ -26,6 +26,13 @@ import TableIndexModal from "./TableIndexModal.svelte";
 
 let { table, onDragStart } = $props();
 
+// FK target name lookup, memoized per table list: the old parentName()
+// ran `store.schema.tables.find` per COLUMN per render — O(T×C) finds per
+// frame during drag. One Map per schema identity keeps it O(1) per column.
+let nameById = $derived(
+	new Map(store.schema.tables.map((t) => [t.id, t.name])),
+);
+
 // Which column the dialog is editing. Local to the card: it is view state, not
 // model state, so it stays out of the store and out of undo snapshots.
 let editingColId = $state(null);
@@ -36,31 +43,33 @@ const editing = $derived(
 // Whether the composite-index dialog is open. Same reasoning: view state.
 let showIndexes = $state(false);
 
-const parentName = (c) =>
-	store.schema.tables.find((x) => x.id === c.ref?.tableId)?.name;
+// Junction badge, memoized: isJunctionTable scans the whole schema for
+// inbound refs — O(T×C) per card per render, i.e. O(T²×C) per frame during
+// drag. $derived memoizes per card on schema identity.
+const junction = $derived(isJunctionTable(table, store.schema));
+
+const parentName = (c) => nameById.get(c.ref?.tableId);
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <section
 	class="table"
 	class:selected={store.selected === table.id}
 	style="left:{table.x}px; top:{table.y}px"
 	aria-label="Table {table.name}"
-	tabindex="0"
-	onclick={() => (store.selected = table.id)}
-	onkeydown={(e) => {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			store.selected = table.id;
-		}
-	}}
 >
+	<!-- The header is the card's interactive surface: role=button + tabindex
+	   keep click/Enter/Space selection and drag on one focusable element.
+	   Previously the section itself carried onclick/tabindex/keydown, which
+	   needed two a11y suppressions (section is not an interactive element)
+	   and double-fired selection when a header click bubbled to the section.
+	   Selection now lives ONLY here; keyboard.spec's header-press flow is
+	   unchanged (press lands on the name input, defocus, arrows/Backspace). -->
 	<div
 		class="hdr"
 		role="button"
 		tabindex="0"
-		aria-label="Move table {table.name}. Use arrow keys to nudge when selected, drag with mouse."
+		aria-label="Select table {table.name}. Use arrow keys to nudge when selected, drag with mouse."
+		onclick={() => (store.selected = table.id)}
 		onpointerdown={(e) => onDragStart(table, e)}
 		onkeydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
@@ -76,7 +85,7 @@ const parentName = (c) =>
 			spellcheck="false"
 			aria-label="Table name {table.name}"
 		/>
-		{#if isJunctionTable(table, store.schema)}
+		{#if junction}
 			<span
 				class="chip"
 				data-testid="junction-chip"
@@ -87,15 +96,15 @@ const parentName = (c) =>
 		<button
 			title="composite indexes"
 			aria-label="composite indexes for {table.name}"
-			onclick={() => (showIndexes = true)}>⌗</button>
+			onclick={(e) => { e.stopPropagation(); showIndexes = true; }}>⌗</button>
 		<button
 			title="duplicate"
 			aria-label="duplicate table {table.name}"
-			onclick={() => dupTable(table)}>⧉</button>
+			onclick={(e) => { e.stopPropagation(); dupTable(table); }}>⧉</button>
 		<button
 			title="delete table (Del)"
 			aria-label="delete table {table.name}"
-			onclick={() => rmTable(table)}>×</button>
+			onclick={(e) => { e.stopPropagation(); rmTable(table); }}>×</button>
 	</div>
 	{#each table.columns as c (c.id)}
 		<ColumnRow

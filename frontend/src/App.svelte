@@ -32,6 +32,23 @@ let showSql = $state(false);
 let showRelationship = $state(false);
 /** @type {{ id: string, x0: number, y0: number, tx0: number, ty0: number, moved: boolean } | null} */
 let drag = $state(null);
+// Pending drag position, coalesced behind rAF: pointermove fires faster than
+// frames, and every x/y write re-runs the $effect tracker (JSON.stringify,
+// measured ~4.4ms at 200 tables) + edgePaths + Svelte DOM churn. Writing once
+// per frame keeps drag at 60fps instead of compounding per event.
+let dragPending = null;
+let dragRaf = 0;
+
+function applyDragPending() {
+	dragRaf = 0;
+	if (!drag || !dragPending) return;
+	const t = store.schema.tables.find((x) => x.id === drag.id);
+	if (t) {
+		t.x = snapCoord(Math.max(0, drag.tx0 + dragPending.dx));
+		t.y = snapCoord(Math.max(0, drag.ty0 + dragPending.dy));
+	}
+	dragPending = null;
+}
 
 function toggleRelationship() {
 	showRelationship = !showRelationship;
@@ -79,22 +96,22 @@ function onMove(ev) {
 		// undo restores the pre-drag coordinates.
 		snap();
 	}
-	const id = drag.id;
-	const t = store.schema.tables.find((x) => x.id === id);
-	if (t) {
-		// Pure delta: only the pointer origin and the table's origin matter.
-		// The final position is snapped to whole pixels (snapCoord) so the
-		// saved .sql never carries sub-pixel coordinates from high-DPI input.
-		t.x = snapCoord(Math.max(0, drag.tx0 + ev.clientX - drag.x0));
-		t.y = snapCoord(Math.max(0, drag.ty0 + ev.clientY - drag.y0));
-	}
+	// Coalesce behind rAF: one reactive write per frame, not per pointer event.
+	dragPending = { dx: ev.clientX - drag.x0, dy: ev.clientY - drag.y0 };
+	if (!dragRaf) dragRaf = requestAnimationFrame(applyDragPending);
 }
 function onUp() {
 	if (!drag) return;
+	if (dragRaf) {
+		cancelAnimationFrame(dragRaf);
+		dragRaf = 0;
+		applyDragPending();
+	}
 	const moved = drag.moved;
 	const id = drag.id;
 	const t = store.schema.tables.find((x) => x.id === id);
 	drag = null;
+	dragPending = null;
 	if (t && !moved) setSelected(t.id);
 }
 function onKey(ev) {

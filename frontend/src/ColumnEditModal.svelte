@@ -13,6 +13,7 @@
 // overlay would have to reimplement, and the top layer is also why the dialog
 // needs no inline styles (the CSP is style-src 'self', so it could not have
 // them anyway).
+import { showDialog } from "./dialog.js";
 import { baseType, isInt, TYPES } from "./erd.js";
 import { cardinalityState } from "./geometry.js";
 import { isJunctionTable } from "./relationships.js";
@@ -33,7 +34,7 @@ import {
 
 let { table, column, onClose } = $props();
 
-const actions = ["CASCADE", "RESTRICT", "SET NULL", "NO ACTION"];
+const actions = ["CASCADE", "RESTRICT", "SET NULL", "SET DEFAULT", "NO ACTION"];
 const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
 
 // The relationship IS this column's FK: target + flags read back through
@@ -54,12 +55,12 @@ function setRelKind(kind) {
 	if ((kind === "1:1") !== column.ux) toggleFlag(column, "ux");
 }
 
+/** @type {HTMLDialogElement | null} */
 let dlg = $state(null);
 
-// showModal() is imperative, so it cannot be an attribute. Guarded on `open`
-// because the effect also re-runs when a mutation re-renders the dialog.
+// showModal() is imperative, so it cannot be an attribute — see showDialog().
 $effect(() => {
-	if (dlg && !dlg.open) dlg.showModal();
+	showDialog(dlg);
 });
 
 function remove() {
@@ -223,7 +224,7 @@ function remove() {
 
 	<footer>
 		<button class="rmcol" onclick={remove}>Remove column</button>
-		<button class="done" onclick={() => dlg.close()}>Done</button>
+		<button class="done" onclick={() => dlg?.close()}>Done</button>
 	</footer>
 </dialog>
 
