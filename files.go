@@ -165,6 +165,10 @@ func listFiles(w http.ResponseWriter, dir string) {
 	writeJSON(w, out)
 }
 
+// openFile serves GET /api/files/:name: schema fields at the root (legacy
+// clients read .tables directly), import warnings alongside when the fallback
+// had to skip anything. The schema itself never carries the loss list, so a
+// later save cannot persist warnings into the file.
 func openFile(w http.ResponseWriter, full, name string) {
 	b, err := os.ReadFile(full)
 	if err != nil {
@@ -176,13 +180,21 @@ func openFile(w http.ResponseWriter, full, name string) {
 		}
 		return
 	}
-	s, err := ParseDDL(string(b))
+	// Strict first (own files: zero-loss path), then the best-effort import
+	// fallback for foreign DDL. Either way the result is validated before it
+	// reaches the browser.
+	s, warnings, err := ParseImport(string(b))
 	if err != nil {
 		http.Error(w, "parse failed: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Schema fields stay at the root (legacy clients read .tables directly);
+	// warnings ride alongside, omitted when the strict path had nothing to say.
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, s)
+	writeJSON(w, struct {
+		*Schema
+		Warnings []string `json:"warnings,omitempty"`
+	}{Schema: s, Warnings: warnings})
 }
 
 // saveFile writes a schema to an already-resolved path inside the store.
