@@ -1,5 +1,6 @@
 frontend/node_modules/
 erd-creator
+*.test
 dist-bin/
 schemas/
 schemas-e2e/

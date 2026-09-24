@@ -353,6 +353,11 @@ go test ./...                       # grammar/dialect/export tests
 Edit frontend sources under `frontend/src/`; `frontend/dist/` is built into
 the server at compile time (`go:embed`) — `make build` regenerates it.
 
+For UI work with hot reload: run the Go server (`go run . -dir schemas`),
+then `cd frontend && pnpm dev` — `vite.config.js` proxies `/api` and
+`/export` to `127.0.0.1:8731`, so the dev server's relative fetch paths
+hit the real backend.
+
 `make build` produces one self-contained `erd-creator` binary: the Svelte app
 is embedded via `go:embed`, so there is no asset directory to ship. The build
 sets `CGO_ENABLED=0`, so the binary is statically linked and does not depend on
