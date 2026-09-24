@@ -119,7 +119,7 @@ let nextColId = 1;
 /**
  * @returns {IdSource}
  */
-export function defaultIdSource() {
+function defaultIdSource() {
 	return { tableId: `t${nextTableId++}`, colId: `c${nextColId++}` };
 }
 
