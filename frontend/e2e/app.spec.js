@@ -369,7 +369,7 @@ test("FK type mismatch surfaces server lint in header", async ({ page }) => {
 	await fk.selectOption("");
 	await dlg.locator("select.type").selectOption("VARCHAR"); // becomes VARCHAR(255)
 	await fk.selectOption({ index: 1 });
-	await expect(page.locator("header .warn")).toContainText("vs", {
+	await expect(page.getByTestId("toast")).toContainText("vs", {
 		timeout: 5000,
 	});
 });
@@ -630,7 +630,7 @@ test("add column + remove column (last column blocked)", async ({ page }) => {
 	await last.getByRole("button", { name: "Remove column" }).click();
 	await expect(page.locator("section.table .row")).toHaveCount(1);
 	await expect(last).toBeVisible();
-	await expect(page.locator("header .err")).toContainText(
+	await expect(page.getByTestId("toast")).toContainText(
 		"needs at least one column",
 	);
 });
@@ -1125,7 +1125,7 @@ test("Export on an empty schema surfaces the server error", async ({
 		downloaded = true;
 	});
 	await page.getByRole("button", { name: "Export", exact: true }).click();
-	await expect(page.locator("header .err")).toBeVisible();
+	await expect(page.getByTestId("toast")).toBeVisible();
 	await expect(page.getByText(/downloaded /)).toHaveCount(0);
 	expect(downloaded).toBe(false);
 });
@@ -1260,7 +1260,7 @@ test("Export SVG on empty schema shows error, no download", async ({
 		.click();
 	await expect(page.locator("section.table")).toHaveCount(0);
 	await page.getByRole("button", { name: "Export SVG" }).click();
-	await expect(page.locator("header .err")).toContainText("nothing to export");
+	await expect(page.getByTestId("toast")).toContainText("nothing to export");
 	await expect(page.getByText(/downloaded/)).toHaveCount(0);
 });
 
@@ -1284,7 +1284,7 @@ test("Export PNG on empty schema shows error, no download", async ({
 		downloaded = true;
 	});
 	await page.getByRole("button", { name: "Export PNG" }).click();
-	await expect(page.locator("header .err")).toContainText("nothing to export");
+	await expect(page.getByTestId("toast")).toContainText("nothing to export");
 	expect(downloaded).toBe(false);
 });
 
@@ -1451,7 +1451,7 @@ test("same-table relationship pick is rejected without mutating the schema", asy
 
 	// dialog stays open over the error, no new row anywhere
 	await expect(dlg).toBeVisible();
-	await expect(page.locator("header .err")).toContainText(
+	await expect(page.getByTestId("toast")).toContainText(
 		"child and parent must be distinct tables",
 	);
 	await expect(page.locator(".row")).toHaveCount(before);

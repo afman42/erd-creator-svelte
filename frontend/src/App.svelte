@@ -26,6 +26,7 @@ import {
 	undo,
 } from "./schema.svelte.js";
 import TableCard from "./TableCard.svelte";
+import Toast from "./Toast.svelte";
 import Toolbar from "./Toolbar.svelte";
 
 let showSql = $state(false);
@@ -256,6 +257,7 @@ function onKey(ev) {
 		<RelationshipModal onClose={() => (showRelationship = false)} />
 	{/if}
 </main>
+<Toast />
 
 <style>
 	:global(body) {

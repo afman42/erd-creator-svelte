@@ -108,10 +108,6 @@ const LABELS = {
 		<!-- autosave has 800ms to land; until then the file differs from disk -->
 		<span class="warn" data-testid="dirty" role="status" aria-live="polite">unsaved</span>
 	{/if}
-	{#if store.error}<span class={store.errorKind} role={store.errorKind === 'err' ? 'alert' : 'status'} aria-live={store.errorKind === 'err' ? 'assertive' : 'polite'}>{store.error}</span>{/if}
-	{#if store.lint.length && !store.error}
-		<span class="warn" role="status" aria-live="polite">lint: {store.lint.join("; ")}</span>
-	{/if}
 </header>
 
 <style>
@@ -164,17 +160,13 @@ const LABELS = {
 		flex: 0 0 auto;
 		max-width: 160px;
 	}
-	.err,
-	.ok,
-	.warn {
+.ok,
+.warn {
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		max-width: 200px;
 		flex: 0 1 auto;
-	}
-	.err {
-		color: var(--color-danger);
 	}
 	.ok {
 		color: var(--color-success);
