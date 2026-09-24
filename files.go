@@ -168,7 +168,12 @@ func listFiles(w http.ResponseWriter, dir string) {
 func openFile(w http.ResponseWriter, full, name string) {
 	b, err := os.ReadFile(full)
 	if err != nil {
-		http.Error(w, "file not found: "+name, http.StatusNotFound)
+		if os.IsNotExist(err) {
+			http.Error(w, "file not found: "+name, http.StatusNotFound)
+		} else {
+			log.Printf("open %s: %v", full, err)
+			http.Error(w, "open failed", http.StatusInternalServerError)
+		}
 		return
 	}
 	s, err := ParseDDL(string(b))
@@ -350,6 +355,7 @@ func sweepTrash(dir string) {
 	if err != nil {
 		// Path resolution failing (e.g. the store was removed) means there is
 		// nothing to sweep; ignore it.
+		log.Printf("sweep trash %s: %v", dir, err)
 		return
 	}
 	entries, err := os.ReadDir(td)
@@ -364,6 +370,7 @@ func sweepTrash(dir string) {
 		}
 		info, err := e.Info()
 		if err != nil {
+			log.Printf("sweep trash %s: %v", e.Name(), err)
 			continue
 		}
 		if info.ModTime().Before(cutoff) {

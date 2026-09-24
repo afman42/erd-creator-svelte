@@ -160,21 +160,25 @@ func parseSqlite(sql string) (*Schema, error) {
 		body := strings.TrimSuffix(line, ",")
 		tbl := &s.Tables[cur]
 
-		if m := reSqlitePK.FindStringSubmatch(body); m != nil {
-			// Same quote-aware split as the index paths: a column named `a, b`
-			// is one PK element, not two.
-			for _, name := range splitIndexCols(m[1], unquoteTick) {
-				markCol(tbl, name, func(c *Col) { c.Pk = true })
+		// Clause dispatch first, same as the mysql parser: column lines start
+		// with a quoted/bare identifier, clauses with a keyword.
+		if len(body) > 0 && (body[0] == 'P' || body[0] == 'p' || body[0] == 'F' || body[0] == 'f') {
+			if m := reSqlitePK.FindStringSubmatch(body); m != nil {
+				// Same quote-aware split as the index paths: a column named `a, b`
+				// is one PK element, not two.
+				for _, name := range splitIndexCols(m[1], unquoteTick) {
+					markCol(tbl, name, func(c *Col) { c.Pk = true })
+				}
+				commentLine = ""
+				continue
 			}
-			commentLine = ""
-			continue
-		}
-		if m := reSqliteFK.FindStringSubmatch(body); m != nil {
-			// m[4] is the ON DELETE action, m[6] the ON UPDATE action (absent
-			// clause → empty → no ON UPDATE in the model).
-			pending = append(pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), m[4], m[6]})
-			commentLine = ""
-			continue
+			if m := reSqliteFK.FindStringSubmatch(body); m != nil {
+				// m[4] is the ON DELETE action, m[6] the ON UPDATE action (absent
+				// clause → empty → no ON UPDATE in the model).
+				pending = append(pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), m[4], m[6]})
+				commentLine = ""
+				continue
+			}
 		}
 
 		// A column definition. Split off an inline CHECK first: it contains

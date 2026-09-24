@@ -155,29 +155,34 @@ func parsePostgres(sql string) (*Schema, error) {
 		body := strings.TrimSuffix(line, ",")
 		tbl := &s.Tables[cur]
 
-		if m := rePgPK.FindStringSubmatch(body); m != nil {
-			// Same quote-aware split as the index paths: a column named "a, b"
-			// is one PK element, not two.
-			for _, name := range splitIndexCols(m[1], unquoteDQ) {
-				markCol(tbl, name, func(c *Col) { c.Pk = true })
+		// Clause dispatch first: the old chain ran rePgPK + rePgFK on every
+		// column line before reaching rePgColumn. Column lines start with a
+		// quoted identifier; clauses start with a keyword.
+		if len(body) > 0 && (body[0] == 'P' || body[0] == 'p' || body[0] == 'C' || body[0] == 'c' || body[0] == 'F' || body[0] == 'f') {
+			if m := rePgPK.FindStringSubmatch(body); m != nil {
+				// Same quote-aware split as the index paths: a column named "a, b"
+				// is one PK element, not two.
+				for _, name := range splitIndexCols(m[1], unquoteDQ) {
+					markCol(tbl, name, func(c *Col) { c.Pk = true })
+				}
+				continue
 			}
-			continue
-		}
-		if m := rePgFK.FindStringSubmatch(body); m != nil {
-			// m[5] is the whole " ON DELETE <action>" clause; m[6] is the action.
-			// (The constraint-name capture at the front shifts these one past
-			// the mysql regex, which has no such group and uses m[5].)
-			// m[7]/m[8] are the same pair for ON UPDATE; an absent clause leaves
-			// m[8] empty, which is how the model says "no ON UPDATE".
-			action := normalizeFKAction(m[6])
-			if action == "" {
-				action = "CASCADE"
+			if m := rePgFK.FindStringSubmatch(body); m != nil {
+				// m[5] is the whole " ON DELETE <action>" clause; m[6] is the action.
+				// (The constraint-name capture at the front shifts these one past
+				// the mysql regex, which has no such group and uses m[5].)
+				// m[7]/m[8] are the same pair for ON UPDATE; an absent clause leaves
+				// m[8] empty, which is how the model says "no ON UPDATE".
+				action := normalizeFKAction(m[6])
+				if action == "" {
+					action = "CASCADE"
+				}
+				pending = append(pending, pendingFK{tbl.ID, unquoteDQ(m[2]), unquoteDQ(m[3]), action, normalizeFKAction(m[8])})
+				continue
 			}
-			pending = append(pending, pendingFK{tbl.ID, unquoteDQ(m[2]), unquoteDQ(m[3]), action, normalizeFKAction(m[8])})
-			continue
-		}
-		if rePgKeyword.MatchString(body) {
-			return nil, fmt.Errorf("line %d: unsupported clause: %s", n, line)
+			if rePgKeyword.MatchString(body) {
+				return nil, fmt.Errorf("line %d: unsupported clause: %s", n, line)
+			}
 		}
 
 		m := rePgColumn.FindStringSubmatch(body)
