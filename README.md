@@ -87,9 +87,9 @@ string.
   to sit inline in a 280px row, where they needed ~342px and clipped; the row's
   26px height and the comment line's 16px are unchanged, so FK edge anchors are
   unaffected.)
-- **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
-  actions; bezier edge renders automatically; type-mismatch lint (server-side)
-  in the header. Once an FK is set, the column dialog's **Relationship**
+ - **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
+   actions; bezier edge renders automatically; type-mismatch lint (server-side)
+   as a toast notice. Once an FK is set, the column dialog's **Relationship**
   block shows the derived state (`0..N / 0..1`, `0..N / 1..1`, `0..1 / 0..1`,
   `0..1 / 1..1`) with a `1:N` / `1:1` radio that flips the `UQ` flag for you —
   so you can set the relationship without knowing that `UQ` means `0..1`.
@@ -284,7 +284,7 @@ frontend/src/download.js     (download + clipboard helpers)         (pure)
 frontend/src/history.js      (undo stack, JSON snapshots)           (pure)
 frontend/src/autosave.js     (debounced lint/save/sql, dirty flag) (pure)
 frontend/src/schema.svelte.js(store: model state, mutations, fetch glue)
-frontend/src/Toolbar.svelte  (header bar, file/dialect actions)
+frontend/src/Toast.svelte     (flash + lint notices, bottom-right toast)
 frontend/src/TableCard.svelte(table card, column rows, dialog hosts)
 frontend/src/ColumnRow.svelte(column row: badges, FK target, edit button)
 frontend/src/EmptyState.svelte (empty-schema placeholder)
