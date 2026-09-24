@@ -68,6 +68,18 @@ test("files: traversal + bad name rejected, save/read/delete round-trip", async 
 	expect((await request.get("/api/files/api.spec.sql")).status()).toBe(404);
 });
 
+test("open: schema fields at root + warnings alongside when import skips", async ({
+	request,
+}) => {
+	expect(
+		(await request.put("/api/files/api.warn.sql", { data: schema })).status(),
+	).toBe(204);
+	const got = await (await request.get("/api/files/api.warn.sql")).json();
+	expect(got.tables[0].name).toBe("users");
+	expect(got.warnings ?? []).toEqual([]);
+	expect((await request.delete("/api/files/api.warn.sql")).status()).toBe(204);
+});
+
 test("open of a missing file → 404 with the name in the message", async ({
 	request,
 }) => {

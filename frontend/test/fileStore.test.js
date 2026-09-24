@@ -79,3 +79,40 @@ test("touch bumps editGeneration, saveCurrent reads it", async () => {
 	);
 	setDirty(false);
 });
+
+test("openFile flashes import warnings and still loads the canvas", async () => {
+	const origFetch = globalThis.fetch;
+	const seen = [];
+	globalThis.fetch = async (url) => {
+		if (String(url).includes("/api/files/foreign.sql")) {
+			return {
+				ok: true,
+				json: async () => ({
+					dialect: "mysql",
+					sqliteTypes: "native",
+					tables: [{ id: "t9", name: "users", columns: [], indexes: [] }],
+					warnings: ["line 2: CHECK constraint skipped"],
+				}),
+			};
+		}
+		return { ok: true, json: async () => [] };
+	};
+	try {
+		const store = {
+			currentFile: "",
+			files: [],
+			schema: { dialect: "mysql", tables: [] },
+			error: "",
+		};
+		const { openFile } = await import("../src/fileStore.js");
+		await openFile(store, "foreign.sql", (msg, kind) => seen.push([msg, kind]));
+		assert.equal(store.currentFile, "foreign.sql");
+		assert.equal(store.schema.tables[0].name, "users");
+		assert.equal(seen.length, 1);
+		assert.equal(seen[0][1], "warn");
+		assert.match(seen[0][0], /imported with 1 skips/);
+	} finally {
+		globalThis.fetch = origFetch;
+		setDirty(false);
+	}
+});

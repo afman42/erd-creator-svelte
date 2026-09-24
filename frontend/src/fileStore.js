@@ -21,7 +21,7 @@ import { clearHistory } from "./history.js";
 
 /**
  * @typedef {typeof import("./schema.svelte.js").store} Store
- * @typedef {(msg: string, kind?: "ok" | "err") => void} Flash
+ * @typedef {(msg: string, kind?: "ok" | "err" | "warn") => void} Flash
  */
 
 /**
@@ -117,6 +117,20 @@ export async function openFile(store, name, flash) {
 		setDirty(false);
 		store.dirty = false; // reactive mirror (Toolbar indicator)
 		clearHistory();
+		// Best-effort import report: the loss list rides the open response, and
+		// a warn toast names the skips (server excerpts are capped/sanitized;
+		// Toast interpolates text, never html). Canvas loads regardless.
+		if (Array.isArray(loaded.warnings) && loaded.warnings.length) {
+			const shown = loaded.warnings.slice(0, 3).join("; ");
+			const more =
+				loaded.warnings.length > 3
+					? ` (+${loaded.warnings.length - 3} more)`
+					: "";
+			flash(
+				`imported with ${loaded.warnings.length} skips: ${shown}${more}`,
+				"warn",
+			);
+		}
 	} catch (e) {
 		flash(`Open failed: ${e instanceof Error ? e.message : String(e)}`, "err");
 		await refreshFiles(store);
