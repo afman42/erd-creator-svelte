@@ -18,6 +18,7 @@ import {
 import { CANVAS_ORIGIN, DUP_OFFSET, stackStep } from "./geometry.js";
 import { snap as snapHistory, undo as undoHistory } from "./history.js";
 import { createManyToMany, createRelationship } from "./relationships.js";
+import { initialTheme, saveTheme, THEME_DARK, THEME_LIGHT } from "./theme.js";
 
 /**
  * Type shorthands for the client model shapes, defined in erd.js.
@@ -45,6 +46,9 @@ export const store = $state({
 	// an unsaved indicator. autosave.js owns the truth (it drives the flush
 	// gates); the mirror is written at exactly the two places the flag changes.
 	dirty: false,
+	// UI theme; NOT part of the schema, so it never enters undo snapshots or
+	// the saved file. App.svelte applies it as data-theme on <html>.
+	theme: initialTheme(),
 });
 layout(store.schema);
 
@@ -201,7 +205,7 @@ function commitCreate(r) {
 		return false;
 	}
 	snap();
-	flashLint();
+
 	return true;
 }
 /**
@@ -237,7 +241,6 @@ export function commitTableName(t, ev) {
 		snap();
 		t.name = v;
 	} else ev.target.value = t.name;
-	flashLint();
 }
 /**
  * @param {Column} c
@@ -257,6 +260,45 @@ export function commitComment(c, ev) {
 	snap();
 	c.comment = ev.target.value.trim();
 }
+// commitDefault stores the column's DEFAULT expression as typed; empty clears
+// it. The server validates the expression (validateDefault); the one rule the
+// UI enforces up front is AI + DEFAULT, which every dialect rejects — the
+// same proactive refusal the array toggle uses for PK/AI.
+/**
+ * @param {Column} c
+ * @param {Event & { target: HTMLInputElement }} ev
+ */
+export function commitDefault(c, ev) {
+	const v = ev.target.value.trim();
+	if (v && c.ai) {
+		flash("an auto-increment column cannot also have a default", "err");
+		ev.target.value = c.default ?? "";
+		return;
+	}
+	snap();
+	c.default = v;
+}
+// commitTableComment is the table-level twin of commitComment: the comment is
+// edited in the table dialog (TableIndexModal) and emitted where the dialect
+// supports table comments.
+/**
+ * @param {Table} t
+ * @param {Event & { target: HTMLInputElement }} ev
+ */
+export function commitTableComment(t, ev) {
+	snap();
+	t.comment = ev.target.value.trim();
+}
+/**
+ * @param {"dark" | "light"} t
+ */
+export function setTheme(t) {
+	if (store.theme === t) return;
+	store.theme = t;
+	saveTheme(t);
+}
+export const toggleTheme = () =>
+	setTheme(store.theme === THEME_DARK ? THEME_LIGHT : THEME_DARK);
 /**
  * @param {Column} c
  */
@@ -281,7 +323,6 @@ export function setType(c, base) {
 	snap();
 	c.type = DEFAULT_TYPE[base] ?? base;
 	if (!isInt(c.type)) c.ai = false;
-	flashLint();
 }
 
 // toggleArray adds or removes the PostgreSQL array suffix on a column's type.
@@ -306,7 +347,6 @@ export function toggleArray(c) {
 		c.ai = false;
 		c.pk = false;
 	}
-	flashLint();
 }
 /**
  * @param {Column} c
@@ -326,7 +366,6 @@ export function setRef(c, ev) {
 			}
 		: null;
 	if (id) c.ai = false;
-	flashLint();
 }
 /**
  * @param {Column} c
@@ -353,7 +392,6 @@ export function unsetRef(c) {
 	if (!c.ref) return;
 	snap();
 	c.ref = null;
-	flashLint();
 }
 /**
  * @param {Column} c
@@ -362,7 +400,6 @@ export function togglePk(c) {
 	snap();
 	c.pk = !c.pk;
 	if (c.pk) c.nn = true;
-	flashLint();
 }
 
 // toggleFlag flips one of a column's boolean flags (nn/ux/ai/ix). Lives here
@@ -494,11 +531,6 @@ export function setSqliteTypes(mode) {
 	snap();
 	store.schema.sqliteTypes = mode;
 	if (store.sqlText) refreshSql();
-}
-function flashLint() {
-	refreshLint().then(() => {
-		if (store.lint.length) flash(`lint: ${store.lint.join("; ")}`, "warn");
-	});
 }
 
 import {

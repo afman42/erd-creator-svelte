@@ -20,6 +20,7 @@ import { isJunctionTable } from "./relationships.js";
 import {
 	commitColName,
 	commitComment,
+	commitDefault,
 	rmColumn,
 	setRef,
 	setRefAction,
@@ -114,33 +115,45 @@ function remove() {
 	{/if}
 
 	<fieldset class="flags">
-		<legend>Flags</legend>
-		<label title="primary key"
-			><input type="checkbox" checked={column.pk} onchange={() => togglePk(column)} />PK</label
-		>
-		<label title="not null"
-			><input
-				type="checkbox"
-				checked={column.nn || column.pk}
-				disabled={column.pk}
-				onchange={() => toggleFlag(column, "nn")}
-			/>NN</label
-		>
-		<label title="unique"
-			><input type="checkbox" checked={column.ux} onchange={() => toggleFlag(column, "ux")} />UQ</label
-		>
-		<label title="auto increment"
-			><input
-				type="checkbox"
-				checked={column.ai}
-				disabled={!isInt(column.type)}
-				onchange={() => toggleFlag(column, "ai")}
-			/>AI</label
-		>
-		<label title="index"
-			><input type="checkbox" checked={column.ix} onchange={() => toggleFlag(column, "ix")} />IX</label
-		>
-	</fieldset>
+			<legend>Flags</legend>
+			<label title="primary key"
+				><input type="checkbox" checked={column.pk} onchange={() => togglePk(column)} />PK</label
+			>
+			<label title="not null"
+				><input
+					type="checkbox"
+					checked={column.nn || column.pk}
+					disabled={column.pk}
+					onchange={() => toggleFlag(column, "nn")}
+					/>NN</label
+			>
+			<label title="unique"
+				><input type="checkbox" checked={column.ux} onchange={() => toggleFlag(column, "ux")} />UQ</label
+			>
+			<label title="auto increment"
+				><input
+					type="checkbox"
+					checked={column.ai}
+					disabled={!isInt(column.type)}
+					onchange={() => toggleFlag(column, "ai")}
+					/>AI</label
+			>
+			<label title="index"
+				><input type="checkbox" checked={column.ix} onchange={() => toggleFlag(column, "ix")} />IX</label
+			>
+		</fieldset>
+
+		<label class="fld">
+			<span>Default</span>
+			<input
+				class="dflt"
+				placeholder="0 · 'x' · CURRENT_TIMESTAMP"
+				value={column.default ?? ""}
+				onchange={(e) => commitDefault(column, e)}
+				spellcheck="false"
+				title="SQL DEFAULT expression, emitted verbatim after server validation (e.g. 0, 'active', CURRENT_TIMESTAMP, (uuid()))"
+			/>
+		</label>
 
 	<label class="fld">
 		<span>FK</span>

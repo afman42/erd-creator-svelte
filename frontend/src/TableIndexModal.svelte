@@ -15,6 +15,7 @@
 import { showDialog } from "./dialog.js";
 import {
 	addIndex,
+	commitTableComment,
 	rmIndex,
 	setIndexName,
 	store,
@@ -59,7 +60,23 @@ function shownName(ix) {
 </script>
 
 <dialog bind:this={dlg} onclose={onClose} class="idxedit">
-	<h2>{table.name} · composite indexes</h2>
+	<h2>{table.name} · table</h2>
+
+	<!-- The table-level dialog hosts the table comment too: it is the one
+	     place a property of the TABLE (not a column) can be edited without
+	     crowding the 280px card header. The comment travels to the emitters
+	     (mysql/mariadb table option, postgres COMMENT ON TABLE) and is
+	     deliberately dropped for SQLite, which has no table comment. -->
+	<label class="fld">
+		<span>Comment</span>
+		<input
+			class="tcmt"
+			placeholder="table comment"
+			value={table.comment ?? ""}
+			onchange={(e) => commitTableComment(table, e)}
+			spellcheck="false"
+		/>
+	</label>
 
 	{#if indexes.length === 0}
 		<p class="none">No composite indexes. Pick two or more columns below.</p>

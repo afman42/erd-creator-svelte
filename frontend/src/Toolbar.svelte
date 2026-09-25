@@ -19,9 +19,11 @@ import {
 	setDialect,
 	setSqliteTypes,
 	store,
+	toggleTheme,
 } from "./schema.svelte.js";
 
-let { showSql, onToggleSql, onToggleRelationship } = $props();
+let { showSql, onToggleSql, onToggleRelationship, showLint, onToggleLint } =
+	$props();
 
 // Display names; the values are the server's dialect identifiers.
 /** @type {Record<string, string>} */
@@ -101,6 +103,21 @@ const LABELS = {
 	<button onclick={exportPng} disabled={store.exporting} aria-label="Export PNG">Export PNG</button>
 	<button onclick={exportSvg} disabled={store.exporting} aria-label="Export SVG">Export SVG</button>
 	<button onclick={onToggleSql} aria-label="{showSql ? 'Hide' : 'Show'} SQL panel" aria-expanded={showSql} aria-controls="sql-panel">{showSql ? "Hide" : "Show"} SQL</button>
+	<button
+		onclick={onToggleLint}
+		aria-label="Show or hide lint findings"
+		aria-expanded={showLint}
+		class:active={showLint}
+		data-testid="lint-toggle"
+	>
+		Lint{store.lint.length ? ` (${store.lint.length})` : ""}
+	</button>
+	<button
+		onclick={toggleTheme}
+		aria-label="Toggle light or dark theme"
+		title="Switch between dark and light themes"
+		data-testid="theme-toggle"
+	>{store.theme === "dark" ? "Light" : "Dark"}</button>
 	{#if store.currentFile}
 		<span class="ok" data-testid="current-file" role="status" aria-live="polite">{store.currentFile}</span>
 	{/if}
@@ -150,6 +167,10 @@ const LABELS = {
 		color: #778;
 		cursor: default;
 	}
+	header button.active {
+		outline: 2px solid var(--color-text-faint);
+		outline-offset: -2px;
+	}
 	header select.dialect {
 		background: var(--color-bg);
 		color: var(--color-text);
@@ -162,12 +183,16 @@ const LABELS = {
 	}
 .ok,
 .warn {
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		max-width: 200px;
-		flex: 0 1 auto;
-	}
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 200px;
+	/* flex: 0 0 auto — NO shrink: in a nowrap header these are the trailing
+	   status texts, and shrink (0 1 auto) lets a crowded toolbar squeeze
+	   them to width 0, hiding the "unsaved" signal entirely. Let the header
+	   scroll horizontally instead. */
+	flex: 0 0 auto;
+}
 	.ok {
 		color: var(--color-success);
 	}

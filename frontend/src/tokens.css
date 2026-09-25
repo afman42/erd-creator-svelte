@@ -21,6 +21,7 @@
 	   --color-text-muted (#9fb0c0, the cardinality labels), so a label does not
 	   merge into the line it sits on. */
 	--color-edge: #7fa3c0;
+	--color-sql: #a5d6ff;
 	--radius-sm: 4px;
 	--radius-md: 5px;
 	--radius-lg: 6px;
@@ -30,4 +31,30 @@
 	--space-3: 12px;
 	--space-4: 16px;
 	--font-mono: ui-monospace, monospace;
+}
+
+/* Light palette: [data-theme="light"] on <html> (theme.js / main.js). Every
+   override is a token the components already consume, so no component needs
+   its own light rules. The SVG paint constants in geometry.js mirror the
+   four edge/label tokens TWICE — dark in :root above, light here — because
+   presentation attributes cannot read custom properties; the test in
+   erd.test.js asserts all eight stay equal. */
+[data-theme="light"] {
+	--color-bg: #ffffff;
+	--color-surface: #f4f6f9;
+	--color-surface-hover: #e2e8f0;
+	--color-border: #c4cfdd;
+	--color-border-strong: #d4dce6;
+	--color-primary: #2563a8;
+	--color-primary-hover: #2f74bd;
+	--color-text: #1d2835;
+	--color-text-muted: #4a5a6a;
+	--color-text-faint: #3f6d96;
+	--color-success: #15803d;
+	--color-warning: #b45309;
+	--color-danger: #b91c1c;
+	--color-accent: #a94d7a;
+	--color-flag: #2f8f5f;
+	--color-edge: #5b83a5;
+	--color-sql: #3f6d96;
 }

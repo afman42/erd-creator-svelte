@@ -55,6 +55,7 @@ const parentName = (c) => nameById.get(c.ref?.tableId);
 	class="table"
 	class:selected={store.selected === table.id}
 	style="left:{table.x}px; top:{table.y}px"
+	title={table.comment || undefined}
 	aria-label="Table {table.name}"
 >
 	<!-- The header is the card's interactive surface: role=button + tabindex

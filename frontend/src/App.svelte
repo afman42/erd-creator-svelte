@@ -3,17 +3,22 @@ import { untrack } from "svelte";
 import EmptyState from "./EmptyState.svelte";
 import {
 	EDGE_SELF_STROKE,
+	EDGE_SELF_STROKE_LIGHT,
 	EDGE_STROKE,
+	EDGE_STROKE_LIGHT,
 	EDGE_STROKE_WIDTH,
 	edgePaths,
 	LABEL_ANCHOR,
 	LABEL_FILL,
+	LABEL_FILL_LIGHT,
 	LABEL_HALO,
+	LABEL_HALO_LIGHT,
 	LABEL_HALO_WIDTH,
 	NUDGE_STEP,
 	NUDGE_STEP_FAST,
 	snapCoord,
 } from "./geometry.js";
+import LintPanel from "./LintPanel.svelte";
 import RelationshipModal from "./RelationshipModal.svelte";
 import SqlPanel from "./SqlPanel.svelte";
 import {
@@ -31,6 +36,7 @@ import Toolbar from "./Toolbar.svelte";
 
 let showSql = $state(false);
 let showRelationship = $state(false);
+let showLint = $state(false);
 /** @type {{ id: string, x0: number, y0: number, tx0: number, ty0: number, moved: boolean } | null} */
 let drag = $state(null);
 // Pending drag position, coalesced behind rAF: pointermove fires faster than
@@ -57,11 +63,25 @@ function toggleRelationship() {
 
 const edges = $derived(edgePaths(store.schema));
 
+// The SVG paint is applied as presentation attributes (the export-capture
+// constraint: html-to-image does not carry the stylesheet), and attributes
+// cannot read CSS custom properties — so the palette is picked here from
+// geometry.js constants, dark or light per store.theme, and mirrored in
+// tokens.css. The test in erd.test.js asserts both themes stay equal.
+const dark = $derived(store.theme === "dark");
+
 // store.schema is the single reactive root; deep-change tracker + debounce fan-out.
 // showSql read untracked so toggling the panel alone doesn't mark the file dirty.
 $effect(() => {
 	void JSON.stringify(store.schema);
 	untrack(() => touch(showSql));
+});
+
+// Apply the theme to <html> (main.js does the pre-mount paint; this keeps it
+// in sync on toggle). Theme is UI state — not part of the schema — so it
+// never marks the file dirty or enters undo.
+$effect(() => {
+	document.documentElement.dataset.theme = store.theme;
 });
 
 function toggleSql() {
@@ -153,7 +173,13 @@ function onKey(ev) {
 
 <svelte:window onpointermove={onMove} onpointerup={onUp} onkeydown={onKey} />
 
-<Toolbar showSql={showSql} onToggleSql={toggleSql} onToggleRelationship={toggleRelationship} />
+<Toolbar
+	showSql={showSql}
+	onToggleSql={toggleSql}
+	onToggleRelationship={toggleRelationship}
+	showLint={showLint}
+	onToggleLint={() => (showLint = !showLint)}
+/>
 
 <main>
 	<div class="canvas" class:dragging={!!drag}>
@@ -187,13 +213,13 @@ function onKey(ev) {
 					orient="auto-start-reverse"
 				>
 					<path
-						d="M 0 0 L 10 5 L 0 10"
-						fill="none"
-						stroke="#7fa3c0"
-						stroke-width="1.8"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-					/>
+										d="M 0 0 L 10 5 L 0 10"
+										fill="none"
+										stroke={dark ? EDGE_STROKE : EDGE_STROKE_LIGHT}
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
 				</marker>
 			</defs>
 			{#each edges as e}
@@ -205,7 +231,7 @@ function onKey(ev) {
 					d={e.d}
 					class={e.self ? "edge self" : "edge"}
 					fill="none"
-					stroke={e.self ? EDGE_SELF_STROKE : EDGE_STROKE}
+					stroke={e.self ? (dark ? EDGE_SELF_STROKE : EDGE_SELF_STROKE_LIGHT) : (dark ? EDGE_STROKE : EDGE_STROKE_LIGHT)}
 					stroke-width={EDGE_STROKE_WIDTH}
 					marker-end={e.arrowAtStart ? undefined : "url(#crow)"}
 					marker-start={e.arrowAtStart ? "url(#crow)" : undefined}
@@ -216,29 +242,29 @@ function onKey(ev) {
 				     `dy` lifts it a few px so the stroke does not strike
 				     through the text. -->
 				<text
-					class="card"
-					x={e.from.x}
-					y={e.from.y + e.from.dy}
-					fill={LABEL_FILL}
-					font-family="ui-monospace, monospace"
-					font-size="9"
-					text-anchor={LABEL_ANCHOR}
-					paint-order="stroke"
-					stroke={LABEL_HALO}
-					stroke-width={LABEL_HALO_WIDTH}
-				>{e.from.text}</text>
+								class="card"
+								x={e.from.x}
+								y={e.from.y + e.from.dy}
+								fill={dark ? LABEL_FILL : LABEL_FILL_LIGHT}
+								font-family="ui-monospace, monospace"
+								font-size="9"
+								text-anchor={LABEL_ANCHOR}
+								paint-order="stroke"
+								stroke={dark ? LABEL_HALO : LABEL_HALO_LIGHT}
+								stroke-width={LABEL_HALO_WIDTH}
+							>{e.from.text}</text>
 				<text
-					class="card"
-					x={e.to.x}
-					y={e.to.y + e.to.dy}
-					fill={LABEL_FILL}
-					font-family="ui-monospace, monospace"
-					font-size="9"
-					text-anchor={LABEL_ANCHOR}
-					paint-order="stroke"
-					stroke={LABEL_HALO}
-					stroke-width={LABEL_HALO_WIDTH}
-				>{e.to.text}</text>
+								class="card"
+								x={e.to.x}
+								y={e.to.y + e.to.dy}
+								fill={dark ? LABEL_FILL : LABEL_FILL_LIGHT}
+								font-family="ui-monospace, monospace"
+								font-size="9"
+								text-anchor={LABEL_ANCHOR}
+								paint-order="stroke"
+								stroke={dark ? LABEL_HALO : LABEL_HALO_LIGHT}
+								stroke-width={LABEL_HALO_WIDTH}
+							>{e.to.text}</text>
 			{/each}
 		</svg>
 		{#each store.schema.tables as t (t.id)}
@@ -251,6 +277,10 @@ function onKey(ev) {
 
 	{#if showSql}
 		<SqlPanel />
+	{/if}
+
+	{#if showLint}
+		<LintPanel />
 	{/if}
 
 	{#if showRelationship}

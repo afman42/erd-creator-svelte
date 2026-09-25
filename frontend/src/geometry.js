@@ -140,6 +140,17 @@ export const LABEL_HALO_WIDTH = 2.5;
 // shorthand, because SVG presentation attributes have no `font` shorthand.
 export const LABEL_ANCHOR = "middle";
 
+// Light-theme twins of the four paint constants above. The SVG paint is
+// applied as presentation ATTRIBUTES in App.svelte, and attributes cannot
+// read CSS custom properties — so each theme's palette lives twice: here and
+// in tokens.css (:root vs [data-theme="light"]). App.svelte picks by
+// store.theme; the equality test in erd.test.js asserts all eight stay
+// equal. LABEL_HALO_LIGHT is white because --color-bg is white there.
+export const EDGE_STROKE_LIGHT = "#5b83a5"; // [data-theme=light] --color-edge
+export const EDGE_SELF_STROKE_LIGHT = "#a94d7a"; // --color-accent (light)
+export const LABEL_FILL_LIGHT = "#4a5a6a"; // --color-text-muted (light)
+export const LABEL_HALO_LIGHT = "#ffffff"; // --color-bg (light)
+
 // Vertical distance between the tops of two cards stacked in the same layer:
 // one card plus the gap below it.
 /**

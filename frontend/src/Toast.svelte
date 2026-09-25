@@ -1,9 +1,10 @@
 <script>
 import { store } from "./schema.svelte.js";
 
-// Renders the flash + lint notices. Reads store.error/errorKind (written by
-// flash()) and store.lint; auto-clear timing stays in flash() itself.
-// Text interpolation only — server strings are never {@html}.
+// Renders the flash notices (store.error/errorKind, written by flash()).
+// Lint findings are NOT toasted: they live in the Lint panel only — the
+// toast would duplicate them and fire on every edit. Text interpolation
+// only — server strings are never {@html}.
 </script>
 
 <div data-testid="toast" aria-live="off">
@@ -12,9 +13,6 @@ import { store } from "./schema.svelte.js";
 			class={store.errorKind}
 			role={store.errorKind === "err" ? "alert" : "status"}
 			aria-live={store.errorKind === "err" ? "assertive" : "polite"}>{store.error}</span>
-	{/if}
-	{#if store.lint.length && !store.error.startsWith("lint:")}
-		<span class="warn" role="status" aria-live="polite">lint: {store.lint.join("; ")}</span>
 	{/if}
 </div>
 
@@ -44,8 +42,5 @@ import { store } from "./schema.svelte.js";
 	}
 	.ok {
 		color: var(--color-success);
-	}
-	.warn {
-		color: var(--color-warning);
 	}
 </style>

@@ -89,6 +89,7 @@ export function newSchema(
  *   y: number,
  *   columns: Column[],
  *   indexes: Index[],
+ *   comment: string,
  * }} Table
  */
 /**
@@ -102,6 +103,7 @@ export function newSchema(
  *   ux: boolean,
  *   ix: boolean,
  *   comment: string,
+ *   default: string,
  *   ref: ?Ref,
  * }} Column
  */
@@ -145,6 +147,7 @@ export function newTable(name, idSource = defaultIdSource) {
 				ux: false,
 				ix: false,
 				comment: "",
+				default: "",
 				ref: null,
 			},
 		],
@@ -153,6 +156,10 @@ export function newTable(name, idSource = defaultIdSource) {
 		// when empty — so a schema with no composite index still travels as the
 		// exact JSON it did before this field existed.
 		indexes: [],
+		// Table comment; server-side omitempty keeps the wire JSON unchanged
+		// when empty. Emitted only where the dialect has table comments
+		// (mysql/mariadb option, postgres COMMENT ON); SQLite drops it.
+		comment: "",
 	};
 }
 
@@ -171,6 +178,7 @@ export function newColumn(idSource = defaultIdSource) {
 		ux: false,
 		ix: false,
 		comment: "",
+		default: "",
 		ref: null,
 	};
 }

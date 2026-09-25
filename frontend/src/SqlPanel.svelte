@@ -65,7 +65,9 @@ let sqlLoading = $derived(!store.sqlText);
 		padding: 12px;
 		overflow: auto;
 		font: 12px/1.5 ui-monospace, monospace;
-		color: #a5d6ff;
+		/* --color-sql: a SQL-tint blue that stays readable in both themes
+		   (tokens.css defines the light value). */
+		color: var(--color-sql);
 		white-space: pre-wrap;
 	}
 	.skeleton {
