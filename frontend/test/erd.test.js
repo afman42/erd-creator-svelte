@@ -32,12 +32,16 @@ import {
 	cardinality,
 	cardinalityState,
 	EDGE_SELF_STROKE,
+	EDGE_SELF_STROKE_LIGHT,
 	EDGE_STROKE,
+	EDGE_STROKE_LIGHT,
 	GAP,
 	HDR_H,
 	isSolePk,
 	LABEL_FILL,
+	LABEL_FILL_LIGHT,
 	LABEL_HALO,
+	LABEL_HALO_LIGHT,
 	ROW_H,
 	stackStep,
 } from "../src/geometry.js";
@@ -45,6 +49,18 @@ import {
 function col(name, props) {
 	return Object.assign(newColumn(), { name }, props);
 }
+
+test("newColumn/newTable carry default and comment fields", () => {
+	// DEFAULT and table-comment support ride on every model object the UI
+	// creates; without them a column edited before being saved would read
+	// `undefined` and the server-side omitempty would treat it as absent.
+	const c = newColumn();
+	assert.equal(c.default, "");
+	assert.equal(c.comment, "");
+	const t = newTable("users");
+	assert.equal(t.comment, "");
+	assert.equal(t.columns[0].default, "");
+});
 
 test("TYPES and DEFAULT_TYPE expose expected values", () => {
 	assert.equal(TYPES.length, 13);
@@ -651,10 +667,11 @@ test("a PK column reads as 1..1 even when nn was never set", () => {
 // these read both sources. The e2e test samples real PNG pixels; this one is the
 // cheap guard that the wiring has not been dropped.
 test("edge and label paint is applied as SVG attributes, not class-only", () => {
-	// the path carries stroke and stroke-width attributes
+	// the path carries stroke and stroke-width attributes, picking the
+	// palette per theme (dark constants vs light twins from geometry.js)
 	assert.match(
 		APP_SRC,
-		/<path[^>]*stroke=\{e\.self \? EDGE_SELF_STROKE : EDGE_STROKE\}/s,
+		/<path[^>]*stroke=\{e\.self \? \(dark \? EDGE_SELF_STROKE : EDGE_SELF_STROKE_LIGHT\) : \(dark \? EDGE_STROKE : EDGE_STROKE_LIGHT\)\}/s,
 		"edge path has no stroke attribute — it would be invisible in an export",
 	);
 	assert.match(
@@ -663,7 +680,11 @@ test("edge and label paint is applied as SVG attributes, not class-only", () => 
 		"no stroke-width attribute",
 	);
 	// the labels carry fill and font attributes
-	assert.match(APP_SRC, /fill=\{LABEL_FILL\}/, "labels have no fill attribute");
+	assert.match(
+		APP_SRC,
+		/fill=\{dark \? LABEL_FILL : LABEL_FILL_LIGHT\}/,
+		"labels have no fill attribute",
+	);
 	assert.match(APP_SRC, /font-size="9"/, "labels have no font-size attribute");
 	assert.match(
 		APP_SRC,
@@ -671,12 +692,18 @@ test("edge and label paint is applied as SVG attributes, not class-only", () => 
 		"labels have no text-anchor",
 	);
 	// and the halo, so a label is legible over its own line
-	assert.match(APP_SRC, /stroke=\{LABEL_HALO\}/, "labels have no halo stroke");
+	assert.match(
+		APP_SRC,
+		/stroke=\{dark \? LABEL_HALO : LABEL_HALO_LIGHT\}/,
+		"labels have no halo stroke",
+	);
 });
 
 // The constants duplicate tokens.css values on purpose: a CSS custom property
 // does not resolve in the exported document either, so they cannot be shared.
-// That duplication is load-bearing, so it is pinned here.
+// That duplication is load-bearing, so it is pinned here — for BOTH themes:
+// :root holds the dark values (first in the file, so the regex below keeps
+// matching them) and [data-theme="light"] the light ones.
 test("SVG paint constants match their tokens.css values", () => {
 	const token = (name) =>
 		new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,8})`)
@@ -701,6 +728,38 @@ test("SVG paint constants match their tokens.css values", () => {
 		LABEL_HALO.toLowerCase(),
 		token("--color-bg"),
 		"LABEL_HALO != --color-bg",
+	);
+});
+
+// The light palette lives in its own block; first-occurrence matching above
+// cannot see it, so it gets its own assertions.
+test("light paint constants match the [data-theme=light] tokens", () => {
+	const lightToken = (name) =>
+		new RegExp(
+			`\\[data-theme="light"\\][\\s\\S]*?${name}:\\s*(#[0-9a-fA-F]{3,8})`,
+		)
+			.exec(TOKENS_SRC)?.[1]
+			?.toLowerCase();
+	assert.ok(lightToken("--color-edge"), "light block missing from tokens.css");
+	assert.equal(
+		EDGE_STROKE_LIGHT.toLowerCase(),
+		lightToken("--color-edge"),
+		"EDGE_STROKE_LIGHT != light --color-edge",
+	);
+	assert.equal(
+		EDGE_SELF_STROKE_LIGHT.toLowerCase(),
+		lightToken("--color-accent"),
+		"EDGE_SELF_STROKE_LIGHT != light --color-accent",
+	);
+	assert.equal(
+		LABEL_FILL_LIGHT.toLowerCase(),
+		lightToken("--color-text-muted"),
+		"LABEL_FILL_LIGHT != light --color-text-muted",
+	);
+	assert.equal(
+		LABEL_HALO_LIGHT.toLowerCase(),
+		lightToken("--color-bg"),
+		"LABEL_HALO_LIGHT != light --color-bg",
 	);
 });
 
@@ -736,20 +795,19 @@ test("crow's-foot marker does not rely on context-stroke", () => {
 	);
 });
 
-// The marker's colour is written twice — a presentation attribute on the marker
-// and a CSS rule on the line — because it cannot be shared. This is the check
-// the comment in App.svelte promises: fail if the two ever disagree.
-test("marker stroke matches the edge line colour token", () => {
-	const markerStroke = /stroke="(#[0-9a-fA-F]{3,8})"/.exec(crowMarker())?.[1];
-	assert.ok(markerStroke, "marker has no concrete stroke colour");
-	const token = /--color-edge:\s*(#[0-9a-fA-F]{3,8})/.exec(TOKENS_SRC)?.[1];
-	assert.ok(token, "--color-edge token not found in tokens.css");
-	assert.equal(
-		markerStroke.toLowerCase(),
-		token.toLowerCase(),
-		`marker stroke ${markerStroke} != --color-edge ${token}`,
+// The marker's colour is theme-aware: it is a presentation attribute, so it
+// cannot read the CSS var, and the palette is picked the same way the edge
+// line's is (geometry.js dark/light twins). A literal hex here would freeze
+// one theme and disagree with the other. The actual token equality for both
+// themes is the constants test above; this checks the wiring survived.
+test("marker stroke is theme-aware and uses the edge constants", () => {
+	const marker = crowMarker();
+	assert.match(
+		marker,
+		/stroke=\{dark \? EDGE_STROKE : EDGE_STROKE_LIGHT\}/,
+		"marker stroke is not picked from the edge constants",
 	);
-	// and the line actually consumes the token
+	// and the line still consumes the token on screen
 	assert.match(APP_SRC, /\.edge\s*\{[^}]*stroke:\s*var\(--color-edge\)/s);
 });
 
@@ -778,6 +836,12 @@ test("ColumnEditModal holds every control the row gave up", () => {
 	assert.match(MODAL_SRC, /class="cmt"/, "comment input missing from modal");
 	assert.match(MODAL_SRC, /class="fk"/, "FK select missing from modal");
 	assert.match(MODAL_SRC, /class="act"/, "ON DELETE select missing from modal");
+	assert.match(MODAL_SRC, /class="dflt"/, "default input missing from modal");
+	assert.match(
+		MODAL_SRC,
+		/commitDefault/,
+		"the default input is not wired to its mutation",
+	);
 	// ON UPDATE is a second select, so the single class="act" match above cannot
 	// see it: pin the label and the mutation, or a missing ON UPDATE control
 	// passes this test by virtue of its sibling existing.
