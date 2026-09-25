@@ -183,3 +183,58 @@ test("lint panel shows a clean state when there are no findings", async ({
 	await expect(aside.getByTestId("lint-clean")).toHaveText("no issues");
 	await expect(aside.getByTestId("lint-list")).toHaveCount(0);
 });
+
+// Column order IS the DDL order, so ↑/↓ in the dialog must move both the card
+// rows and the emitted CREATE TABLE column list.
+test("column ↑ reorders the DDL and the card rows", async ({ page }) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "+ column" }).click(); // id, column
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	const sql = page.locator("aside pre");
+	await expect(sql).toContainText(/`id` INT/);
+
+	// move the second column up
+	const dlg = await openCol(page, 0, 1);
+	await dlg.getByRole("button", { name: "move column up" }).click();
+	await closeCol(dlg);
+
+	// card rows follow the new order
+	const rows = page.locator("section.table .row .cname");
+	await expect(rows.nth(0)).toHaveText("column");
+	await expect(rows.nth(1)).toHaveText("id");
+	// and the emitted DDL opens with the moved column
+	await expect(sql).toContainText(/`column` VARCHAR/);
+	await expect(sql).toContainText(/`id` INT/);
+});
+
+test("rename + duplicate file round-trip through the store", async ({
+	page,
+	request,
+}) => {
+	await page.goto("/");
+	page.once("dialog", (d) => d.accept("orig"));
+	await page.getByRole("button", { name: "New", exact: true }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("orig.sql");
+
+	// rename via the prompt
+	page.once("dialog", (d) => d.accept("renamed"));
+	await page.getByRole("button", { name: "Rename file" }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("renamed.sql");
+	await expect(async () => {
+		expect((await request.get("/api/files/renamed.sql")).ok()).toBe(true);
+		expect((await request.get("/api/files/orig.sql")).ok()).toBe(false);
+	}).toPass({ timeout: 5000 });
+
+	// duplicate, accepting the derived name explicitly (dialog.accept() with
+	// no value yields an empty prompt — the copy would be silently cancelled)
+	page.once("dialog", (d) => d.accept("renamed_copy.sql"));
+	await page.getByRole("button", { name: "Duplicate file" }).click();
+	await expect(page.getByTestId("current-file")).toHaveText("renamed.sql");
+	await expect(async () => {
+		expect((await request.get("/api/files/renamed_copy.sql")).ok()).toBe(true);
+	}).toPass({ timeout: 5000 });
+	// both files listed in the dropdown
+	await expect(
+		page.getByLabel("Open schema file").locator("option"),
+	).toContainText(["renamed.sql", "renamed_copy.sql"]);
+});
