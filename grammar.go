@@ -64,6 +64,12 @@ type Col struct {
 	Ux      bool   `json:"ux"`
 	Ix      bool   `json:"ix"`
 	Comment string `json:"comment"`
+	// Default is the column's DEFAULT expression, stored as the user typed it
+	// (0, 'active', CURRENT_TIMESTAMP, (uuid())). Empty means "no clause".
+	// omitempty keeps the wire JSON unchanged for schemas without one.
+	// Emitted raw like the type, so it is allowlist-validated (validateDefault)
+	// before any emitter sees it.
+	Default string `json:"default,omitempty"`
 	Ref     *Ref   `json:"ref"`
 }
 
@@ -82,6 +88,11 @@ type Table struct {
 	Y       int     `json:"-"`
 	Columns []Col   `json:"columns"`
 	Indexes []Index `json:"indexes,omitempty"`
+	// Comment is stored like Indexes: omitempty so a table without one
+	// serializes to the exact JSON it did before the field existed. It is
+	// emitted as a MySQL table option, a Postgres COMMENT ON TABLE, and
+	// dropped (lossy) for SQLite, which has no table comment.
+	Comment string `json:"comment,omitempty"`
 }
 
 type Schema struct {
@@ -279,9 +290,35 @@ func (s *Schema) GenSQL() (string, error) {
 // ---- seed INSERT templates ----
 
 // GenInserts renders one commented INSERT template per table with columns, for
-// seeding a database by hand.
+// seeding a database by hand, in the schema's own dialect (the API posts the
+// whole schema, so whichever grammar is selected drives the quoting and the
+// function names — the same rule the SQL panel and export follow).
 func (s *Schema) GenInserts() string {
-	out := []string{"-- Seed row templates (edit values, remove per table as needed)"}
+	return s.GenInsertsFor(s.dialect())
+}
+
+// GenInsertsFor is GenInserts against a specific dialect. The quoting follows
+// the target grammar (backticks for mysql/sqlite, double quotes for postgres)
+// and SQLite has no NOW() function, so datetime placeholders become
+// CURRENT_TIMESTAMP there; everything else — AI → NULL, BOOLEAN → FALSE,
+// JSON → '{}' — is identical across dialects, since each accepts those
+// literals. The mysql header text is unchanged so existing output and tests
+// keep their bytes.
+func (s *Schema) GenInsertsFor(dialect string) string {
+	normalized := normalizeDialect(dialect)
+	q := quoteTick
+	now := "NOW()"
+	switch normalized {
+	case DialectPostgres:
+		q = quoteDQ
+	case DialectSqlite:
+		now = "CURRENT_TIMESTAMP"
+	}
+	header := "-- Seed row templates (edit values, remove per table as needed)"
+	if normalized == DialectPostgres || normalized == DialectSqlite {
+		header = fmt.Sprintf("-- Seed row templates (%s) — edit values, remove per table as needed", normalized)
+	}
+	out := []string{header}
 	for _, t := range s.Tables {
 		if len(t.Columns) == 0 {
 			continue
@@ -302,15 +339,15 @@ func (s *Schema) GenInserts() string {
 			case b == "DATE":
 				vals[i] = "'2026-01-01'"
 			case b == "DATETIME" || b == "TIMESTAMP":
-				vals[i] = "NOW()"
+				vals[i] = now
 			case b == "JSON":
 				vals[i] = "'{}'"
 			default:
 				vals[i] = "''"
 			}
-			names[i] = quoteTick(c.Name)
+			names[i] = q(c.Name)
 		}
-		out = append(out, "INSERT INTO "+quoteTick(t.Name)+" ("+strings.Join(names, ", ")+") VALUES ("+strings.Join(vals, ", ")+");")
+		out = append(out, "INSERT INTO "+q(t.Name)+" ("+strings.Join(names, ", ")+") VALUES ("+strings.Join(vals, ", ")+");")
 	}
 	return strings.Join(out, "\n") + "\n"
 }
@@ -334,7 +371,7 @@ func ddlRe(pattern string) *regexp.Regexp {
 var (
 	reInsert   = regexp.MustCompile(`(?i)^INSERT INTO `)
 	reCreate   = ddlRe(`(?i)^CREATE TABLE ((?:~(?:[^~]|~~)*~|[^\s~]+)) \($`)
-	reEndTable = regexp.MustCompile(`(?i)^\) ENGINE=InnoDB;?$`)
+	reEndTable = regexp.MustCompile(`(?i)^\) ENGINE=InnoDB( COMMENT='((?:[^']|'')*)')?;?$`)
 	rePK       = regexp.MustCompile(`(?i)^PRIMARY KEY \((.+)\)$`)
 	reUKey     = ddlRe(`(?i)^UNIQUE KEY ((?:~(?:[^~]|~~)*~|[^\s~]+)) \((.+)\)$`)
 	reIndex    = ddlRe(`(?i)^(?:KEY|INDEX) ((?:~(?:[^~]|~~)*~|[^\s~]+)) \((.+)\)$`)
@@ -344,7 +381,15 @@ var (
 	// scan treats '...' (with '' escaping) as opaque and only stops at an
 	// UNQUOTED ) . `[^)]*` could not: it stopped at the first ) even inside a
 	// value, rejecting a type the model accepts and the emitter writes.
-	reColumn   = ddlRe(`(?i)^((?:~(?:[^~]|~~)*~|[^\s~]+)) ([A-Z]+(?:\((?:'[^']*'|[^)])*\))?)( NOT NULL)?( AUTO_INCREMENT)?( UNIQUE)?( COMMENT '((?:[^']|'')*)')?$`)
+	//
+	// The DEFAULT capture is a lazy run of (quoted literal | non-semicolon):
+	// lazy so a following ` COMMENT '...'` clause is not swallowed into the
+	// value, and quote-tolerant so `DEFAULT 'it''s'` and `DEFAULT (uuid())`
+	// both parse. Parens inside a default are fine; a `;` inside a quoted
+	// default is fine too (validateOutput treats it as literal) but one
+	// outside quotes would be the injection shape and validation rejects the
+	// value before it is ever emitted.
+	reColumn   = ddlRe(`(?i)^((?:~(?:[^~]|~~)*~|[^\s~]+)) ([A-Z]+(?:\((?:'[^']*'|[^)])*\))?)( NOT NULL)?( AUTO_INCREMENT)?( UNIQUE)?( DEFAULT ((?:'[^']*'|[^;])*?))?( COMMENT '((?:[^']|'')*)')?$`)
 	reTypeNorm = regexp.MustCompile(`(?i)^([A-Za-z]+)(\(.*\))?$`)
 )
 
@@ -519,7 +564,12 @@ func parseMysql(sql string, dialect string) (*Schema, error) {
 			cur = len(s.Tables) - 1
 			continue
 		}
-		if reEndTable.MatchString(line) {
+		if m := reEndTable.FindStringSubmatch(line); m != nil {
+			// m[2] is the table comment, absent for files written before the
+			// option existed (and for any schema without one).
+			if m[2] != "" {
+				s.Tables[cur].Comment = strings.ReplaceAll(m[2], "''", "'")
+			}
 			cur = -1
 			continue
 		}
@@ -566,7 +616,8 @@ func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, 
 		Nn:      m[3] != "",
 		Ai:      m[4] != "",
 		Ux:      m[5] != "",
-		Comment: strings.ReplaceAll(m[7], "''", "'"),
+		Default: m[7],
+		Comment: strings.ReplaceAll(m[9], "''", "'"),
 	})
 	return nil
 }

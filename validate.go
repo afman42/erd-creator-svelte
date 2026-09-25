@@ -38,6 +38,10 @@ const (
 	maxTypeLen = 4096
 	// maxCommentLen bounds a column comment.
 	maxCommentLen = 4096
+	// maxDefaultLen bounds a column DEFAULT expression. Real defaults are
+	// short (a literal, a function call); the cap exists so a request cannot
+	// pad the model into an oversized response.
+	maxDefaultLen = 2048
 	// maxTables / maxColumns bound the model so one request cannot allocate an
 	// unbounded amount of work. The request body is capped separately (1 MiB);
 	// these bound the parsed result independently of encoding.
@@ -263,6 +267,13 @@ func (s *Schema) validateShape() error {
 		if err := validateIndexes(t); err != nil {
 			return err
 		}
+		// Table comments are emitted as quoted string literals (MySQL table
+		// option, Postgres COMMENT ON). Quoted, but still validated like the
+		// column comments: a newline in one would break the line-oriented
+		// output format.
+		if err := validateText("table comment", t.Comment, maxCommentLen); err != nil {
+			return fmt.Errorf("table %d (%q): %w", ti+1, t.Name, err)
+		}
 		seenCols := map[string]bool{}
 		for ci, c := range t.Columns {
 			// `where` is built lazily (only on an error path): the old
@@ -302,6 +313,20 @@ func (s *Schema) validateShape() error {
 			}
 			if err := validateText("comment", c.Comment, maxCommentLen); err != nil {
 				return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+			}
+			if c.Default != "" {
+				if err := validateDefault(c.Default); err != nil {
+					return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+				}
+				// AI + DEFAULT is invalid in every dialect: MySQL refuses a
+				// DEFAULT on an AUTO_INCREMENT column, Postgres refuses one on
+				// an identity column, and SQLite writes the rowid alias
+				// (INTEGER PRIMARY KEY) without room for a DEFAULT. Rather
+				// than emit DDL the database rejects, refuse the pair here —
+				// the same rule the array type uses for PK/AI.
+				if c.Ai {
+					return fmt.Errorf("table %q column %d (%q): an AUTO_INCREMENT/IDENTITY column cannot also have a DEFAULT", t.Name, ci+1, c.Name)
+				}
 			}
 			if c.Ref != nil {
 				if err := validateText("FK action", c.Ref.Action, maxNameLen); err != nil {
@@ -409,6 +434,74 @@ func excerpt(v string) string {
 func validateText(what, v string, max int) error {
 	return checkBasicString(what, v, max)
 }
+
+// validateDefault checks one column DEFAULT expression.
+//
+// A default is emitted as raw SQL text, exactly like a type — that is the
+// price of supporting CURRENT_TIMESTAMP, (uuid()) and 'it”s' in one field —
+// so it gets the same treatment as the type: an allowlist scan rather than
+// quoting. The value may be a numeric literal, NULL / TRUE / FALSE, a quoted
+// string, or a function/keyword expression with balanced parentheses; a `;`
+// is only tolerated INSIDE a quoted literal (validateOutput proves the
+// emitted line is safe even then), and comments (`--`, `/* */`) are refused
+// outright because they would swallow the rest of the line in the pasted
+// output.
+func validateDefault(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return fmt.Errorf("default expression is empty")
+	}
+	if err := checkBasicString("default", v, maxDefaultLen); err != nil {
+		return err
+	}
+	depth, inStr := 0, false
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if inStr {
+			if c == '\'' {
+				if i+1 < len(v) && v[i+1] == '\'' {
+					i++ // '' escape
+					continue
+				}
+				inStr = false
+			}
+			continue
+		}
+		switch {
+		case c == '\'':
+			inStr = true
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth < 0 {
+				return fmt.Errorf("default %q has unbalanced parentheses", v)
+			}
+		case c == '-' && i+1 < len(v) && v[i+1] == '-':
+			return fmt.Errorf("default %q contains a comment marker", v)
+		case c == '/' && i+1 < len(v) && v[i+1] == '*':
+			return fmt.Errorf("default %q contains a comment marker", v)
+		case strings.IndexByte(validDefaultRunes, c) < 0:
+			return fmt.Errorf("default %q contains a character not allowed in an expression", excerpt(v))
+		}
+	}
+	if inStr {
+		return fmt.Errorf("default %q has an unterminated string literal", excerpt(v))
+	}
+	if depth != 0 {
+		return fmt.Errorf("default %q has unbalanced parentheses", excerpt(v))
+	}
+	return nil
+}
+
+// validDefaultRunes is the allowlist for characters OUTSIDE a quoted literal
+// in a DEFAULT expression. Semicolon is deliberately absent: an unquoted `;`
+// is the injection shape, and it is never needed in the expressions this tool
+// writes. Inside a literal, anything is fine — validateOutput's quote-aware
+// scan is what proves a quoted `;` is not a separator.
+const validDefaultRunes = "abcdefghijklmnopqrstuvwxyz" +
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
+	"0123456789_ ,().+-"
 
 // validateOutput is the last line of defence: it re-checks the text an emitter
 // produced. Validation runs on input, so this only fires if an emitter composes

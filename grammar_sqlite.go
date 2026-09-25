@@ -41,7 +41,7 @@ var (
 	reSqlitePK          = regexp.MustCompile(`(?i)^PRIMARY KEY \((.+)\)$`)
 	reSqliteFK          = ddlRe(`(?i)^FOREIGN KEY \(((?:~(?:[^~]|~~)*~|[^\s~]+))\) REFERENCES ((?:~(?:[^~]|~~)*~|[^\s~]+)) \(((?:~(?:[^~]|~~)*~|[^\s~]+))\) ON DELETE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE)( ON UPDATE (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE))?$`)
 	reSqliteIndex       = ddlRe(`(?i)^CREATE INDEX IF NOT EXISTS (?:(?:~(?:[^~]|~~)*~|[^\s~]+)) ON ((?:~(?:[^~]|~~)*~|[^\s~]+)) \((.+)\);$`)
-	reSqliteCol         = ddlRe(`(?i)^((?:~(?:[^~]|~~)*~|[^\s~]+)) ([A-Z]+(?:\((?:'[^']*'|[^)])*\))?)( NOT NULL)?( UNIQUE)?$`)
+	reSqliteCol         = ddlRe(`(?i)^((?:~(?:[^~]|~~)*~|[^\s~]+)) ([A-Z]+(?:\((?:'[^']*'|[^)])*\))?)( NOT NULL)?( UNIQUE)?( DEFAULT ((?:'[^']*'|[^;])*?))?$`)
 	reSqliteEnumChk     = regexp.MustCompile(`(?i)^CHECK \(.*? IN \((.*)\)\)$`)
 )
 
@@ -213,6 +213,7 @@ func parseSqlite(sql string) (*Schema, error) {
 			Type:    ty,
 			Nn:      m[3] != "",
 			Ux:      m[4] != "",
+			Default: m[6],
 			Comment: stripCommentName(commentLine, name),
 		})
 		commentLine = ""
