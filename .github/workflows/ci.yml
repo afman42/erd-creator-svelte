@@ -58,6 +58,11 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
+      # The SQLite smoke test executes emitted DDL with the real sqlite3 CLI
+      # and skips when it is absent — make that impossibility loud so the
+      # engine check can never silently drop out of CI.
+      - name: sqlite3 present (DDL smoke test)
+        run: which sqlite3
       - name: go test
         run: go test -count=1 ./...
       # The store is a concurrent HTTP server; race is cheap here (no deps).

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -101,6 +102,16 @@ func handleFiles(dir string) http.Handler {
 			return
 		}
 		name = strings.TrimPrefix(name, "/")
+		// Rename/copy are POST operations addressed by virtual names that cannot
+		// collide with real files (validName requires a .sql suffix).
+		if name == "rename" || name == "copy" {
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			handleFileOp(w, r, dir, name == "copy")
+			return
+		}
 		// Resolve through symlinks before acting: a legal name can still point
 		// outside the store via a planted link.
 		full, err := storePath(dir, name)
@@ -133,6 +144,107 @@ func handleFiles(dir string) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+}
+
+// handleFileOp implements POST /api/files/rename and /api/files/copy with a
+// {"from":"a.sql","to":"b.sql"} body. Rename moves the file (atomic
+// same-filesystem rename, NOT a delete → no trash); copy duplicates it. Both
+// refuse a missing source (404), an existing target (409), and any name that
+// fails safeName — the same boundary every other store op uses.
+func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.Unmarshal(b, &req); err != nil {
+		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := safeName(req.From); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := safeName(req.To); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.From == req.To {
+		http.Error(w, "from and to are the same file", http.StatusBadRequest)
+		return
+	}
+	fromFull, err := storePath(dir, req.From)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err := os.Stat(fromFull); err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "file not found: "+req.From, http.StatusNotFound)
+		} else {
+			log.Printf("stat %s: %v", fromFull, err)
+			http.Error(w, "rename failed", http.StatusInternalServerError)
+		}
+		return
+	}
+	// Resolving the target refuses a symlink escaping the store either way
+	// (existing link → isInsideStore fails; missing path → parent must be the
+	// store root).
+	toFull, err := storePath(dir, req.To)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err := os.Lstat(toFull); err == nil {
+		http.Error(w, "file already exists: "+req.To, http.StatusConflict)
+		return
+	}
+	if copy {
+		// Read the source and write the copy through the same atomic
+		// temp+rename path saves use, so a planted symlink cannot redirect
+		// the write (O_EXCL on a fresh random name).
+		b, err := os.ReadFile(fromFull)
+		if err != nil {
+			log.Printf("copy read %s: %v", fromFull, err)
+			http.Error(w, "copy failed", http.StatusInternalServerError)
+			return
+		}
+		tmp, err := createTemp(dir)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := tmp.Write(b); err != nil {
+			discardTemp(tmp)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := tmp.Close(); err != nil {
+			removeTemp(tmp.Name())
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := os.Rename(tmp.Name(), toFull); err != nil {
+			removeTemp(tmp.Name())
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// os.Rename is atomic and same-filesystem by construction (both paths
+		// are inside the store). Unlike DELETE this is a move, not a recycle:
+		// the file keeps its name, so nothing lands in the trash.
+		if err := os.Rename(fromFull, toFull); err != nil {
+			log.Printf("rename %s → %s: %v", fromFull, toFull, err)
+			http.Error(w, "rename failed", http.StatusInternalServerError)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func listFiles(w http.ResponseWriter, dir string) {

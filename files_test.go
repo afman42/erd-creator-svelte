@@ -515,3 +515,132 @@ func TestSaveReopenEveryDialect(t *testing.T) {
 		}
 	}
 }
+
+// ---- rename / copy (POST /api/files/rename|copy) ----
+
+func TestFileRename(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/a.sql", jsonBody(sampleSchema())))
+	if rec.Code != 204 {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/rename", jsonBody(map[string]string{"from": "a.sql", "to": "b.sql"})))
+	if rec.Code != 204 {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.sql")); err == nil {
+		t.Error("source still present after rename")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "b.sql")); err != nil {
+		t.Errorf("target missing after rename: %v", err)
+	}
+	// the schema survived the move byte-for-byte
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/b.sql", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"users"`) {
+		t.Errorf("renamed file unreadable: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestFileRenameErrors(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/a.sql", jsonBody(sampleSchema())))
+	if rec.Code != 204 {
+		t.Fatalf("save: %d", rec.Code)
+	}
+	// a real second file, so the 409 case has an actual existing target
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/taken.sql", jsonBody(sampleSchema())))
+	if rec.Code != 204 {
+		t.Fatalf("save taken: %d", rec.Code)
+	}
+	cases := []struct {
+		name string
+		body map[string]string
+		want int
+	}{
+		{"missing source 404s", map[string]string{"from": "nope.sql", "to": "b.sql"}, http.StatusNotFound},
+		{"existing target 409s", map[string]string{"from": "a.sql", "to": "taken.sql"}, http.StatusConflict},
+		{"same file 400s", map[string]string{"from": "a.sql", "to": "a.sql"}, http.StatusBadRequest},
+		{"bad name 400s", map[string]string{"from": "a.sql", "to": "../x.sql"}, http.StatusBadRequest},
+		{"bad name 400s (no ext)", map[string]string{"from": "a.sql", "to": "x.txt"}, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/rename", jsonBody(c.body)))
+		if rec.Code != c.want {
+			t.Errorf("%s: got %d want %d (%s)", c.name, rec.Code, c.want, rec.Body.String())
+		}
+	}
+	// the virtual op paths accept POST only
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/rename", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET rename: %d", rec.Code)
+	}
+}
+
+func TestFileCopy(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/a.sql", jsonBody(sampleSchema())))
+	if rec.Code != 204 {
+		t.Fatalf("save: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/copy", jsonBody(map[string]string{"from": "a.sql", "to": "c.sql"})))
+	if rec.Code != 204 {
+		t.Fatalf("copy: %d %s", rec.Code, rec.Body.String())
+	}
+	// source AND target exist with identical bytes
+	if _, err := os.Stat(filepath.Join(dir, "a.sql")); err != nil {
+		t.Errorf("source missing after copy: %v", err)
+	}
+	a, _ := os.ReadFile(filepath.Join(dir, "a.sql"))
+	c, _ := os.ReadFile(filepath.Join(dir, "c.sql"))
+	if string(a) != string(c) {
+		t.Error("copy bytes differ from source")
+	}
+	// copying onto an existing name is refused
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/copy", jsonBody(map[string]string{"from": "a.sql", "to": "c.sql"})))
+	if rec.Code != http.StatusConflict {
+		t.Errorf("copy onto existing: %d", rec.Code)
+	}
+	// missing source 404s
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/copy", jsonBody(map[string]string{"from": "gone.sql", "to": "d.sql"})))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("copy missing source: %d", rec.Code)
+	}
+}
+
+// A symlink planted at the target must not redirect a rename/copy outside the
+// store: storePath resolves the target and refuses an escaping link, exactly
+// as it does for the read/write/delete paths.
+func TestFileOpSymlinkTargetRefused(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/a.sql", jsonBody(sampleSchema())))
+	if rec.Code != 204 {
+		t.Fatalf("save: %d", rec.Code)
+	}
+	if err := os.Symlink("/etc", filepath.Join(dir, "link.sql")); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"rename", "copy"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/"+op, jsonBody(map[string]string{"from": "a.sql", "to": "link.sql"})))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s to symlink: %d %s", op, rec.Code, rec.Body.String())
+		}
+	}
+}
