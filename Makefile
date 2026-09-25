@@ -59,7 +59,7 @@ fmt:
 	cd frontend && pnpm run fmt
 
 run: build
-	./$(BIN)
+	./$(BIN) $(ARGS)
 
 # Cross-compile every platform into dist-bin/. Requires the frontend built
 # first (go:embed), so it depends on the frontend target.
