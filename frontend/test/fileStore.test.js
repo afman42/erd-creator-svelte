@@ -116,3 +116,113 @@ test("openFile flashes import warnings and still loads the canvas", async () => 
 		setDirty(false);
 	}
 });
+
+import { duplicateFile, renameFile } from "../src/fileStore.js";
+
+// renameFile/duplicateFile prompt for the target name and then refresh the
+// file list, so the mock must serve the op call and the GET /api/files call.
+function opFetch(responses = []) {
+	const calls = [];
+	const origFetch = globalThis.fetch;
+	globalThis.fetch = async (url, opts) => {
+		calls.push({ url, opts });
+		const r = responses.shift() ?? { ok: true, json: [] };
+		return {
+			ok: r.ok,
+			text: async () => r.text ?? "",
+			json: async () => r.json ?? [],
+		};
+	};
+	return { calls, restore: () => (globalThis.fetch = origFetch) };
+}
+
+async function withPrompt(value, fn) {
+	const origPrompt = globalThis.prompt;
+	globalThis.prompt = value;
+	try {
+		return await fn();
+	} finally {
+		globalThis.prompt = origPrompt;
+	}
+}
+
+function flashCollector() {
+	const msgs = [];
+	return [msgs, (m, kind = "ok") => msgs.push(m)];
+}
+
+test("renameFile moves the file and repoints currentFile", async () => {
+	const store = { currentFile: "a.sql", files: [{ name: "a.sql", mtime: 0 }] };
+	const [msgs, flash] = flashCollector();
+	const f = opFetch([
+		{ ok: true },
+		{ ok: true, json: [{ name: "b.sql", mtime: 1 }] },
+	]);
+	await withPrompt(
+		() => "b",
+		() => renameFile(store, flash),
+	);
+	assert.equal(store.currentFile, "b.sql");
+	assert.equal(f.calls[0].url, "/api/files/rename");
+	assert.deepEqual(JSON.parse(f.calls[0].opts.body), {
+		from: "a.sql",
+		to: "b.sql",
+	});
+	assert.deepEqual(store.files, [{ name: "b.sql", mtime: 1 }]);
+	assert.ok(msgs.includes("renamed to b.sql"));
+	f.restore();
+});
+
+test("renameFile refuses a taken name without calling the server", async () => {
+	const store = { currentFile: "a.sql", files: [{ name: "b.sql", mtime: 0 }] };
+	const [msgs, flash] = flashCollector();
+	const f = opFetch();
+	await withPrompt(
+		() => "b",
+		() => renameFile(store, flash),
+	);
+	assert.equal(store.currentFile, "a.sql");
+	assert.equal(f.calls.length, 0, "no fetch for a clashing rename");
+	assert.equal(msgs[0], "b.sql already exists");
+	f.restore();
+});
+
+test("renameFile failure keeps currentFile and flashes the server error", async () => {
+	const store = { currentFile: "a.sql", files: [{ name: "a.sql", mtime: 0 }] };
+	const [msgs, flash] = flashCollector();
+	const f = opFetch([
+		{ ok: false, text: "boom" },
+		{ ok: true, json: [] },
+	]);
+	await withPrompt(
+		() => "b",
+		() => renameFile(store, flash),
+	);
+	assert.equal(store.currentFile, "a.sql");
+	assert.ok(msgs.some((m) => m.includes("rename failed: boom")));
+	f.restore();
+});
+
+test("duplicateFile skips taken _copy names and echoes the suggestion", async () => {
+	const store = {
+		currentFile: "blog.sql",
+		files: [
+			{ name: "blog.sql", mtime: 0 },
+			{ name: "blog_copy.sql", mtime: 0 },
+		],
+	};
+	const [msgs, flash] = flashCollector();
+	const f = opFetch([{ ok: true }, { ok: true, json: [] }]);
+	// echo the prompt's default — the derived unused name
+	await withPrompt(
+		(msg, def) => def,
+		() => duplicateFile(store, flash),
+	);
+	assert.deepEqual(JSON.parse(f.calls[0].opts.body), {
+		from: "blog.sql",
+		to: "blog_copy2.sql",
+	});
+	assert.ok(msgs.includes("duplicated as blog_copy2.sql"));
+	assert.equal(store.currentFile, "blog.sql", "editor stays on the original");
+	f.restore();
+});

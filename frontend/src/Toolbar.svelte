@@ -10,11 +10,13 @@ import {
 	copyInserts,
 	copySql,
 	deleteFile,
+	duplicateFile,
 	exportDdl,
 	exportPng,
 	exportSvg,
 	newFile,
 	openFile,
+	renameFile,
 	saveCurrent,
 	setDialect,
 	setSqliteTypes,
@@ -59,6 +61,8 @@ const LABELS = {
 	<button onclick={newFile} aria-label="New">New</button>
 	<button onclick={() => saveCurrent()} disabled={!store.currentFile} aria-label="Save">Save</button>
 	<button onclick={deleteFile} disabled={!store.currentFile} aria-label="Del">Del</button>
+	<button onclick={renameFile} disabled={!store.currentFile} aria-label="Rename file" title="Rename the current schema file">Rename</button>
+	<button onclick={duplicateFile} disabled={!store.currentFile} aria-label="Duplicate file" title="Copy the current schema file">Duplicate</button>
 	<button onclick={copySql} aria-label="Copy SQL">Copy SQL</button>
 	<button onclick={copyInserts} aria-label="Copy INSERTs">Copy INSERTs</button>
 	<label class="sr-only" for="dialect-select">DDL dialect</label>

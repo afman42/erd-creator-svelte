@@ -21,6 +21,7 @@ import {
 	commitColName,
 	commitComment,
 	commitDefault,
+	moveColumn,
 	rmColumn,
 	setRef,
 	setRefAction,
@@ -37,6 +38,12 @@ let { table, column, onClose } = $props();
 
 const actions = ["CASCADE", "RESTRICT", "SET NULL", "SET DEFAULT", "NO ACTION"];
 const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
+// Reordering: the column list order IS the DDL order, so ↑/↓ are real edits.
+// null at the edges disables the button (native disabled, not a no-op click).
+const canMoveUp = $derived(table.columns.indexOf(column) > 0);
+const canMoveDown = $derived(
+	table.columns.indexOf(column) < table.columns.length - 1,
+);
 
 // The relationship IS this column's FK: target + flags read back through
 // cardinality(), so edit = retarget/flags/actions, delete = clear FK (keeps
@@ -236,6 +243,22 @@ function remove() {
 	</label>
 
 	<footer>
+		<div class="move">
+			<button
+				class="mvup"
+				onclick={() => moveColumn(table, column, -1)}
+				disabled={!canMoveUp}
+				title="move column up (changes DDL order)"
+				aria-label="move column up"
+			>↑</button>
+			<button
+				class="mvdown"
+				onclick={() => moveColumn(table, column, 1)}
+				disabled={!canMoveDown}
+				title="move column down (changes DDL order)"
+				aria-label="move column down"
+			>↓</button>
+		</div>
 		<button class="rmcol" onclick={remove}>Remove column</button>
 		<button class="done" onclick={() => dlg?.close()}>Done</button>
 	</footer>
@@ -358,6 +381,7 @@ function remove() {
 		display: flex;
 		gap: 8px;
 		justify-content: flex-end;
+		align-items: center;
 		margin-top: 12px;
 	}
 	footer button {
@@ -366,6 +390,24 @@ function remove() {
 		padding: 6px 12px;
 		cursor: pointer;
 		font: inherit;
+	}
+	/* ↑/↓ are compact square controls beside the remove button; the footer
+	   buttons are otherwise unstyled because they inherit `footer button`.
+	   .rmcol's margin-right:auto supplies the push, so .move needs none. */
+	footer .move {
+		display: flex;
+		gap: 4px;
+	}
+	footer .move button {
+		width: 30px;
+		padding: 6px 0;
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
+	}
+	footer .move button:disabled {
+		opacity: 0.4;
+		cursor: default;
 	}
 	.done {
 		background: var(--color-primary);

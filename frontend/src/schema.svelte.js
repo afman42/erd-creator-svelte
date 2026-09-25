@@ -13,6 +13,7 @@ import {
 	newColumn,
 	newSchema,
 	newTable,
+	shiftColumn,
 	uniqName,
 } from "./erd.js";
 import { CANVAS_ORIGIN, DUP_OFFSET, stackStep } from "./geometry.js";
@@ -184,6 +185,21 @@ export function rmColumn(t, c) {
 	} // empty table = invalid DDL
 	snap();
 	t.columns = t.columns.filter((x) => x.id !== c.id);
+}
+// moveColumn reorders a column within its table: the array order is the DDL
+// order, so the emitters follow. The edge check runs BEFORE snap so a no-op
+// move does not leave a dead undo entry.
+/**
+ * @param {Table} t
+ * @param {Column} c
+ * @param {-1 | 1} delta
+ */
+export function moveColumn(t, c, delta) {
+	const i = t.columns.findIndex((x) => x.id === c.id);
+	const j = i + delta;
+	if (i < 0 || j < 0 || j >= t.columns.length) return;
+	snap();
+	shiftColumn(t, c.id, delta);
 }
 /**
  * @param {Table} t
@@ -535,9 +551,11 @@ export function setSqliteTypes(mode) {
 
 import {
 	deleteFile as deleteFileImpl,
+	duplicateFile as duplicateFileImpl,
 	newFile as newFileImpl,
 	openFile as openFileImpl,
 	refreshFiles as refreshFilesImpl,
+	renameFile as renameFileImpl,
 	saveCurrent as saveCurrentImpl,
 } from "./fileStore.js";
 
@@ -562,6 +580,12 @@ export async function saveCurrent(silent = false) {
 }
 export async function deleteFile() {
 	await deleteFileImpl(store, flash);
+}
+export async function renameFile() {
+	await renameFileImpl(store, flash);
+}
+export async function duplicateFile() {
+	await duplicateFileImpl(store, flash);
 }
 
 // ---- clipboard + exports ----

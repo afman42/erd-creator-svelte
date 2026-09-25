@@ -191,3 +191,79 @@ export async function deleteFile(store, flash) {
 	flash(`deleted ${name}`);
 	await refreshFiles(store);
 }
+
+/**
+ * renameFile moves the current file on the server (POST /api/files/rename).
+ * Pending edits are flushed first so the move carries the latest bytes; the
+ * editor stays pointed at the same schema under its new name.
+ * @param {Store} store
+ * @param {Flash} flash
+ */
+export async function renameFile(store, flash) {
+	if (!store.currentFile) return;
+	const cur = store.currentFile;
+	const to = (prompt("Rename schema file to:", cur) || "").trim();
+	if (!to || to === cur) return;
+	const name = to.replace(/\.sql$/i, "") + ".sql";
+	if (store.files.some((f) => f.name === name)) {
+		flash(`${name} already exists`, "err");
+		return;
+	}
+	await flushCurrent(store, flash);
+	try {
+		const res = await fetch("/api/files/rename", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ from: cur, to: name }),
+		});
+		if (!res.ok) throw new Error(await res.text());
+		store.currentFile = name;
+		flash(`renamed to ${name}`);
+	} catch (e) {
+		flash(
+			`rename failed: ${e instanceof Error ? e.message : String(e)}`,
+			"err",
+		);
+	} finally {
+		await refreshFiles(store);
+	}
+}
+
+/**
+ * duplicateFile copies the current file on the server (POST /api/files/copy),
+ * prompting with an unused derived name (<base>_copy.sql, then _copy2, …).
+ * The editor stays on the original; the copy is the on-disk snapshot.
+ * @param {Store} store
+ * @param {Flash} flash
+ */
+export async function duplicateFile(store, flash) {
+	if (!store.currentFile) return;
+	const cur = store.currentFile;
+	const base = cur.replace(/\.sql$/i, "");
+	const taken = new Set(store.files.map((f) => f.name));
+	let suggested = `${base}_copy.sql`;
+	for (let n = 2; taken.has(suggested); n++) {
+		suggested = `${base}_copy${n}.sql`;
+	}
+	const to = (prompt("Duplicate schema file as:", suggested) || "").trim();
+	if (!to) return;
+	const name = to.replace(/\.sql$/i, "") + ".sql";
+	if (name === cur) return;
+	if (store.files.some((f) => f.name === name)) {
+		flash(`${name} already exists`, "err");
+		return;
+	}
+	try {
+		const res = await fetch("/api/files/copy", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ from: cur, to: name }),
+		});
+		if (!res.ok) throw new Error(await res.text());
+		flash(`duplicated as ${name}`);
+	} catch (e) {
+		flash(`copy failed: ${e instanceof Error ? e.message : String(e)}`, "err");
+	} finally {
+		await refreshFiles(store);
+	}
+}
