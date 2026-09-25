@@ -621,3 +621,46 @@ git history, not here.
   byte-identical to mysql; unit — theme module (localStorage fallback +
   read/persist), model fields on newColumn/newTable; e2e — light-theme SVG
   export carries the light paint constants, lint panel clean state.
+
+- **Column reorder, file rename/duplicate, SQLite engine smoke test,
+  barycenter auto-layout (2026-09-24).** Second batch, four features.
+
+  **Column reordering.** `shiftColumn` (erd.js) is a pure array move — the
+  column list order IS the DDL order, so nothing is stored and no format
+  changes. The column dialog's footer gained ↑/↓ (disabled at the edges;
+  the edge check runs before `snap()` so a no-op never leaves a dead undo
+  entry). The e2e pins that both the card rows and the emitted CREATE TABLE
+  reorder. Unit: shiftColumn refusals (unknown id, delta 0 — which used to
+  "swap" a column with itself and report success — and at the edges).
+
+  **File rename/duplicate.** `POST /api/files/rename|copy` with
+  `{from,to}`: virtual names that cannot collide with real files (validName
+  requires `.sql`). Rename is os.Rename (atomic, same-filesystem, NOT a
+  delete → no trash); copy goes through the same temp+rename path saves use
+  so a planted symlink cannot redirect it. Refusals: missing source 404,
+  existing target 409, same file 400, bad name 400, symlink-escaping target
+  400 (tested). The toolbar gained Rename/Duplicate buttons (disabled
+  without a file); rename flushes pending edits first and repoints
+  currentFile; duplicate prompts with an unused derived name and leaves the
+  editor on the original. Unit tests mock fetch + prompt: success paths,
+  clashing names never reach the server, failure keeps currentFile.
+
+  **SQLite engine smoke test.** `TestSqliteEmitsExecutableDDL` pipes the
+  emitted DDL through the real `sqlite3` CLI (`:memory:`, both native and
+  portable modes, plus the FK/index fixture) and requires both tables to
+  exist. Regex round-trips only prove parser agrees with emitter; a real
+  engine proves the DDL executes. Skipped when sqlite3 is absent; CI gained
+  a `which sqlite3` step so the guard can never silently drop out.
+
+  **Barycenter auto-layout.** `layout()` orders each layer by the mean
+  position of its parents in the previous layer (stable sort; unparented
+  tables keep input order; layer 0 untouched), so multi-parent layers stop
+  crossing. Layers stay in a Map — a cycle (a↔b) can skip a depth entirely,
+  and the first array-based attempt crashed on exactly that (`layer is not
+  iterable`, caught by the existing cycle-guard unit test before I ever ran
+  the suite). The crossing test counts inverted edge pairs and asserts the
+  fixture crosses twice before sorting and zero after.
+
+  Totals: Go 204 → 209; frontend unit 138 → 142; e2e 96 → 98. One derived
+  e2e lesson: `dialog.accept()` with no value yields an EMPTY prompt, so
+  the duplicate test must accept the derived name explicitly.

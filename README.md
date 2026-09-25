@@ -75,6 +75,9 @@ string.
 
 - **Canvas** — add/rename/delete/duplicate tables (⧉), drag by header, `Del`
   deletes selection, `Ctrl+Z` undo, auto-layout by FK depth on file open.
+  The layout adds a barycenter pass: each layer is ordered by its parents'
+  mean position in the previous layer, so edges hug their tables instead of
+  crossing (layer 0 and unparented tables keep input order).
   New tables auto-name `table1`, `table2`, … and duplicates `users_copy`,
   `users_copy2`, …; undo history is per-file, so `Ctrl+Z` never restores a
   schema across a file switch
@@ -85,7 +88,9 @@ string.
   `ON UPDATE` actions, the `DEFAULT` expression (a raw SQL value such as `0`,
   `'active'`, `CURRENT_TIMESTAMP` or `(uuid())`, allowlist-validated
   server-side like the type — semicolons only inside quotes, comments
-  refused), the comment, and Remove. It is a native `<dialog>`, so
+  refused), the comment, ↑/↓ to reorder the column (the column list order IS
+  the DDL order, so moving one changes what every emitter writes), and
+  Remove. It is a native `<dialog>`, so
   Escape closes it and focus is trapped while it is open. (The ten controls used
   to sit inline in a 280px row, where they needed ~342px and clipped; the row's
   26px height and the comment line's 16px are unchanged, so FK edge anchors are
@@ -234,8 +239,12 @@ string.
   not an array of them. An array column also cannot be a `PK` or `AI`, so
   turning the toggle on clears both.
 - **Files** — schema store in `-dir` (default `./schemas`): Files dropdown +
-  New/Save/Del; saves debounce-autosave the current file — switching or
-  deleting a file flushes the pending save first. Opening is best-effort: a
+  New/Save/Del/**Rename**/**Duplicate**. Rename moves the file server-side
+  (pending edits flushed first, editor stays pointed at the same schema
+  under the new name); Duplicate copies the on-disk file to an unused
+  derived name (`name_copy.sql`, `name_copy2.sql`, … — prompt-editable);
+  saves debounce-autosave the current file — switching or deleting a file
+  flushes the pending save first. Opening is best-effort: a
   foreign dump (`mysqldump`, `pg_dump`, SQLite) loads its tables, columns, FKs
   and indexes and flashes what it skipped (`imported with N skips: …`); a file
   with no tables still 400s and the canvas keeps prior state. **Delete moves
@@ -389,7 +398,11 @@ make build      # rebuild dist/ + static binary
 make dist       # cross-compile all platforms into dist-bin/
 cd frontend && pnpm run e2e   # UI flows against the real server (chromium)
 cd frontend && pnpm test      # node --test, zero test deps
-go test ./...                       # grammar/dialect/export tests
+go test ./...                 # grammar/dialect/export tests
+# TestSqliteEmitsExecutableDDL also pipes the emitted SQLite DDL through the
+# real sqlite3 CLI when one is on PATH (skipped otherwise; CI asserts its
+# presence) — regex round-trips prove the parser agrees with the emitter; a
+# real engine proves the DDL is actually executable.
 ```
 
 Edit frontend sources under `frontend/src/`; `frontend/dist/` is built into
