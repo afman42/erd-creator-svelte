@@ -357,7 +357,9 @@ test("reciprocal FKs render two curves with an arrowhead at each child", async (
 	expect(overlaps).toEqual([]);
 });
 
-test("FK type mismatch surfaces server lint in header", async ({ page }) => {
+test("FK type mismatch surfaces server lint in the lint panel", async ({
+	page,
+}) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "+ Table" }).click();
 	// second table, first column: set the FK to users via the dialog
@@ -369,9 +371,15 @@ test("FK type mismatch surfaces server lint in header", async ({ page }) => {
 	await fk.selectOption("");
 	await dlg.locator("select.type").selectOption("VARCHAR"); // becomes VARCHAR(255)
 	await fk.selectOption({ index: 1 });
-	await expect(page.getByTestId("toast")).toContainText("vs", {
-		timeout: 5000,
-	});
+	await closeCol(dlg);
+	// lint is NOT toasted (that flash is gone); the panel is its home — the
+	// toast container stays empty
+	await expect(page.getByTestId("toast")).toHaveText("");
+	await page.getByTestId("lint-toggle").click();
+	await expect(page.locator("aside[aria-label='lint findings']")).toContainText(
+		"vs",
+		{ timeout: 5000 },
+	);
 });
 
 test("table delete × removes box and clears dangling FKs", async ({ page }) => {
