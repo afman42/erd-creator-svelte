@@ -20,6 +20,7 @@ import {
 	newTable,
 	SAVEABLE_DIALECTS,
 	SQLITE_TYPES,
+	shiftColumn,
 	TYPES,
 	uniqName,
 } from "../src/erd.js";
@@ -60,6 +61,37 @@ test("newColumn/newTable carry default and comment fields", () => {
 	const t = newTable("users");
 	assert.equal(t.comment, "");
 	assert.equal(t.columns[0].default, "");
+});
+
+test("shiftColumn moves a column and refuses the edges", () => {
+	const t = newTable("t"); // one column: id
+	t.columns.push(newColumn()); // [id, column]
+	const [, c2] = t.columns;
+	// move the second column up → [column, id]
+	assert.equal(shiftColumn(t, c2.id, -1), true);
+	assert.deepEqual(
+		t.columns.map((c) => c.name),
+		["column", "id"],
+	);
+	// it is now at the top: another up-move is a no-op
+	assert.equal(shiftColumn(t, c2.id, -1), false);
+	assert.deepEqual(
+		t.columns.map((c) => c.name),
+		["column", "id"],
+	);
+	// down moves it back
+	assert.equal(shiftColumn(t, c2.id, 1), true);
+	assert.deepEqual(
+		t.columns.map((c) => c.name),
+		["id", "column"],
+	);
+	// unknown column ids and out-of-range deltas are refusals, not mutations
+	assert.equal(shiftColumn(t, "ghost", -1), false);
+	assert.equal(shiftColumn(t, t.columns[0].id, 0), false);
+	assert.deepEqual(
+		t.columns.map((c) => c.name),
+		["id", "column"],
+	);
 });
 
 test("TYPES and DEFAULT_TYPE expose expected values", () => {
@@ -331,6 +363,67 @@ test("layout stacks tables in same layer vertically by box height", () => {
 	// spacing comes from geometry.js, so layout() and addTable() cannot drift
 	assert.equal(t2.y, t1.y + stackStep(1));
 	assert.equal(t3.y, t2.y + stackStep(1));
+});
+
+// countCrossings counts inverted edge pairs between two ADJACENT layers
+// given their vertical order: for every pair of edges (u1→v1, u2→v2), the
+// children's relative order must match the parents' relative order or the
+// two curves cross. Edges sharing a node cannot cross and are skipped.
+function countCrossings(layerA, layerB, refs) {
+	const pi = new Map(layerA.map((t, i) => [t.id, i]));
+	const ci = new Map(layerB.map((t, i) => [t.id, i]));
+	let n = 0;
+	for (let i = 0; i < refs.length; i++) {
+		for (let j = i + 1; j < refs.length; j++) {
+			const [p1, q1] = refs[i];
+			const [p2, q2] = refs[j];
+			if (p1 === p2 || q1 === q2) continue;
+			if (pi.get(p1) < pi.get(p2) !== ci.get(q1) < ci.get(q2)) n++;
+		}
+	}
+	return n;
+}
+
+// The barycenter sweep reorders each layer by its parents' mean position so
+// edges stop crossing. With parents [a, b] and children input as [c→b, d→a,
+// e→a], the naive order crosses once (b's child on top of a's); the sorted
+// order puts both of a's children above b's and crosses zero times.
+test("layout orders each layer by parent barycenter to reduce crossings", () => {
+	const a = newTable("a");
+	const b = newTable("b");
+	const c = newTable("c");
+	const d = newTable("d");
+	const e = newTable("e");
+	c.columns[0].ref = { tableId: b.id, action: "CASCADE" };
+	d.columns[0].ref = { tableId: a.id, action: "CASCADE" };
+	e.columns[0].ref = { tableId: a.id, action: "CASCADE" };
+	const refs = [
+		[a.id, d.id],
+		[a.id, e.id],
+		[b.id, c.id],
+	];
+	// the naive (input) order crosses twice: b's child sits above both of
+	// a's children, inverting both edge pairs
+	assert.equal(
+		countCrossings([a, b], [c, d, e], refs),
+		2,
+		"fixture must actually cross before sorting, or the test is vacuous",
+	);
+	const s = { tables: [a, b, c, d, e] };
+	layout(s);
+	const layer0 = [a, b].sort((x, y) => x.y - y.y);
+	const layer1 = [c, d, e].sort((x, y) => x.y - y.y);
+	// layer 0 keeps input order (no previous layer to score against)
+	assert.deepEqual(
+		layer0.map((t) => t.name),
+		["a", "b"],
+	);
+	// a's children (score 0) sit above b's child (score 1)
+	assert.deepEqual(
+		layer1.map((t) => t.name),
+		["d", "e", "c"],
+	);
+	assert.equal(countCrossings(layer0, layer1, refs), 0);
 });
 
 test("adoptIds regenerates foreign/garbage ids, keeps refs resolvable", () => {

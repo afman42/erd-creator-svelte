@@ -227,6 +227,27 @@ export function adoptIds(schema, idSource = defaultIdSource) {
 	return schema;
 }
 
+// shiftColumn moves a column within its table's ordered list. The array
+// order IS the DDL column order (every emitter writes columns in model
+// order), so this changes what save/export emit — a pure array move, nothing
+// stored, no format change. Returns false when the move is impossible (no
+// such column, or already at the edge), leaving the list untouched.
+/**
+ * @param {Table} t
+ * @param {string} colId
+ * @param {-1 | 1} delta
+ * @returns {boolean}
+ */
+export function shiftColumn(t, colId, delta) {
+	const i = t.columns.findIndex((c) => c.id === colId);
+	const j = i + delta;
+	// j === i covers delta 0 (a non-move that would otherwise "swap" a
+	// column with itself and report success)
+	if (i < 0 || j === i || j < 0 || j >= t.columns.length) return false;
+	[t.columns[i], t.columns[j]] = [t.columns[j], t.columns[i]];
+	return true;
+}
+
 // Auto-layout: layered by FK depth, referenced tables leftmost. No coords stored.
 /**
  * @param {Schema} schema
@@ -246,16 +267,54 @@ export function layout(schema) {
 		return val;
 	};
 	for (const t of schema.tables) d(t.id, new Set());
+	// Group by layer. A Map, not an array: a cycle (a↔b) can skip a depth
+	// entirely, and a sparse array would leave a hole the sweep would trip on.
 	const cols = new Map();
 	for (const t of schema.tables) {
-		const layer = depth.get(t.id);
-		if (!cols.has(layer)) cols.set(layer, []);
-		cols.get(layer).push(t);
+		const L = depth.get(t.id);
+		if (!cols.has(L)) cols.set(L, []);
+		cols.get(L).push(t);
 	}
-	for (const [layer, ts] of cols) {
+	const maxLayer = Math.max(0, ...cols.keys());
+	// Barycenter sweep: within each layer (processed left→right), order
+	// tables by the mean position of their parents in the PREVIOUS layer, so
+	// edges hug the nodes they connect instead of crossing. Tables with no
+	// parent there keep their input order (stable sort); layer 0 has no
+	// previous layer and is untouched. Positions are only assigned after the
+	// whole layer is ordered, so the sort reads indices, not coordinates.
+	for (let L = 0; L <= maxLayer; L++) {
+		const layer = cols.get(L);
+		if (!layer) continue; // cycle-skipped depth
+		if (L > 0) {
+			const prev = cols.get(L - 1);
+			// when the previous depth was skipped by a cycle, no table can
+			// reference it, so the sort below is a no-op — skip it entirely
+			if (prev) {
+				const prevIndex = new Map(prev.map((t, i) => [t.id, i]));
+				const score = new Map(
+					layer.map((t) => {
+						const ps = t.columns
+							.filter((c) => c.ref && prevIndex.has(c.ref.tableId))
+							.map((c) => prevIndex.get(c.ref.tableId));
+						return [
+							t.id,
+							ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : null,
+						];
+					}),
+				);
+				layer.sort((a, b) => {
+					const sa = score.get(a.id);
+					const sb = score.get(b.id);
+					if (sa !== null && sb !== null) return sa - sb;
+					if (sa !== null) return -1; // parented tables first
+					if (sb !== null) return 1;
+					return 0; // stable: input order
+				});
+			}
+		}
 		let y = CANVAS_ORIGIN.y;
-		for (const t of ts) {
-			t.x = CANVAS_ORIGIN.x + layer * COL_W;
+		for (const t of layer) {
+			t.x = CANVAS_ORIGIN.x + L * COL_W;
 			t.y = y;
 			// stackStep() owns the card-height + gap arithmetic (geometry.js).
 			// This was open-coded as `+ 24 + GAP`, which is 3px less than the
