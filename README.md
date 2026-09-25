@@ -82,15 +82,18 @@ string.
   the FK target, and a ✎ button that opens the edit dialog. The dialog holds
   name, type (`INT…JSON`, `ENUM` with editable values), the `PK` (composite
   supported) `NN` `UQ` `AI` `IX` flags, the FK with its `ON DELETE` and
-  `ON UPDATE` actions, the comment, and Remove. It is a native `<dialog>`, so
+  `ON UPDATE` actions, the `DEFAULT` expression (a raw SQL value such as `0`,
+  `'active'`, `CURRENT_TIMESTAMP` or `(uuid())`, allowlist-validated
+  server-side like the type — semicolons only inside quotes, comments
+  refused), the comment, and Remove. It is a native `<dialog>`, so
   Escape closes it and focus is trapped while it is open. (The ten controls used
   to sit inline in a 280px row, where they needed ~342px and clipped; the row's
   26px height and the comment line's 16px are unchanged, so FK edge anchors are
   unaffected.)
  - **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
-   actions; bezier edge renders automatically; type-mismatch lint (server-side)
-   as a toast notice. Once an FK is set, the column dialog's **Relationship**
-  block shows the derived state (`0..N / 0..1`, `0..N / 1..1`, `0..1 / 0..1`,
+  actions; bezier edge renders automatically; type-mismatch lint (server-side)
+  shows in the lint panel. Once an FK is set, the column dialog's
+  **Relationship** block shows the derived state (`0..N / 0..1`, `0..N / 1..1`, `0..1 / 0..1`,
   `0..1 / 1..1`) with a `1:N` / `1:1` radio that flips the `UQ` flag for you —
   so you can set the relationship without knowing that `UQ` means `0..1`.
   It stores nothing new: the readout is a *view* of those flags, which is why
@@ -240,8 +243,37 @@ string.
   of unlinking** — a mis-click is recoverable with `mv .trash/name.sql ./` —
   and the toolbar shows an `unsaved` badge while an edit is pending autosave.
   The server generates and parses the file's DDL in its own dialect; `Copy
-  INSERTs` emits seed-row templates (MySQL syntax) and a red `unsaved` note
-  appears while the file differs from disk.
+  INSERTs` emits seed-row templates in that dialect — quoting per grammar
+  (backticks for mysql/sqlite, double quotes for postgres) and `NOW()` for
+  every dialect except SQLite, which gets `CURRENT_TIMESTAMP` because it has
+  no `NOW()` (the mysql output is byte-identical to before the dialect-aware
+  refactor) — and a red `unsaved` note appears while the file differs from
+  disk.
+- **Table comments** — edited in the table dialog (`⌗` in the card header,
+  next to the composite indexes), stored on the table, and emitted where the
+  dialect has them: a `COMMENT='…'` table option for MySQL/MariaDB and a
+  `COMMENT ON TABLE "t" IS '…';` statement for Postgres. SQLite has no table
+  comment and drops it (documented lossy, like `TINYINT` on postgres). The
+  card shows the comment as its tooltip. Column `DEFAULT` expressions and
+  table comments need no `.sql` format change: they are clauses of the DDL
+  itself, so they round-trip through the same emitters and parsers as every
+  other construct, and files written before the fields existed parse with
+  empty values (both are `omitempty` on the wire).
+- **Lint panel** — the server's lint findings (FK type mismatches, FKs onto
+  composite or missing PKs, FK-less target tables) live in a docked panel:
+  the `Lint` toolbar toggle (with a count) opens it, and clicking a finding
+  selects and scrolls to its table. Findings are deliberately NOT toasted —
+  `refreshLint` debounces after every edit, so a toast would fire on every
+  keystroke; the panel is the durable record. Same `store.lint`, same
+  debounced refresh — the panel is a view, not a second source.
+- **Themes** — dark is the default; the toolbar's `Light`/`Dark` toggle flips
+  `[data-theme]` on `<html>`, persisted in localStorage and applied before
+  mount (main.js, since the CSP forbids an inline script). Components consume
+  tokens, so one `[data-theme="light"]` block in `tokens.css` themes the whole
+  UI. The SVG paint (edges, labels, marker) is presentation attributes that
+  cannot read custom properties, so each theme's four colours are duplicated
+  in `geometry.js` and the two CSS blocks, with a test asserting all eight
+  stay equal.
 - **Dialects** — one dropdown selects the DDL flavor, and it drives everything:
   what Save writes, the SQL panel, Copy SQL, Export (downloads a `.sql`
   file named after the current file, or `<dialect>-schema.sql` for unsaved
@@ -287,7 +319,7 @@ frontend/src/download.js     (download + clipboard helpers)         (pure)
 frontend/src/history.js      (undo stack, JSON snapshots)           (pure)
 frontend/src/autosave.js     (debounced lint/save/sql, dirty flag) (pure)
 frontend/src/schema.svelte.js(store: model state, mutations, fetch glue)
-frontend/src/Toast.svelte     (flash + lint notices, bottom-right toast)
+frontend/src/Toast.svelte     (flash notices, bottom-right toast)
 frontend/src/TableCard.svelte(table card, column rows, dialog hosts)
 frontend/src/ColumnRow.svelte(column row: badges, FK target, edit button)
 frontend/src/EmptyState.svelte (empty-schema placeholder)
@@ -295,6 +327,8 @@ frontend/src/SqlPanel.svelte   (SQL preview panel)
 frontend/src/RelationshipModal.svelte(1:1 / 1:N / N:N creation dialog)
 frontend/src/ColumnEditModal.svelte(per-column controls dialog)
 frontend/src/TableIndexModal.svelte(composite-index dialog)
+frontend/src/LintPanel.svelte      (docked lint findings, click-to-jump)
+frontend/src/theme.js             (light/dark state + localStorage)
 frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
 grammar.go              model + mysql/mariadb parse/lint + inserts
 import.go               best-effort import: strict ParseDDL first, then one lenient pass + warnings
@@ -341,7 +375,9 @@ main.go                 embed.FS server + API route wiring
   `TIMESTAMP` are written under their own names and read straight back, because
   SQLite accepts them and stores them verbatim (verified against sqlite3
   3.53.4). Only `ENUM` is transformed — SQLite has no enum type — into
-  `TEXT + CHECK`, and the values are recovered from the constraint. `portable`
+  `TEXT + CHECK`, and the values are recovered from the constraint. Table
+  comments are the other loss: SQLite has no `COMMENT`, so they are dropped
+  (a reopened sqlite file has no comment to re-emit). `portable`
   mode is the lossy alternative described above; either way reopen → save is a
   byte-identical fixed point.
 

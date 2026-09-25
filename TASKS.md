@@ -549,3 +549,75 @@ git history, not here.
   (button gating, 1:N flow, 1:1 UNIQUE, same-table rejection, N:N chip +
   edges + reload persistence, flag toggles, relationship edit/delete);
   decision record in `tasks/plan.md`.
+
+- **Column DEFAULT, table comments, dialect-aware INSERTs, lint panel, themes
+  (2026-09-24).** Five features from one pass, in three layers.
+
+  **DEFAULT (Go + modal).** `Col.Default` is stored as typed and emitted raw
+  in all four dialects — the same injection class as the type field — so
+  `validateDefault` allowlists it: characters outside a quoted literal are
+  restricted, `;` only inside quotes, `--`/`/* */` refused, parens balanced,
+  strings closed. AI + DEFAULT is refused in `validateShape` (MySQL rejects a
+  DEFAULT on AUTO_INCREMENT, Postgres on an identity column, SQLite would
+  have nowhere to put it on the rowid alias) and the modal refuses it
+  client-side with a flash instead of waiting for the save 400. Parsers read
+  it back in every dialect; the capture is a lazy run so a following
+  `COMMENT '…'` / `NOT NULL` / `CHECK` clause is not swallowed. `omitempty`
+  on the wire, and empty means no clause, so every existing file and golden
+  keeps its bytes. Go: 8 new tests including injection rejection and
+  round-trip in all four dialects.
+
+  **Table comments.** `Table.Comment` is a MySQL/MariaDB table option
+  (`COMMENT='…'`), a Postgres `COMMENT ON TABLE` statement, and deliberately
+  dropped for SQLite (no COMMENT — documented lossy in the README, alongside
+  the existing portable-mode loss). Edited in the table dialog (⌗), shown as
+  the card tooltip. The end-table regex gained an optional comment capture,
+  so old files parse with an empty comment. Like DEFAULT, `omitempty` and
+  emitted only when set: goldens unmoved.
+
+  **Dialect-aware INSERTs.** `GenInserts` now delegates to
+  `GenInsertsFor(s.dialect())` — the API already posts the whole schema, so
+  no protocol change was needed. Quoting follows the grammar (backticks vs
+  double quotes) and SQLite gets `CURRENT_TIMESTAMP` because it has no
+  `NOW()`; the mysql output is byte-identical (same header, same bytes) and
+  pinned by a test.
+
+  **Lint panel.** The toast-flashed findings now have a docked home: a
+  toolbar `Lint (n)` toggle opens a side panel that is a pure view of the
+  existing `store.lint`, and clicking a finding selects + scrolls to its
+  table (the message's leading `table.column` is the only reliable name
+  source — names may contain spaces). **Follow-up in the same session:** the
+  toast flash is gone entirely — `flashLint()` and Toast's lint `<span>`
+  were purged, since the toast fired on every debounced edit and duplicated
+  the panel. Mutations no longer force a lint round-trip; the 300ms
+  debounced `refreshLint` (which the App `$effect` schedules on any edit)
+  keeps the panel fresh, and the mutated e2e test now asserts the finding
+  lives in the panel and that the toast stays empty.
+
+  **Themes.** Dark (the existing palette) stays the default; the toggle
+  flips `data-theme` on `<html>`, persisted in localStorage and applied
+  pre-mount in `main.js` because the CSP forbids inline scripts. One
+  `[data-theme="light"]` block in `tokens.css` themes every component. The
+  catch was the SVG paint: edges/labels/marker are presentation attributes
+  (the html-to-image export constraint) and attributes cannot read custom
+  properties, so each theme's four colours are now duplicated in
+  `geometry.js` (`EDGE_STROKE_LIGHT` etc.) AND in the two CSS blocks, and two
+  tests assert all eight stay equal. The SQL panel's blue gained a
+  `--color-sql` token so it stays readable on white.
+
+  **A regression the new toolbar buttons exposed:** `.ok`/`.warn` status
+  spans used `flex: 0 1 auto`, so once the header overflowed (two more
+  buttons) the flex shrink squeezed the `unsaved` badge to width 0 — the
+  dirty indicator silently disappeared, and the e2e caught it via
+  Playwright's visibility check. Fixed with `flex: 0 0 auto`: the header
+  scrolls instead of crushing its status text. That is the second time a
+  zero-width-but-attached element hid a real control, after the exported
+  marker's `context-stroke` string.
+
+  Totals: Go 194 → 204; frontend unit 131 → 136; e2e 89 → 96. New coverage
+  beyond the five features: Go — quoted-semicolon defaults emit through the
+  validateOutput gate, mysql ENUM+default and PK+default round-trips,
+  control-char/oversized rejects, overlong table comment, mariadb inserts
+  byte-identical to mysql; unit — theme module (localStorage fallback +
+  read/persist), model fields on newColumn/newTable; e2e — light-theme SVG
+  export carries the light paint constants, lint panel clean state.
