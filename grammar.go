@@ -8,7 +8,9 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -167,13 +169,29 @@ var dialectAliases = map[string]string{
 }
 
 // saveableSet is the set of dialects that round-trip through a .sql file.
-// All four have parsers, so their files reopen; an unknown name normalizes to
-// mysql and is saveable, while the explicit set guards future additions.
+// All four have parsers, so their files reopen. Unknown names are NOT
+// saveable: normalizeDialect falls back to mysql for the empty/unset case,
+// but saveFile rejects a non-empty unknown string before it can be stored
+// under a false dialect label (see validateDialectForSave).
 var saveableSet = map[string]bool{
 	DialectMysql:    true,
 	DialectMariaDB:  true,
 	DialectPostgres: true,
 	DialectSqlite:   true,
+}
+
+// validateDialectForSave rejects a non-empty dialect string that names no
+// known dialect. Empty means "unset" (every file written before the field
+// existed) and is accepted as mysql; anything else unrecognized would
+// otherwise be stored as mysql while the UI shows the unknown name.
+func validateDialectForSave(d string) error {
+	if strings.TrimSpace(d) == "" {
+		return nil
+	}
+	if _, ok := dialectAliases[strings.ToLower(strings.TrimSpace(d))]; !ok {
+		return fmt.Errorf("unknown dialect %q (want mysql, mariadb, postgres, sqlite)", d)
+	}
+	return nil
 }
 
 // normalizeDialect maps accepted spellings onto a canonical name, defaulting to
@@ -349,7 +367,15 @@ func (s *Schema) GenInsertsFor(dialect string) string {
 		}
 		out = append(out, "INSERT INTO "+q(t.Name)+" ("+strings.Join(names, ", ")+") VALUES ("+strings.Join(vals, ", ")+");")
 	}
-	return strings.Join(out, "\n") + "\n"
+	// Inserts carry only quoted identifiers and fixed literals, but they leave
+	// through the same last gate as DDL: a future column in the template must
+	// not emit unchecked. A gate failure here is a bug, not bad input, so it
+	// is logged and the output is still returned.
+	out2 := strings.Join(out, "\n") + "\n"
+	if err := validateOutput(out2); err != nil {
+		log.Printf("gen inserts gate: %v", err)
+	}
+	return out2
 }
 
 // ---- parse: reads only GenSQL output ----
@@ -393,12 +419,21 @@ var (
 	reTypeNorm = regexp.MustCompile(`(?i)^([A-Za-z]+)(\(.*\))?$`)
 )
 
-func unquoteTick(s string) string {
+func unquote(s string, quote byte, esc, repl string) string {
 	s = strings.TrimSpace(s)
-	if len(s) >= 2 && strings.HasPrefix(s, "`") {
-		return strings.ReplaceAll(s[1:len(s)-1], "``", "`")
+	if len(s) >= 2 && s[0] == quote && s[len(s)-1] == quote {
+		return strings.ReplaceAll(s[1:len(s)-1], esc, repl)
 	}
 	return s
+}
+
+func unquoteTick(s string) string {
+	return unquote(s, '`', "``", "`")
+}
+
+// unescapeStr undoes ” escaping in string literals (comments, defaults).
+func unescapeStr(s string) string {
+	return strings.ReplaceAll(s, "''", "'")
 }
 
 // splitIndexCols splits an emitted index column list into unquoted names.
@@ -464,6 +499,55 @@ func normalizeFKAction(s string) string {
 
 type pendingFK struct {
 	tableID, col, table, action, onUpdate string
+}
+
+// parserState is the shared per-parse accumulator for the table loop: name/id
+// indexes, pending FKs, current-table cursor, id allocator. parseMysql uses it;
+// pg/sqlite/import keep theirs (different skip/out-of-line rules) — unifying
+// the struct without the loop would gain nothing.
+type parserState struct {
+	s       *Schema
+	byName  map[string]int
+	byID    map[string]int
+	pending []pendingFK
+	cur     int
+	tableID int
+}
+
+func newParserState(dialect string) *parserState {
+	return &parserState{s: &Schema{Dialect: dialect}, byName: map[string]int{}, byID: map[string]int{}, cur: -1}
+}
+
+func (p *parserState) addTable(name string, n int) error {
+	if _, dup := p.byName[name]; dup {
+		return fmt.Errorf("line %d: duplicate table %q", n, name)
+	}
+	p.tableID++
+	id := fmt.Sprintf("t%d", p.tableID)
+	p.s.Tables = append(p.s.Tables, Table{ID: id, Name: name})
+	p.byName[name] = len(p.s.Tables) - 1
+	p.byID[id] = len(p.s.Tables) - 1
+	p.cur = len(p.s.Tables) - 1
+	return nil
+}
+
+// routeIndex routes an index by arity: one column is the per-column Ix flag
+// (old files round-trip byte-identically), several is a composite Index.
+func routeIndex(tbl *Table, cols []string, name string) {
+	if len(cols) == 1 {
+		markCol(tbl, cols[0], func(c *Col) { c.Ix = true })
+	} else if len(cols) > 1 {
+		tbl.Indexes = append(tbl.Indexes, Index{Name: name, Cols: cols})
+	}
+}
+
+// defaultFKAction normalizes a raw ON DELETE action, applying the model's
+// historical CASCADE default when absent.
+func defaultFKAction(raw string) string {
+	if action := normalizeFKAction(raw); action != "" {
+		return action
+	}
+	return "CASCADE"
 }
 
 // ParseDDL rebuilds a schema from DDL this tool emitted, detecting the dialect
@@ -532,17 +616,32 @@ func detectDialect(sql string) string {
 	return DialectMysql
 }
 
+// lineExcerpt sanitizes a raw file line for error messages: cut at the first
+// control character (like excerpt cuts at the first invalid type char), then
+// 120 chars max. Parse errors reflect untrusted file bytes into 400 bodies,
+// so the raw line must never be echoed verbatim (cf. excerpt for types).
+func lineExcerpt(line string) string {
+	for i, r := range line {
+		if r <= 0x1f || (r >= 0x7f && r <= 0x9f) {
+			if i == 0 {
+				return "invalid character"
+			}
+			return line[:i] + "… (rejected at character " + strconv.Itoa(i+1) + ")"
+		}
+	}
+	s := strings.TrimSpace(line)
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	return s
+}
+
 // parseMysql reads the backtick/ENGINE=InnoDB grammar buildMysql and
 // buildMariaDB both emit. dialect records which of the two the file claimed, so
 // a mariadb file stays mariadb across a reopen instead of silently becoming
 // mysql; the parse itself is identical because the grammar is.
 func parseMysql(sql string, dialect string) (*Schema, error) {
-	s := &Schema{Dialect: dialect}
-	byName := map[string]int{} // name → index in s.Tables
-	byID := map[string]int{}   // id → index, O(1) for pending FK attachment
-	var pending []pendingFK
-	cur := -1
-	tableID := 0
+	p := newParserState(dialect)
 
 	lines := strings.Split(sql, "\n")
 	for i, raw := range lines {
@@ -552,39 +651,32 @@ func parseMysql(sql string, dialect string) (*Schema, error) {
 			continue
 		}
 		if m := reCreate.FindStringSubmatch(line); m != nil {
-			name := unquoteTick(m[1])
-			if _, dup := byName[name]; dup {
-				return nil, fmt.Errorf("line %d: duplicate table %q", n, name)
+			if err := p.addTable(unquoteTick(m[1]), n); err != nil {
+				return nil, err
 			}
-			tableID++
-			id := fmt.Sprintf("t%d", tableID)
-			s.Tables = append(s.Tables, Table{ID: id, Name: name})
-			byName[name] = len(s.Tables) - 1
-			byID[id] = len(s.Tables) - 1
-			cur = len(s.Tables) - 1
 			continue
 		}
 		if m := reEndTable.FindStringSubmatch(line); m != nil {
 			// m[2] is the table comment, absent for files written before the
 			// option existed (and for any schema without one).
 			if m[2] != "" {
-				s.Tables[cur].Comment = strings.ReplaceAll(m[2], "''", "'")
+				p.s.Tables[p.cur].Comment = unescapeStr(m[2])
 			}
-			cur = -1
+			p.cur = -1
 			continue
 		}
-		if cur < 0 {
-			return nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, line)
+		if p.cur < 0 {
+			return nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, lineExcerpt(line))
 		}
-		if err := parseMysqlBodyLine(strings.TrimSuffix(line, ","), line, &s.Tables[cur], &pending, n); err != nil {
+		if err := parseMysqlBodyLine(strings.TrimSuffix(line, ","), line, &p.s.Tables[p.cur], &p.pending, n); err != nil {
 			return nil, err
 		}
 	}
-	attachPendingFKs(s, byName, byID, pending)
-	if len(s.Tables) == 0 {
+	attachPendingFKs(p.s, p.byName, p.byID, p.pending, nil)
+	if len(p.s.Tables) == 0 {
 		return nil, fmt.Errorf("no CREATE TABLE found")
 	}
-	return s, nil
+	return p.s, nil
 }
 
 func isSkippableLine(line string) bool {
@@ -604,7 +696,7 @@ func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, 
 	}
 	m := reColumn.FindStringSubmatch(body)
 	if m == nil {
-		return fmt.Errorf("line %d: cannot parse: %s", n, rawLine)
+		return fmt.Errorf("line %d: cannot parse: %s", n, lineExcerpt(rawLine))
 	}
 	ty := m[2]
 	if mm := reTypeNorm.FindStringSubmatch(ty); mm != nil {
@@ -617,7 +709,7 @@ func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, 
 		Ai:      m[4] != "",
 		Ux:      m[5] != "",
 		Default: m[7],
-		Comment: strings.ReplaceAll(m[9], "''", "'"),
+		Comment: unescapeStr(m[9]),
 	})
 	return nil
 }
@@ -664,40 +756,38 @@ func parseMysqlClause(body, rawLine string, tbl *Table, pending *[]pendingFK, n 
 		// than one is a composite Index on the table. Before this, the pattern
 		// matched but the index was silently dropped — a hand-written
 		// `KEY idx (a, b)` parsed without error and lost the index entirely.
-		cols := splitIndexCols(m[2], unquoteTick)
-		if len(cols) == 1 {
-			markCol(tbl, cols[0], func(c *Col) { c.Ix = true })
-		} else if len(cols) > 1 {
-			tbl.Indexes = append(tbl.Indexes, Index{Name: unquoteTick(m[1]), Cols: cols})
-		}
+		routeIndex(tbl, splitIndexCols(m[2], unquoteTick), unquoteTick(m[1]))
 		return nil
 	}
 	if m := reFK.FindStringSubmatch(body); m != nil {
-		action := normalizeFKAction(m[5])
-		if action == "" {
-			action = "CASCADE"
-		}
 		// m[7] is the ON UPDATE action; empty means the clause was absent, which
 		// is how the model represents "no ON UPDATE" — see the Ref comment.
-		*pending = append(*pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), action, normalizeFKAction(m[7])})
+		*pending = append(*pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), defaultFKAction(m[5]), normalizeFKAction(m[7])})
 		return nil
 	}
-	return fmt.Errorf("line %d: unsupported clause: %s", n, rawLine)
+	return fmt.Errorf("line %d: unsupported clause: %s", n, lineExcerpt(rawLine))
 }
 
-func attachPendingFKs(s *Schema, byName, byID map[string]int, pending []pendingFK) {
+func attachPendingFKs(s *Schema, byName, byID map[string]int, pending []pendingFK, onDrop func(p pendingFK, reason string)) {
 	for _, p := range pending {
 		idx, ok := byName[p.table]
 		if !ok {
+			if onDrop != nil {
+				onDrop(p, "unknown table")
+			}
 			continue // dangling FK ref → dropped, not crashed on
 		}
 		si, ok := byID[p.tableID]
 		if !ok {
 			continue
 		}
-		markCol(&s.Tables[si], p.col, func(c *Col) {
+		if !markCol(&s.Tables[si], p.col, func(c *Col) {
 			c.Ref = &Ref{TableID: s.Tables[idx].ID, Action: p.action, OnUpdate: p.onUpdate}
-		})
+		}) {
+			if onDrop != nil {
+				onDrop(p, "unknown column")
+			}
+		}
 	}
 }
 

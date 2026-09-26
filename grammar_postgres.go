@@ -47,11 +47,7 @@ var (
 // unquoteDQ strips the double quotes buildPostgres puts around identifiers and
 // undoes its "" escaping. Mirrors unquoteTick.
 func unquoteDQ(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
-		return strings.ReplaceAll(s[1:len(s)-1], `""`, `"`)
-	}
-	return s
+	return unquote(s, '"', `""`, `"`)
 }
 
 // pgToModelType maps a Postgres-emitted type name back to the model's portable
@@ -124,7 +120,7 @@ func parsePostgres(sql string) (*Schema, error) {
 		// they are matched before the inside-a-table check.
 		if m := rePgTableComment.FindStringSubmatch(line); m != nil {
 			if idx, ok := byName[unquoteDQ(m[1])]; ok {
-				s.Tables[idx].Comment = strings.ReplaceAll(m[2], "''", "'")
+				s.Tables[idx].Comment = unescapeStr(m[2])
 			}
 			continue
 		}
@@ -134,7 +130,7 @@ func parsePostgres(sql string) (*Schema, error) {
 				continue // comment for an unknown table → dropped, not fatal
 			}
 			markCol(&s.Tables[idx], unquoteDQ(m[2]), func(c *Col) {
-				c.Comment = strings.ReplaceAll(m[3], "''", "'")
+				c.Comment = unescapeStr(m[3])
 			})
 			continue
 		}
@@ -160,7 +156,7 @@ func parsePostgres(sql string) (*Schema, error) {
 		}
 
 		if cur < 0 {
-			return nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, line)
+			return nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, lineExcerpt(line))
 		}
 		body := strings.TrimSuffix(line, ",")
 		tbl := &s.Tables[cur]
@@ -183,21 +179,18 @@ func parsePostgres(sql string) (*Schema, error) {
 				// the mysql regex, which has no such group and uses m[5].)
 				// m[7]/m[8] are the same pair for ON UPDATE; an absent clause leaves
 				// m[8] empty, which is how the model says "no ON UPDATE".
-				action := normalizeFKAction(m[6])
-				if action == "" {
-					action = "CASCADE"
-				}
+				action := defaultFKAction(m[6])
 				pending = append(pending, pendingFK{tbl.ID, unquoteDQ(m[2]), unquoteDQ(m[3]), action, normalizeFKAction(m[8])})
 				continue
 			}
 			if rePgKeyword.MatchString(body) {
-				return nil, fmt.Errorf("line %d: unsupported clause: %s", n, line)
+				return nil, fmt.Errorf("line %d: unsupported clause: %s", n, lineExcerpt(line))
 			}
 		}
 
 		m := rePgColumn.FindStringSubmatch(body)
 		if m == nil {
-			return nil, fmt.Errorf("line %d: cannot parse: %s", n, line)
+			return nil, fmt.Errorf("line %d: cannot parse: %s", n, lineExcerpt(line))
 		}
 		ty := m[2]
 		// An ENUM round-trips as TEXT + CHECK, so recover the original ENUM
@@ -231,7 +224,7 @@ func parsePostgres(sql string) (*Schema, error) {
 	// exact drift that made the ON UPDATE round-trip test fail for postgres and
 	// sqlite only. One implementation, so a field added to Ref cannot reach one
 	// dialect's parser and miss another's.
-	attachPendingFKs(s, byName, byID, pending)
+	attachPendingFKs(s, byName, byID, pending, nil)
 	if len(s.Tables) == 0 {
 		return nil, fmt.Errorf("no CREATE TABLE found")
 	}

@@ -3,7 +3,6 @@ package main
 
 import (
 	"encoding/json"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,9 +157,8 @@ func TestOpenForeignFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "dump.sql"), []byte(dumpMysql), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
 	h := handleFiles(dir)
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/dump.sql", nil))
+	rec := do(t, h, "GET", "/api/files/dump.sql", nil)
 	if rec.Code != 200 {
 		t.Fatalf("open: %d %s", rec.Code, rec.Body)
 	}
@@ -180,14 +178,11 @@ func TestOpenOwnFileHasNoWarnings(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
 	body, _ := json.Marshal(sampleSchema())
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("PUT", "/api/files/blog.sql", strings.NewReader(string(body)))
-	h.ServeHTTP(rec, req)
+	rec := do(t, h, "PUT", "/api/files/blog.sql", strings.NewReader(string(body)))
 	if rec.Code != 204 {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body)
 	}
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/blog.sql", nil))
+	rec = do(t, h, "GET", "/api/files/blog.sql", nil)
 	if strings.Contains(rec.Body.String(), `"warnings"`) {
 		t.Errorf("strict path must omit warnings: %s", rec.Body)
 	}

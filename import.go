@@ -269,7 +269,7 @@ func impParse(sql string) (*Schema, []string, error) {
 			if idx, ok := byName[impName(m[1])]; ok {
 				tbl := &s.Tables[idx]
 				name := impName(m[2])
-				comment := strings.ReplaceAll(m[3], "''", "'")
+				comment := unescapeStr(m[3])
 				if !markCol(tbl, name, func(c *Col) { c.Comment = comment }) {
 					loss.add("line %d: comment on unknown column %q skipped", n, importExcerpt(name))
 				}
@@ -408,7 +408,7 @@ func impParse(sql string) (*Schema, []string, error) {
 			col.Nn = true
 		}
 		if m := reImpComment.FindStringSubmatch(after); m != nil {
-			col.Comment = strings.ReplaceAll(m[1], "''", "'")
+			col.Comment = unescapeStr(m[1])
 		}
 		if m := reImpInline.FindStringSubmatch(after); m != nil {
 			del, upd := impActions(m[3])
@@ -417,23 +417,15 @@ func impParse(sql string) (*Schema, []string, error) {
 		tbl.Columns = append(tbl.Columns, col)
 	}
 	// Attach FKs with losses (the shared helper drops silently — right for
-	// strict parse, wrong for an import report).
-	for _, p := range pending {
-		idx, ok := byName[p.table]
-		if !ok {
+	// strict parse, wrong for an import report — so the callback reports).
+	attachPendingFKs(s, byName, byID, pending, func(p pendingFK, reason string) {
+		switch reason {
+		case "unknown table":
 			loss.add("FK %q: unknown table, dropped", importExcerpt(p.col+"→"+p.table))
-			continue
-		}
-		si, ok := byID[p.tableID]
-		if !ok {
-			continue
-		}
-		if !markCol(&s.Tables[si], p.col, func(c *Col) {
-			c.Ref = &Ref{TableID: s.Tables[idx].ID, Action: p.action, OnUpdate: p.onUpdate}
-		}) {
+		case "unknown column":
 			loss.add("FK on unknown column %q dropped", importExcerpt(p.col))
 		}
-	}
+	})
 	if len(s.Tables) == 0 {
 		return nil, nil, fmt.Errorf("no CREATE TABLE found")
 	}

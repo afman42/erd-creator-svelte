@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,37 +43,31 @@ func TestFilesCRUD(t *testing.T) {
 
 	// save
 	s := sampleSchema()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("PUT", "/api/files/blog.sql", jsonBody(s))
-	h.ServeHTTP(rec, req)
+	rec := do(t, h, "PUT", "/api/files/blog.sql", jsonBody(s))
 	if rec.Code != 204 {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// list
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files", nil))
+	rec = do(t, h, "GET", "/api/files", nil)
 	if !strings.Contains(rec.Body.String(), "blog.sql") {
 		t.Errorf("list missing file: %s", rec.Body)
 	}
 
 	// open round-trips schema
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/blog.sql", nil))
+	rec = do(t, h, "GET", "/api/files/blog.sql", nil)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"users"`) {
 		t.Fatalf("read: %d %s", rec.Code, rec.Body)
 	}
 
 	// traversal rejected
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/..%2Fescape.sql", nil))
+	rec = do(t, h, "GET", "/api/files/..%2Fescape.sql", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("traversal: %d", rec.Code)
 	}
 
 	// delete
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/files/blog.sql", nil))
+	rec = do(t, h, "DELETE", "/api/files/blog.sql", nil)
 	if rec.Code != 204 {
 		t.Errorf("delete: %d", rec.Code)
 	}
@@ -92,8 +85,7 @@ func TestFilesCRUD(t *testing.T) {
 		t.Error("trash entry has no mtime")
 	}
 	// gone from the listing: a deleted file must not still be offered
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files", nil))
+	rec = do(t, h, "GET", "/api/files", nil)
 	if strings.Contains(rec.Body.String(), "blog.sql") {
 		t.Errorf("deleted file still listed: %s", rec.Body)
 	}
@@ -107,15 +99,13 @@ func TestTrashSweep(t *testing.T) {
 	h := handleFiles(dir)
 	seed := func(name string) {
 		s := sampleSchema()
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/"+name, jsonBody(s)))
+		rec := do(t, h, "PUT", "/api/files/"+name, jsonBody(s))
 		if rec.Code != 204 {
 			t.Fatalf("seed %s: %d", name, rec.Code)
 		}
 	}
 	del := func(name string) {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/files/"+name, nil))
+		rec := do(t, h, "DELETE", "/api/files/"+name, nil)
 		if rec.Code != 204 {
 			t.Fatalf("delete %s: %d", name, rec.Code)
 		}
@@ -155,13 +145,11 @@ func TestTrashSymlinkEscapes(t *testing.T) {
 	}
 	h := handleFiles(dir)
 	s := sampleSchema()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/x.sql", jsonBody(s)))
+	rec := do(t, h, "PUT", "/api/files/x.sql", jsonBody(s))
 	if rec.Code != 204 {
 		t.Fatalf("save: %d", rec.Code)
 	}
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/files/x.sql", nil))
+	rec = do(t, h, "DELETE", "/api/files/x.sql", nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("delete with escaping trash: %d, want 500", rec.Code)
 	}
@@ -182,15 +170,13 @@ func TestTrashNameCollision(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
 	put := func() {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/x.sql", jsonBody(sampleSchema())))
+		rec := do(t, h, "PUT", "/api/files/x.sql", jsonBody(sampleSchema()))
 		if rec.Code != 204 {
 			t.Fatalf("save: %d", rec.Code)
 		}
 	}
 	del := func() {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/files/x.sql", nil))
+		rec := do(t, h, "DELETE", "/api/files/x.sql", nil)
 		if rec.Code != 204 {
 			t.Fatalf("delete: %d", rec.Code)
 		}
@@ -228,8 +214,7 @@ func TestFilesListFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files", nil))
+	rec := do(t, h, "GET", "/api/files", nil)
 	var got []struct {
 		Name  string `json:"name"`
 		Mtime int64  `json:"mtime"`
@@ -252,8 +237,7 @@ func TestFilesListFilters(t *testing.T) {
 // the client can iterate it without a guard.
 func TestFilesListEmptyIsArray(t *testing.T) {
 	h := handleFiles(t.TempDir())
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files", nil))
+	rec := do(t, h, "GET", "/api/files", nil)
 	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
 		t.Errorf("empty list = %q, want []", got)
 	}
@@ -268,8 +252,7 @@ func TestFilesListSorted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files", nil))
+	rec := do(t, h, "GET", "/api/files", nil)
 	var got []struct {
 		Name string `json:"name"`
 	}
@@ -314,8 +297,7 @@ func TestSaveFileRejects(t *testing.T) {
 		},
 	}
 	for name, tc := range cases {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+		rec := do(t, h, tc.method, tc.path, strings.NewReader(tc.body))
 		if rec.Code != tc.wantCode {
 			t.Errorf("%s: code %d, want %d (%s)", name, rec.Code, tc.wantCode, rec.Body)
 		}
@@ -325,8 +307,7 @@ func TestSaveFileRejects(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "a.sql")); err != nil {
 		t.Fatalf("expected a.sql to exist: %v", err)
 	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/a.sql", nil))
+	rec := do(t, h, "GET", "/api/files/a.sql", nil)
 	if rec.Code != 200 {
 		t.Errorf("saved file does not reopen: %d %s", rec.Code, rec.Body)
 	}
@@ -338,8 +319,7 @@ func TestSaveFileNoTempLeftBehind(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
 	s := sampleSchema()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/ok.sql", jsonBody(s)))
+	rec := do(t, h, "PUT", "/api/files/ok.sql", jsonBody(s))
 	if rec.Code != 204 {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body)
 	}
@@ -360,8 +340,7 @@ func TestOpenFileErrors(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/gone.sql", nil))
+	rec := do(t, h, "GET", "/api/files/gone.sql", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("missing file: %d, want 404", rec.Code)
 	}
@@ -370,8 +349,7 @@ func TestOpenFileErrors(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "junk.sql"), []byte("NOT SQL AT ALL\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/junk.sql", nil))
+	rec = do(t, h, "GET", "/api/files/junk.sql", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("unparseable file: %d, want 400 (%s)", rec.Code, rec.Body)
 	}
@@ -385,8 +363,7 @@ func TestOpenFileErrors(t *testing.T) {
 func TestDeleteFileErrors(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/files/gone.sql", nil))
+	rec := do(t, h, "DELETE", "/api/files/gone.sql", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code %d, want 404", rec.Code)
 	}
@@ -396,15 +373,13 @@ func TestDeleteFileErrors(t *testing.T) {
 func TestFilesRootMethod(t *testing.T) {
 	h := handleFiles(t.TempDir())
 	for _, method := range []string{"PUT", "DELETE", "POST"} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(method, "/api/files", nil))
+		rec := do(t, h, method, "/api/files", nil)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s /api/files: %d, want 405", method, rec.Code)
 		}
 	}
 	// and the trailing-slash form behaves the same way
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/", nil))
+	rec := do(t, h, "PUT", "/api/files/", nil)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("PUT /api/files/: %d, want 405", rec.Code)
 	}
@@ -433,8 +408,7 @@ func TestFilesTraversal(t *testing.T) {
 	}
 	for _, p := range bad {
 		for _, method := range []string{"GET", "DELETE"} {
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(method, p, nil))
+			rec := do(t, h, method, p, nil)
 			if rec.Code == 200 || rec.Code == 204 {
 				t.Errorf("%s %s: succeeded (%d), must be rejected", method, p, rec.Code)
 			}
@@ -452,8 +426,7 @@ func TestSaveIsAtomic(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/x.sql", jsonBody(sampleSchema())))
+	rec := do(t, h, "PUT", "/api/files/x.sql", jsonBody(sampleSchema()))
 	if rec.Code != 204 {
 		t.Fatalf("initial save: %d %s", rec.Code, rec.Body)
 	}
@@ -463,8 +436,7 @@ func TestSaveIsAtomic(t *testing.T) {
 	}
 
 	// a rejected save (no tables) must leave the file exactly as it was
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/x.sql", strings.NewReader(`{"tables":[]}`)))
+	rec = do(t, h, "PUT", "/api/files/x.sql", strings.NewReader(`{"tables":[]}`))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected rejection, got %d", rec.Code)
 	}
@@ -492,14 +464,12 @@ func TestSaveReopenEveryDialect(t *testing.T) {
 				{Name: "flag", Type: "BOOLEAN"},
 			}},
 		}})
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/"+name, bytes.NewReader(body)))
+		rec := do(t, h, "PUT", "/api/files/"+name, bytes.NewReader(body))
 		if rec.Code != 204 {
 			t.Errorf("%s: save %d %s", dialect, rec.Code, rec.Body)
 			continue
 		}
-		rec = httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/"+name, nil))
+		rec = do(t, h, "GET", "/api/files/"+name, nil)
 		if rec.Code != 200 {
 			t.Errorf("%s: reopen %d %s", dialect, rec.Code, rec.Body)
 			continue
@@ -521,14 +491,12 @@ func TestSaveReopenEveryDialect(t *testing.T) {
 func TestFileRename(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/a.sql", jsonBody(sampleSchema())))
+	rec := do(t, h, "PUT", "/api/files/a.sql", jsonBody(sampleSchema()))
 	if rec.Code != 204 {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
 	}
 
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/rename", jsonBody(map[string]string{"from": "a.sql", "to": "b.sql"})))
+	rec = do(t, h, "POST", "/api/files/rename", jsonBody(map[string]string{"from": "a.sql", "to": "b.sql"}))
 	if rec.Code != 204 {
 		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
 	}
@@ -539,8 +507,7 @@ func TestFileRename(t *testing.T) {
 		t.Errorf("target missing after rename: %v", err)
 	}
 	// the schema survived the move byte-for-byte
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/b.sql", nil))
+	rec = do(t, h, "GET", "/api/files/b.sql", nil)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"users"`) {
 		t.Errorf("renamed file unreadable: %d %s", rec.Code, rec.Body)
 	}
@@ -549,14 +516,12 @@ func TestFileRename(t *testing.T) {
 func TestFileRenameErrors(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/a.sql", jsonBody(sampleSchema())))
+	rec := do(t, h, "PUT", "/api/files/a.sql", jsonBody(sampleSchema()))
 	if rec.Code != 204 {
 		t.Fatalf("save: %d", rec.Code)
 	}
 	// a real second file, so the 409 case has an actual existing target
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/taken.sql", jsonBody(sampleSchema())))
+	rec = do(t, h, "PUT", "/api/files/taken.sql", jsonBody(sampleSchema()))
 	if rec.Code != 204 {
 		t.Fatalf("save taken: %d", rec.Code)
 	}
@@ -572,15 +537,13 @@ func TestFileRenameErrors(t *testing.T) {
 		{"bad name 400s (no ext)", map[string]string{"from": "a.sql", "to": "x.txt"}, http.StatusBadRequest},
 	}
 	for _, c := range cases {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/rename", jsonBody(c.body)))
+		rec := do(t, h, "POST", "/api/files/rename", jsonBody(c.body))
 		if rec.Code != c.want {
 			t.Errorf("%s: got %d want %d (%s)", c.name, rec.Code, c.want, rec.Body.String())
 		}
 	}
 	// the virtual op paths accept POST only
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/rename", nil))
+	rec = do(t, h, "GET", "/api/files/rename", nil)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET rename: %d", rec.Code)
 	}
@@ -589,13 +552,11 @@ func TestFileRenameErrors(t *testing.T) {
 func TestFileCopy(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/a.sql", jsonBody(sampleSchema())))
+	rec := do(t, h, "PUT", "/api/files/a.sql", jsonBody(sampleSchema()))
 	if rec.Code != 204 {
 		t.Fatalf("save: %d", rec.Code)
 	}
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/copy", jsonBody(map[string]string{"from": "a.sql", "to": "c.sql"})))
+	rec = do(t, h, "POST", "/api/files/copy", jsonBody(map[string]string{"from": "a.sql", "to": "c.sql"}))
 	if rec.Code != 204 {
 		t.Fatalf("copy: %d %s", rec.Code, rec.Body.String())
 	}
@@ -609,14 +570,12 @@ func TestFileCopy(t *testing.T) {
 		t.Error("copy bytes differ from source")
 	}
 	// copying onto an existing name is refused
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/copy", jsonBody(map[string]string{"from": "a.sql", "to": "c.sql"})))
+	rec = do(t, h, "POST", "/api/files/copy", jsonBody(map[string]string{"from": "a.sql", "to": "c.sql"}))
 	if rec.Code != http.StatusConflict {
 		t.Errorf("copy onto existing: %d", rec.Code)
 	}
 	// missing source 404s
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/copy", jsonBody(map[string]string{"from": "gone.sql", "to": "d.sql"})))
+	rec = do(t, h, "POST", "/api/files/copy", jsonBody(map[string]string{"from": "gone.sql", "to": "d.sql"}))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("copy missing source: %d", rec.Code)
 	}
@@ -628,8 +587,7 @@ func TestFileCopy(t *testing.T) {
 func TestFileOpSymlinkTargetRefused(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/a.sql", jsonBody(sampleSchema())))
+	rec := do(t, h, "PUT", "/api/files/a.sql", jsonBody(sampleSchema()))
 	if rec.Code != 204 {
 		t.Fatalf("save: %d", rec.Code)
 	}
@@ -637,8 +595,7 @@ func TestFileOpSymlinkTargetRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, op := range []string{"rename", "copy"} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/files/"+op, jsonBody(map[string]string{"from": "a.sql", "to": "link.sql"})))
+		rec := do(t, h, "POST", "/api/files/"+op, jsonBody(map[string]string{"from": "a.sql", "to": "link.sql"}))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s to symlink: %d %s", op, rec.Code, rec.Body.String())
 		}

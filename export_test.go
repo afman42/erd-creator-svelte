@@ -7,17 +7,7 @@ import (
 )
 
 func sample() []Table {
-	return []Table{
-		{ID: "t1", Name: "users", Columns: []Col{
-			{Name: "id", Type: "INT", Pk: true, Nn: true, Ai: true, Comment: "pk"},
-			{Name: "email", Type: "VARCHAR(190)", Nn: true, Ux: true, Ix: true},
-			{Name: "status", Type: "ENUM('active','banned')"},
-		}},
-		{ID: "t2", Name: "posts", Columns: []Col{
-			{Name: "id", Type: "BIGINT", Pk: true, Nn: true, Ai: true},
-			{Name: "user_id", Type: "INT", Ref: &Ref{TableID: "t1", Action: "SET NULL"}},
-		}},
-	}
+	return baseSchema().Tables
 }
 
 func TestExportDialects(t *testing.T) {

@@ -308,6 +308,42 @@ func quotedCols(ix Index, q func(string) string) string {
 
 // ---- MySQL / MariaDB ----
 
+// fkConstraintLine renders one inline FK constraint for the mysql/postgres
+// builders (CONSTRAINT fk_t_c FOREIGN KEY ...). SQLite has no named
+// CONSTRAINT — it inlines FOREIGN KEY without one — so it keeps its own form.
+func fkConstraintLine(q func(string) string, t Table, c Col, rt Table, rp Col) string {
+	return fmt.Sprintf(
+		"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
+		q("fk_"+t.Name+"_"+c.Name), q(c.Name), q(rt.Name), q(rp.Name), fkAction(c), fkUpdateClause(c))
+}
+
+// singleIndexLine renders one single-column index statement: inline KEY for
+// mysql, CREATE INDEX for postgres/sqlite (post = out-of-line statements).
+// ifNotExists adds IF NOT EXISTS (sqlite only — its statements rerun on reopen).
+func singleIndexLine(q func(string) string, t Table, c Col, inline, ifNotExists bool) string {
+	name := q("idx_" + t.Name + "_" + c.Name)
+	if inline {
+		return "  KEY " + name + " (" + q(c.Name) + ")"
+	}
+	ine := ""
+	if ifNotExists {
+		ine = "IF NOT EXISTS "
+	}
+	return fmt.Sprintf("CREATE INDEX %s%s ON %s (%s);", ine, name, q(t.Name), q(c.Name))
+}
+
+// compositeIndexStmt renders one composite index statement.
+func compositeIndexStmt(q func(string) string, t Table, ix Index, inline, ifNotExists bool) string {
+	ine := ""
+	if ifNotExists {
+		ine = "IF NOT EXISTS "
+	}
+	if inline {
+		return "  KEY " + q(indexName(t, ix)) + " (" + quotedCols(ix, q) + ")"
+	}
+	return fmt.Sprintf("CREATE INDEX %s%s ON %s (%s);", ine, q(indexName(t, ix)), q(t.Name), quotedCols(ix, q))
+}
+
 func mysqlColDef(c Col) string {
 	base, args := splitType(c.Type)
 	ty := base
@@ -358,21 +394,19 @@ func buildMysql(tables []Table, header string) string {
 		}
 		for _, c := range t.Columns {
 			if c.Ix {
-				lines = append(lines, "  KEY "+quoteTick("idx_"+t.Name+"_"+c.Name)+" ("+quoteTick(c.Name)+")")
+				lines = append(lines, singleIndexLine(quoteTick, t, c, true, false))
 			}
 		}
 		// Composite indexes follow the single-column ones, in model order.
 		for _, ix := range t.Indexes {
-			lines = append(lines, "  KEY "+quoteTick(indexName(t, ix))+" ("+quotedCols(ix, quoteTick)+")")
+			lines = append(lines, compositeIndexStmt(quoteTick, t, ix, true, false))
 		}
 		for _, c := range refCols(t) {
 			rt, rp, ok := fkTargetMap(byID, c)
 			if !ok {
 				continue
 			}
-			lines = append(lines, fmt.Sprintf(
-				"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
-				quoteTick("fk_"+t.Name+"_"+c.Name), quoteTick(c.Name), quoteTick(rt.Name), quoteTick(rp.Name), fkAction(c), fkUpdateClause(c)))
+			lines = append(lines, fkConstraintLine(quoteTick, t, c, *rt, rp))
 		}
 		// MySQL stores a table comment as a table option following ENGINE.
 		// MariaDB shares the builder, so both dialects carry it. SQLite has no
@@ -485,15 +519,13 @@ func buildPostgres(tables []Table) string {
 					quoteDQ(t.Name), quoteDQ(c.Name), sqlStr(c.Comment)))
 			}
 			if c.Ix {
-				post = append(post, fmt.Sprintf("CREATE INDEX %s ON %s (%s);",
-					quoteDQ("idx_"+t.Name+"_"+c.Name), quoteDQ(t.Name), quoteDQ(c.Name)))
+				post = append(post, singleIndexLine(quoteDQ, t, c, false, false))
 			}
 		}
 		// Composite indexes are separate statements after the table, like the
 		// single-column ones above — Postgres has no inline KEY clause.
 		for _, ix := range t.Indexes {
-			post = append(post, fmt.Sprintf("CREATE INDEX %s ON %s (%s);",
-				quoteDQ(indexName(t, ix)), quoteDQ(t.Name), quotedCols(ix, quoteDQ)))
+			post = append(post, compositeIndexStmt(quoteDQ, t, ix, false, false))
 		}
 		if l := pkLine(t, quoteDQ); l != "" {
 			lines = append(lines, l)
@@ -503,9 +535,7 @@ func buildPostgres(tables []Table) string {
 			if !ok {
 				continue
 			}
-			lines = append(lines, fmt.Sprintf(
-				"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
-				quoteDQ("fk_"+t.Name+"_"+c.Name), quoteDQ(c.Name), quoteDQ(rt.Name), quoteDQ(rp.Name), fkAction(c), fkUpdateClause(c)))
+			lines = append(lines, fkConstraintLine(quoteDQ, t, c, *rt, rp))
 		}
 		out = append(out, "CREATE TABLE "+quoteDQ(t.Name)+" (\n"+strings.Join(lines, ",\n")+"\n);")
 		out = append(out, post...)
@@ -599,15 +629,13 @@ func buildSqlite(tables []Table, typesMode string) string {
 			ty, check := sqliteColType(c, portable)
 			lines = append(lines, sqliteColDef(c, ty, check, aiPk))
 			if c.Ix {
-				post = append(post, fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s);",
-					quoteTick("idx_"+t.Name+"_"+c.Name), quoteTick(t.Name), quoteTick(c.Name)))
+				post = append(post, singleIndexLine(quoteTick, t, c, false, true))
 			}
 		}
 		// Composite indexes: separate statements after the table, like the
 		// single-column ones above.
 		for _, ix := range t.Indexes {
-			post = append(post, fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s);",
-				quoteTick(indexName(t, ix)), quoteTick(t.Name), quotedCols(ix, quoteTick)))
+			post = append(post, compositeIndexStmt(quoteTick, t, ix, false, true))
 		}
 		if !aiPk {
 			if l := pkLine(t, quoteTick); l != "" {

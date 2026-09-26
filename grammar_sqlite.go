@@ -56,7 +56,7 @@ func sqliteEnumLiteral(list string) string {
 		if len(p) >= 2 && p[0] == '\'' && p[len(p)-1] == '\'' {
 			p = p[1 : len(p)-1]
 		}
-		out = append(out, sqlStr(strings.ReplaceAll(p, "''", "'")))
+		out = append(out, sqlStr(unescapeStr(p)))
 	}
 	return strings.Join(out, ",")
 }
@@ -155,7 +155,7 @@ func parseSqlite(sql string) (*Schema, error) {
 			continue
 		}
 		if cur < 0 {
-			return nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, line)
+			return nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, lineExcerpt(line))
 		}
 		body := strings.TrimSuffix(line, ",")
 		tbl := &s.Tables[cur]
@@ -199,7 +199,7 @@ func parseSqlite(sql string) (*Schema, error) {
 		}
 		m := reSqliteCol.FindStringSubmatch(body)
 		if m == nil {
-			return nil, fmt.Errorf("line %d: cannot parse: %s", n, line)
+			return nil, fmt.Errorf("line %d: cannot parse: %s", n, lineExcerpt(line))
 		}
 		name := unquoteTick(m[1])
 		ty := m[2]
@@ -224,7 +224,7 @@ func parseSqlite(sql string) (*Schema, error) {
 	// exact drift that made the ON UPDATE round-trip test fail for sqlite and
 	// postgres only. One implementation, so a field added to Ref cannot reach
 	// one dialect's parser and miss another's.
-	attachPendingFKs(s, byName, byID, pending)
+	attachPendingFKs(s, byName, byID, pending, nil)
 	if len(s.Tables) == 0 {
 		return nil, fmt.Errorf("no CREATE TABLE found")
 	}

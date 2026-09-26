@@ -307,17 +307,17 @@ func TestAttachPendingFKsBranches(t *testing.T) {
 	byName := map[string]int{"users": 0}
 	byID := map[string]int{"t2": 1}
 	// dangling FK -> dropped
-	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "t2", col: "user_id", table: "missing", action: "CASCADE"}})
+	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "t2", col: "user_id", table: "missing", action: "CASCADE"}}, nil)
 	if s.Tables[1].Columns[0].Ref != nil {
 		t.Error("dangling should be dropped")
 	}
 	// missing tableID
-	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "nope", col: "user_id", table: "users", action: "CASCADE"}})
+	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "nope", col: "user_id", table: "users", action: "CASCADE"}}, nil)
 	if s.Tables[1].Columns[0].Ref != nil {
 		t.Error("missing tableID should be dropped")
 	}
 	// success
-	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "t2", col: "user_id", table: "users", action: "SET NULL"}})
+	attachPendingFKs(s, byName, byID, []pendingFK{{tableID: "t2", col: "user_id", table: "users", action: "SET NULL"}}, nil)
 	if s.Tables[1].Columns[0].Ref == nil || s.Tables[1].Columns[0].Ref.Action != "SET NULL" {
 		t.Error("FK attach failed")
 	}

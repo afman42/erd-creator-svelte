@@ -152,10 +152,8 @@ func handleFiles(dir string) http.Handler {
 // refuse a missing source (404), an existing target (409), and any name that
 // fails safeName — the same boundary every other store op uses.
 func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool) {
-	r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+	b, ok := decodeBody(w, r)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -337,6 +335,13 @@ func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
 		http.Error(w, "schema has no tables", http.StatusBadRequest)
 		return
 	}
+	// Reject an unknown dialect label before it is stored: normalizeDialect
+	// would otherwise silently treat it as mysql while the UI shows the
+	// unknown name. Empty (unset) is accepted as mysql.
+	if err := validateDialectForSave(s.Dialect); err != nil {
+		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	// The saved file is DDL this program will later parse back, so refuse to
 	// write anything that cannot be represented safely. Validating here means a
 	// malicious value never reaches disk in the first place.
@@ -428,6 +433,11 @@ const trashRetention = 7 * 24 * time.Hour
 // redirect a delete to an arbitrary directory, exactly as storePath refuses a
 // symlinked file. The resolved real path is returned so callers act on the
 // real directory, not the link.
+//
+// The create path is race-aware: MkdirAll is attempted only after EvalSymlinks
+// fails (absent), and the result is re-resolved rather than trusting the
+// unresolved join — a link planted between the check and the mkdir cannot
+// redirect the returned path outside the store.
 func trashPath(dir string) (string, error) {
 	root, err := resolveStoreRoot(dir)
 	if err != nil {
@@ -437,11 +447,15 @@ func trashPath(dir string) (string, error) {
 	real, err := filepath.EvalSymlinks(td)
 	if err != nil {
 		// Doesn't exist yet: create it under the already-resolved root, so the
-		// new directory cannot be a link.
+		// new directory cannot be a link — then re-resolve to confirm what was
+		// actually created (a concurrently planted link fails closed here).
 		if err := os.MkdirAll(td, 0o755); err != nil {
 			return "", fmt.Errorf("trash: %w", err)
 		}
-		return td, nil
+		real, err = filepath.EvalSymlinks(td)
+		if err != nil {
+			return "", fmt.Errorf("trash: %w", err)
+		}
 	}
 	if !isInsideStore(real, root) {
 		return "", fmt.Errorf("trash %q escapes the store", trashDirName)
@@ -450,24 +464,35 @@ func trashPath(dir string) (string, error) {
 }
 
 // trashFile moves a resolved store file into the trash. The destination keeps
-// the original name so a recovery is a plain `mv`, and a collision with a
-// previous recycle of the same name is disambiguated with a millisecond
-// suffix rather than overwriting it.
+// the original name so a recovery is a plain `mv`. A collision with a
+// previous recycle retries with millisecond suffixes (up to 1000 attempts)
+// rather than overwriting: Rename silently replaces the target on POSIX, so a
+// single stat-then-rename would let a pre-planted .trash/<name>.<millis> eat
+// the recycled file.
 func trashFile(dir, full, name string) error {
 	td, err := trashPath(dir)
 	if err != nil {
 		return err
 	}
 	dst := filepath.Join(td, name)
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := os.Stat(dst); err != nil {
+		if err := os.Rename(full, dst); err != nil {
+			// Returned unwrapped: the caller classifies it (os.IsNotExist for a
+			// missing source → 404). Wrapping in fmt.Errorf would hide the errno.
+			return err
+		}
+		return nil
+	}
+	for i := 0; i < 1000; i++ {
 		dst = filepath.Join(td, fmt.Sprintf("%s.%d", name, time.Now().UnixMilli()))
+		if _, err := os.Stat(dst); err != nil {
+			if err := os.Rename(full, dst); err != nil {
+				return err
+			}
+			return nil
+		}
 	}
-	if err := os.Rename(full, dst); err != nil {
-		// Returned unwrapped: the caller classifies it (os.IsNotExist for a
-		// missing source → 404). Wrapping in fmt.Errorf would hide the errno.
-		return err
-	}
-	return nil
+	return fmt.Errorf("trash collision for %q", name)
 }
 
 // sweepTrash removes trash entries older than trashRetention. Called after

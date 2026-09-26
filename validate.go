@@ -275,6 +275,9 @@ func (s *Schema) validateShape() error {
 			return fmt.Errorf("table %d (%q): %w", ti+1, t.Name, err)
 		}
 		seenCols := map[string]bool{}
+		colErr := func(ci int, c Col, err error) error {
+			return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+		}
 		for ci, c := range t.Columns {
 			// `where` is built lazily (only on an error path): the old
 			// eager fmt.Sprintf ran on every column of every table — measured
@@ -290,7 +293,7 @@ func (s *Schema) validateShape() error {
 			}
 			seenCols[c.Name] = true
 			if err := validateType(c.Type); err != nil {
-				return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+				return colErr(ci, c, err)
 			}
 			// Array types are PostgreSQL-only (enforced in ValidateFor), but
 			// these three combinations are invalid in PostgreSQL too, so they
@@ -312,11 +315,11 @@ func (s *Schema) validateShape() error {
 				}
 			}
 			if err := validateText("comment", c.Comment, maxCommentLen); err != nil {
-				return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+				return colErr(ci, c, err)
 			}
 			if c.Default != "" {
 				if err := validateDefault(c.Default); err != nil {
-					return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+					return colErr(ci, c, err)
 				}
 				// AI + DEFAULT is invalid in every dialect: MySQL refuses a
 				// DEFAULT on an AUTO_INCREMENT column, Postgres refuses one on
@@ -330,16 +333,16 @@ func (s *Schema) validateShape() error {
 			}
 			if c.Ref != nil {
 				if err := validateText("FK action", c.Ref.Action, maxNameLen); err != nil {
-					return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+					return colErr(ci, c, err)
 				}
 				if err := validateFKAction("FK action", c.Ref.Action); err != nil {
-					return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+					return colErr(ci, c, err)
 				}
 				if err := validateFKAction("FK on-update action", c.Ref.OnUpdate); err != nil {
-					return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+					return colErr(ci, c, err)
 				}
 				if err := validateIdent("FK target id", c.Ref.TableID); err != nil {
-					return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
+					return colErr(ci, c, err)
 				}
 			}
 		}
@@ -475,12 +478,12 @@ func validateDefault(v string) error {
 		case c == ')':
 			depth--
 			if depth < 0 {
-				return fmt.Errorf("default %q has unbalanced parentheses", v)
+				return fmt.Errorf("default %s has unbalanced parentheses", excerpt(v))
 			}
 		case c == '-' && i+1 < len(v) && v[i+1] == '-':
-			return fmt.Errorf("default %q contains a comment marker", v)
+			return fmt.Errorf("default %s contains a comment marker", excerpt(v))
 		case c == '/' && i+1 < len(v) && v[i+1] == '*':
-			return fmt.Errorf("default %q contains a comment marker", v)
+			return fmt.Errorf("default %s contains a comment marker", excerpt(v))
 		case strings.IndexByte(validDefaultRunes, c) < 0:
 			return fmt.Errorf("default %q contains a character not allowed in an expression", excerpt(v))
 		}
@@ -509,14 +512,18 @@ const validDefaultRunes = "abcdefghijklmnopqrstuvwxyz" +
 // future dialect that renders a type differently. It is cheap and it turns a
 // silent injection into a 400.
 //
-// It looks for a statement separator that is not at a line end, which is the
-// signature of a value that escaped its position. A legitimate emitter never
-// produces that: every statement it writes is terminated at the end of a line.
+// It looks for two shapes, both quote-aware (a ";" or comment marker inside a
+// backtick-/double-quoted identifier or string literal is part of that token,
+// not code — an index named `a;b` must not bounce here):
 //
-// The scan is quote-aware: a ";" inside a backtick- or double-quoted
-// identifier, or inside a string literal, is part of that token rather than a
-// separator — an index named `a;b` (valid per the identifier allowlist) must
-// not bounce here with a confusing "embedded separator" message.
+//   - a statement separator not at line end (a value that escaped its position;
+//     legitimate emitters terminate every statement at end of line),
+//   - a comment marker (-- or /*) outside quotes (would swallow the rest of the
+//     line in the pasted output).
+//
+// Comment-only lines are still skipped: sqlite emits "-- name: comment" lines
+// whose text was already validated newline-free by validateText, and the skip
+// is only a fast path — a marker INSIDE a statement line is still refused.
 func validateOutput(sql string) error {
 	for i, line := range strings.Split(sql, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -524,7 +531,7 @@ func validateOutput(sql string) error {
 			return fmt.Errorf("generated DDL line %d contains a control character", i+1)
 		}
 		if strings.HasPrefix(trimmed, "--") {
-			continue // a comment may contain anything
+			continue // comment line: text already validated by validateText
 		}
 		var q byte = 0 // byte(0) = outside quotes; one of ' " ` while inside
 		// A classic counter loop, not `for j := range`: the escape branch's
@@ -549,6 +556,10 @@ func validateOutput(sql string) error {
 				q = c
 			case c == ';' && j != len(trimmed)-1:
 				return fmt.Errorf("generated DDL line %d contains an embedded statement separator", i+1)
+			case c == '-' && j+1 < len(trimmed) && trimmed[j+1] == '-':
+				return fmt.Errorf("generated DDL line %d contains an embedded comment marker", i+1)
+			case c == '/' && j+1 < len(trimmed) && trimmed[j+1] == '*':
+				return fmt.Errorf("generated DDL line %d contains an embedded comment marker", i+1)
 			}
 		}
 	}

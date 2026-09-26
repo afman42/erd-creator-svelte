@@ -8,24 +8,10 @@ import (
 	"testing"
 )
 
-// sqliteSample is sampleSchema with a few constructs SQLite renders specially:
-// BOOLEAN and DATETIME (no native type), an indexed column, and an FK action.
+// sqliteSample is baseSchema tagged as sqlite with the columns SQLite renders
+// specially: BOOLEAN and DATETIME (no native type), TIMESTAMP, and a Comment.
 func sqliteSample() *Schema {
-	return &Schema{Dialect: DialectSqlite, Tables: []Table{
-		{ID: "t1", Name: "users", Columns: []Col{
-			{Name: "id", Type: "INT", Pk: true, Nn: true, Ai: true, Comment: "pk"},
-			{Name: "email", Type: "VARCHAR(190)", Nn: true, Ux: true},
-			{Name: "status", Type: "ENUM('active','banned')"},
-			{Name: "active", Type: "BOOLEAN"},
-			{Name: "seen_at", Type: "DATETIME", Comment: "last login"},
-			{Name: "stamp", Type: "TIMESTAMP"},
-		}},
-		{ID: "t2", Name: "posts", Columns: []Col{
-			{Name: "id", Type: "BIGINT", Pk: true, Nn: true, Ai: true},
-			{Name: "user_id", Type: "INT", Ref: &Ref{TableID: "t1", Action: "SET NULL"}},
-			{Name: "tag", Type: "VARCHAR(40)", Ix: true},
-		}},
-	}}
+	return sqliteExtraSchema()
 }
 
 func TestSqliteRoundTripStable(t *testing.T) {

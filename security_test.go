@@ -322,8 +322,7 @@ func TestRejectsOversizedInput(t *testing.T) {
 // the caller already knows what they sent.
 func TestExportRejectsInjection(t *testing.T) {
 	body := `{"dialect":"mysql","schema":{"tables":[{"id":"t1","name":"t","columns":[{"name":"a","type":"VARCHAR(1;DROP TABLE users;--)"}]}]}}`
-	rec := httptest.NewRecorder()
-	handleExport(rec, httptest.NewRequest("POST", "/export", strings.NewReader(body)))
+	rec := do(t, http.HandlerFunc(handleExport), "POST", "/export", strings.NewReader(body))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code %d, want 400", rec.Code)
 	}
@@ -340,8 +339,7 @@ func TestSaveRejectsInjection(t *testing.T) {
 	dir := t.TempDir()
 	h := handleFiles(dir)
 	body := `{"dialect":"mysql","tables":[{"id":"t1","name":"t","columns":[{"name":"a","type":"INT);DROP TABLE x;--"}]}]}`
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/evil.sql", strings.NewReader(body)))
+	rec := do(t, h, "PUT", "/api/files/evil.sql", strings.NewReader(body))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code %d, want 400", rec.Code)
 	}
@@ -382,8 +380,7 @@ func TestSymlinkReadBlocked(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	h := handleFiles(dir)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/files/link.sql", nil))
+	rec := do(t, h, "GET", "/api/files/link.sql", nil)
 	if rec.Code == http.StatusOK {
 		t.Errorf("read through a symlink outside the store succeeded: %s", rec.Body)
 	}
@@ -407,8 +404,7 @@ func TestSymlinkWriteBlocked(t *testing.T) {
 
 	h := handleFiles(dir)
 	body := `{"dialect":"mysql","tables":[{"id":"t1","name":"x","columns":[{"name":"a","type":"INT"}]}]}`
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/files/evil.sql", strings.NewReader(body)))
+	rec := do(t, h, "PUT", "/api/files/evil.sql", strings.NewReader(body))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("save failed: %d %s", rec.Code, rec.Body)
 	}
@@ -596,8 +592,7 @@ func TestSecurityHeaders(t *testing.T) {
 	h := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	rec := do(t, h, "GET", "/", nil)
 
 	want := map[string]string{
 		"Content-Security-Policy": "default-src 'self'",
@@ -628,8 +623,7 @@ func TestSecurityHeadersOnError(t *testing.T) {
 	h := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusBadRequest)
 	}))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	rec := do(t, h, "GET", "/", nil)
 	if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Error("error response missing security headers")
 	}
@@ -703,7 +697,7 @@ func TestHardenedServerStillServes(t *testing.T) {
 	h = sameOriginGuard(h)
 	h = hostGuard()(h)
 
-	do := func(method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
+	doReq := func(method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Host = "127.0.0.1:8731"
@@ -717,37 +711,129 @@ func TestHardenedServerStillServes(t *testing.T) {
 	schema := `{"dialect":"mysql","tables":[{"id":"t1","name":"users","columns":[{"name":"id","type":"INT","pk":true,"ai":true},{"name":"status","type":"ENUM('active','banned')"}]}]}`
 	jsonHdr := map[string]string{"Content-Type": "application/json"}
 
-	if rec := do("PUT", "/api/files/ok.sql", schema, jsonHdr); rec.Code != 204 {
+	if rec := doReq("PUT", "/api/files/ok.sql", schema, jsonHdr); rec.Code != 204 {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body)
 	}
-	if rec := do("GET", "/api/files/ok.sql", "", nil); rec.Code != 200 {
+	if rec := doReq("GET", "/api/files/ok.sql", "", nil); rec.Code != 200 {
 		t.Errorf("reopen: %d %s", rec.Code, rec.Body)
 	}
-	if rec := do("GET", "/api/files", "", nil); rec.Code != 200 {
+	if rec := doReq("GET", "/api/files", "", nil); rec.Code != 200 {
 		t.Errorf("list: %d", rec.Code)
 	}
 	exportBody := `{"dialect":"postgres","schema":` + schema + `}`
-	if rec := do("POST", "/export", exportBody, jsonHdr); rec.Code != 200 {
+	if rec := doReq("POST", "/export", exportBody, jsonHdr); rec.Code != 200 {
 		t.Errorf("export: %d %s", rec.Code, rec.Body)
 	}
 	lintBody := `{"tables":[{"id":"t1","name":"t","columns":[{"name":"a","type":"INT"}]}]}`
-	if rec := do("POST", "/api/lint", lintBody, jsonHdr); rec.Code != 200 {
+	if rec := doReq("POST", "/api/lint", lintBody, jsonHdr); rec.Code != 200 {
 		t.Errorf("lint: %d %s", rec.Code, rec.Body)
 	}
-	if rec := do("POST", "/api/inserts", lintBody, jsonHdr); rec.Code != 200 {
+	if rec := doReq("POST", "/api/inserts", lintBody, jsonHdr); rec.Code != 200 {
 		t.Errorf("inserts: %d %s", rec.Code, rec.Body)
 	}
-	if rec := do("DELETE", "/api/files/ok.sql", "", nil); rec.Code != 204 {
+	if rec := doReq("DELETE", "/api/files/ok.sql", "", nil); rec.Code != 204 {
 		t.Errorf("delete: %d %s", rec.Code, rec.Body)
 	}
 
 	// every response carried the headers
-	rec := do("GET", "/api/files", "", nil)
+	rec := doReq("GET", "/api/files", "", nil)
 	var files []struct{ Name string }
 	if err := json.Unmarshal(rec.Body.Bytes(), &files); err != nil {
 		t.Errorf("list is not JSON: %v", err)
 	}
 	if rec.Header().Get("Content-Security-Policy") == "" {
 		t.Error("headers missing on the composed handler")
+	}
+}
+
+func TestValidateOutputRejectsCommentMarkers(t *testing.T) {
+	ok := []string{
+		"-- Generated by erd-creator (SQLite)\nCREATE TABLE `t` (\n  `a` INT\n);\n",
+		"-- name: the users table\n",
+		"  `a` VARCHAR(20) COMMENT 'a--b'\n",    // marker inside literal is fine
+		"  `a` VARCHAR(20) COMMENT 'a/*b*/c'\n", // dito
+	}
+	for _, sql := range ok {
+		if err := validateOutput(sql); err != nil {
+			t.Errorf("legitimate output rejected: %v\n%s", err, sql)
+		}
+	}
+	bad := []string{
+		"CREATE TABLE `t` (\n  `a` INT -- sneaky\n) ENGINE=InnoDB;\n",
+		"CREATE TABLE `t` (\n  `a` INT /* x */\n) ENGINE=InnoDB;\n",
+		"CREATE TABLE `t` (\n  `a` INT, FOREIGN KEY (`a`) REFERENCES `u` (`id`) ON DELETE CASCADE -- x\n);\n",
+	}
+	for _, sql := range bad {
+		if err := validateOutput(sql); err == nil {
+			t.Errorf("comment-marker output accepted:\n%s", sql)
+		}
+	}
+}
+
+func TestDefaultErrorSkipsRawValue(t *testing.T) {
+	for _, v := range []string{"0)); DROP TABLE users; --", "a; DROP", "x''; DROP"} {
+		err := validateDefault(v)
+		if err == nil {
+			t.Fatalf("%q: expected error", v)
+		}
+		if strings.Contains(err.Error(), v) {
+			t.Errorf("%q: error echoes raw value: %v", v, err)
+		}
+	}
+}
+
+func TestParseErrorSkipsRawLine(t *testing.T) {
+	sql := "CREATE TABLE `a` (\n  `id` INT\x00EVIL-DATA-EXFIL\n) ENGINE=InnoDB;\n"
+	_, err := ParseDDL(sql)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "EVIL-DATA-EXFIL") {
+		t.Errorf("parse error echoes raw line: %v", err)
+	}
+}
+
+func TestSaveRejectsUnknownDialect(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	rec := do(t, h, "PUT", "/api/files/x.sql", jsonBody(baseSchema()))
+	_ = rec
+	s := baseSchema()
+	s.Dialect = "oracle"
+	rec = do(t, h, "PUT", "/api/files/x.sql", jsonBody(s))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unknown dialect") {
+		t.Errorf("unknown dialect accepted: %d %s", rec.Code, rec.Body.String())
+	}
+	// empty (unset) still saves as mysql
+	s.Dialect = ""
+	rec = do(t, h, "PUT", "/api/files/x.sql", jsonBody(s))
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("empty dialect rejected: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTrashCollisionRetries(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	rec := do(t, h, "PUT", "/api/files/v.sql", jsonBody(baseSchema()))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	// pre-plant a colliding recycle with the current millisecond name
+	td, err := trashPath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(td, "v.sql"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = do(t, h, "DELETE", "/api/files/v.sql", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	// original recycle intact, deleted file landed on a suffixed name
+	entries, _ := os.ReadDir(td)
+	if len(entries) < 2 {
+		t.Errorf("expected 2 trash entries, got %d", len(entries))
 	}
 }

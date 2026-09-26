@@ -107,8 +107,7 @@ func TestHandleSchemaAPI(t *testing.T) {
 	body := `{"tables":[{"id":"t1","name":"users","columns":[{"name":"id","type":"INT","pk":true}]}]}`
 
 	t.Run("lint returns JSON diagnostics", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		handleSchemaAPI(rec, httptest.NewRequest("POST", "/api/lint", strings.NewReader(body)))
+		rec := do(t, http.HandlerFunc(handleSchemaAPI), "POST", "/api/lint", strings.NewReader(body))
 		if rec.Code != 200 {
 			t.Fatalf("code %d: %s", rec.Code, rec.Body)
 		}
@@ -127,8 +126,7 @@ func TestHandleSchemaAPI(t *testing.T) {
 	})
 
 	t.Run("inserts returns plain text", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		handleSchemaAPI(rec, httptest.NewRequest("POST", "/api/inserts", strings.NewReader(body)))
+		rec := do(t, http.HandlerFunc(handleSchemaAPI), "POST", "/api/inserts", strings.NewReader(body))
 		if rec.Code != 200 {
 			t.Fatalf("code %d: %s", rec.Code, rec.Body)
 		}
@@ -141,16 +139,14 @@ func TestHandleSchemaAPI(t *testing.T) {
 	})
 
 	t.Run("unknown path is 404", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		handleSchemaAPI(rec, httptest.NewRequest("POST", "/api/nope", strings.NewReader(body)))
+		rec := do(t, http.HandlerFunc(handleSchemaAPI), "POST", "/api/nope", strings.NewReader(body))
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("code %d, want 404", rec.Code)
 		}
 	})
 
 	t.Run("bad json is 400 and nothing is rendered", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		handleSchemaAPI(rec, httptest.NewRequest("POST", "/api/lint", strings.NewReader(`{oops`)))
+		rec := do(t, http.HandlerFunc(handleSchemaAPI), "POST", "/api/lint", strings.NewReader(`{oops`))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("code %d, want 400", rec.Code)
 		}
@@ -162,8 +158,7 @@ func TestHandleSchemaAPI(t *testing.T) {
 
 func TestHandleExport(t *testing.T) {
 	post := func(body string) *httptest.ResponseRecorder {
-		rec := httptest.NewRecorder()
-		handleExport(rec, httptest.NewRequest("POST", "/export", strings.NewReader(body)))
+		rec := do(t, http.HandlerFunc(handleExport), "POST", "/export", strings.NewReader(body))
 		return rec
 	}
 
@@ -228,8 +223,7 @@ func TestHandleExport(t *testing.T) {
 	})
 
 	t.Run("GET is 405", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		handleExport(rec, httptest.NewRequest("GET", "/export", nil))
+		rec := do(t, http.HandlerFunc(handleExport), "GET", "/export", nil)
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("code %d, want 405", rec.Code)
 		}
