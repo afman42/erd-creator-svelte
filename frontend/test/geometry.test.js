@@ -343,14 +343,25 @@ test("edgePaths: ci offset increases with column index", () => {
 	assert.ok(edges[1].d.startsWith(`M 280 ${ci2} `), `ci2 ${edges[1].d}`);
 });
 
-test("edgePaths: py is parent y + HDR_H/2", () => {
-	const parent = tab("p", 300, 100, [{ id: "pp" }]);
+test("edgePaths: py lands on the parent sole-PK row, not the header", () => {
+	// parent "p" has its sole PK at index 1 → row anchor, not header centre
+	const parent = tab("p", 300, 100, [{ id: "pp" }, { id: "pk", pk: true }]);
 	const child = tab("c", 0, 0, [{ id: "c1", ref: { tableId: "p" } }]);
 	const [e] = edgePaths({ tables: [parent, child] });
-	const py = 100 + HDR_H / 2; // 114
+	const py = 100 + HDR_H + 1 * ROW_H + ROW_CENTER;
 	assert.ok(e.d.endsWith(` ${py}`), `expected py ${py}, got ${e.d}`);
 	// ci = 0+28+13=41
 	assert.ok(e.d.startsWith("M 280 41 "), e.d);
+});
+
+test("edgePaths: py falls back to header centre when parent has no sole PK", () => {
+	// parent at x=600: no x overlap with child at 0 → side branch, py visible
+	const parent = tab("p", 600, 100, [{ id: "a", pk: true }, { id: "b", pk: true }]);
+	const child = tab("c", 0, 0, [{ id: "c1", ref: { tableId: "p" } }]);
+	const [e] = edgePaths({ tables: [parent, child] });
+	const py = 100 + HDR_H / 2; // 114
+	// path ends at the parent x=600 with fallback py: "600 114"
+	assert.ok(e.d.includes(`600 ${py}`), `expected fallback py ${py}, got ${e.d}`);
 });
 
 // ---- the crow's foot belongs at the CHILD end ----
@@ -492,6 +503,45 @@ test("edgePaths: distinct FKs into one parent are left unoffset", () => {
 	const mid = (BOX_W + 500) / 2;
 	assert.ok(edges[0].d.includes(`C ${mid} ${ci1}`), edges[0].d);
 	assert.ok(edges[1].d.includes(`C ${mid} ${ci2}`), edges[1].d);
+});
+
+test("edgePaths: sticky hysteresis holds the branch inside the deadband", () => {
+	// pure call far apart → side branch; then drag to 4px overlap with the
+	// sticky memory of "side" → must STAY side until overlap exceeds HYST_PX
+	const sticky = new Map();
+	const parent = tab("p", 0, 40, [{ id: "c0", pk: true }]);
+	const child = tab("c", 500, 10, [{ id: "c1", ref: { tableId: "p" } }]);
+	const [e1] = edgePaths({ tables: [parent, child] }, { sticky });
+	// ci = 10+28+13 = 51; py = 40+28+13 = 81 (sole-PK row, Fix B)
+	assert.equal(e1.d, "M 280 51 C 390 51, 390 81, 500 81");
+	child.x = 280 + 4; // 284: 4px gap, inside the 8px deadband
+	const [e2] = edgePaths({ tables: [parent, child] }, { sticky });
+	assert.match(e2.d, /^M 280 /, `sticky must hold side branch: ${e2.d}`);
+	// push well past the deadband → flips to bow, both ends on rightmost border
+	child.x = 100;
+	const [e3] = edgePaths({ tables: [parent, child] }, { sticky });
+	assert.ok(
+		e3.d.startsWith(`M ${100 + BOX_W} `),
+		`must flip to bow when clearly overlapping: ${e3.d}`,
+	);
+});
+
+test("edgePaths: pure calls without sticky keep the old boundary behaviour", () => {
+	// no sticky → the interval check, byte-identical to pre-fix output
+	const parent = tab("p", 0, 40, [{ id: "c0", pk: true }]);
+	const child = tab("c", 100, 10, [{ id: "c1", ref: { tableId: "p" } }]);
+	const [e] = edgePaths({ tables: [parent, child] });
+	assert.ok(e.d.startsWith(`M ${100 + BOX_W} `), e.d);
+});
+
+test("edgePaths: label coords are whole pixels", () => {
+	const parent = tab("p", 0, 0, [{ id: "c0", pk: true }]);
+	const child = tab("c", 500, 7, [{ id: "c1", ref: { tableId: "p" } }]);
+	const [e] = edgePaths({ tables: [parent, child] });
+	for (const p of [e.from, e.to]) {
+		assert.equal(p.x, Math.round(p.x), `label x ${p.x} not integral`);
+		assert.equal(p.y, Math.round(p.y), `label y ${p.y} not integral`);
+	}
 });
 
 test("edgePaths: a lone edge keeps its exact previous geometry", () => {

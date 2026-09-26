@@ -45,6 +45,10 @@ let drag = $state(null);
 // per frame keeps drag at 60fps instead of compounding per event.
 let dragPending = null;
 let dragRaf = 0;
+// Fix C: hysteresis memory for edge routing — one Map per session, passed to
+// edgePaths so the overlap branch sticks across drag frames instead of
+// flipping at the boundary. Not reactive state: geometry reads it, never renders it.
+let edgeSticky = new Map();
 
 function applyDragPending() {
 	dragRaf = 0;
@@ -53,6 +57,9 @@ function applyDragPending() {
 	if (t) {
 		t.x = snapCoord(Math.max(0, drag.tx0 + dragPending.dx));
 		t.y = snapCoord(Math.max(0, drag.ty0 + dragPending.dy));
+		// Fix A: bump so the edge derivation re-runs on the same frame as
+		// the card write — the mutation alone may not invalidate $derived.
+		dragGen++;
 	}
 	dragPending = null;
 }
@@ -61,7 +68,15 @@ function toggleRelationship() {
 	showRelationship = !showRelationship;
 }
 
-const edges = $derived(edgePaths(store.schema));
+// Fix A companion: subscribe to the in-progress drag write. t.x/t.y are
+// mutated in applyDragPending (not replaced), so without an explicit read of
+// the drag generation here the $derived may render the arrow a frame behind
+// the card. dragGen bumps once per applied frame (see applyDragPending).
+let dragGen = $state(0);
+const edges = $derived.by(() => {
+	void dragGen;
+	return edgePaths(store.schema, { sticky: edgeSticky });
+});
 
 // The SVG paint is applied as presentation attributes (the export-capture
 // constraint: html-to-image does not carry the stylesheet), and attributes
@@ -123,11 +138,14 @@ function onMove(ev) {
 }
 function onUp() {
 	if (!drag) return;
+	// Fix A: flush the pending frame synchronously so the card and its arrow
+	// land together — otherwise the last pointermove's delta is dropped by the
+	// cancel and the arrow sits one step off the released card.
 	if (dragRaf) {
 		cancelAnimationFrame(dragRaf);
 		dragRaf = 0;
-		applyDragPending();
 	}
+	applyDragPending();
 	const moved = drag.moved;
 	const id = drag.id;
 	const t = store.schema.tables.find((x) => x.id === id);
@@ -203,15 +221,15 @@ function onKey(ev) {
 				     into no arrow at all. The line colour is therefore written
 				     twice (here and in .edge); the marker test below fails if the
 				     two ever disagree. -->
-				<marker
-					id="crow"
-					viewBox="0 0 10 10"
-					refX="9"
-					refY="5"
-					markerWidth="11"
-					markerHeight="11"
-					orient="auto-start-reverse"
-				>
+			<marker
+				id="crow"
+				viewBox="0 0 10 10"
+				refX="7"
+				refY="5"
+				markerWidth="11"
+				markerHeight="11"
+				orient="auto-start-reverse"
+			>
 					<path
 										d="M 0 0 L 10 5 L 0 10"
 										fill="none"
