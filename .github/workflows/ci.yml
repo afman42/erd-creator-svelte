@@ -28,6 +28,8 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-node
       - run: pnpm install --frozen-lockfile
+      - name: audit (high+)
+        run: pnpm audit --audit-level=high
       - name: lint
         run: pnpm run lint
       - name: unit tests

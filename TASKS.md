@@ -664,3 +664,43 @@ git history, not here.
   Totals: Go 204 → 209; frontend unit 138 → 142; e2e 96 → 98. One derived
   e2e lesson: `dialog.accept()` with no value yields an EMPTY prompt, so
   the duplicate test must accept the derived name explicitly.
+
+- **Pattern extraction, security hardening, junction perf (2026-09-26).**
+  Three passes in one session, each measured before and after.
+
+  **Pattern extraction.** 41 recurring patterns catalogued (Go 13, src 10,
+  tests 18; ~1800 duplicated lines). Extracted: `e2e/helpers.js`
+  (wipeStore/openCol/closeCol/panelSql/newFile/awaitFile/downloadBytes/
+  addTableWithFk/setFk/selectTable), `test/helpers.js` + `test/fixtures.js`
+  (makeStore/makeFlash/stubFetch/withPrompt/resetAutosave/sleep/readSrc/
+  S/T/C/GT), Go `baseSchema()/sqliteExtraSchema()/do()` in helpers_test.go,
+  Go prod `unquote/unescapeStr/parserState/routeIndex/defaultFKAction/
+  attachPendingFKs(onDrop)/colErr/fkConstraintLine/singleIndexLine/
+  compositeIndexStmt/decodeBody-in-handleFileOp`, frontend `src/api.js`
+  (api/errMsg/fail/resolveFileName), `--color-focus` token (12 literals).
+  Dropped as not worth it: ModalDialog (snippet risk, 3x), mut()/commitField
+  (call-graph churn), ToolbarSelect (3x), sr-only dedupe (2x).
+
+  **Security hardening.** Six gaps from the audit, all fixed: (1) error
+  echoes sanitized — `validateDefault` `%q v` → `excerpt(v)`, new
+  `lineExcerpt()` (cut at first control char, 120ch) on 8 parse-error sites;
+  (2) `validateOutput` refuses `--`/`/*` outside quotes, `GenInsertsFor`
+  runs the gate; (3) `validateDialectForSave` rejects unknown non-empty
+  dialect at save (empty still mysql); (4) trash races — `trashPath`
+  re-resolves after mkdir, `trashFile` collision loop 1000x; (5) SVG saves
+  as `image/svg+xml`, `resolveFileName` strips `/\` + controls; (6) `pnpm
+  audit --audit-level=high` in CI frontend job.
+
+  **Junction perf.** `isJunctionTable` per-card O(T×C) scan made one render
+  pass O(T²×C) — measured 200t×10c: 20.1ms. `junctionSet()` precomputes the
+  inbound set once per schema; optional param keeps the unparameterized
+  shape identical (self-ref falls back to the precise scan — pinned by a
+  unit test). After: 1.4ms (14x), same answers. Bundle 88.9K→91.1K
+  (under 200K budget). Backend handlers already µs (Validate 4.8µs,
+  /export 134µs) — no change.
+
+  Totals: Go 209 → 214; frontend unit 142 → 145 (+junctionSet agreement,
+  +SVG mime, +resolveFileName); e2e 98 unchanged. New coverage: Go —
+  comment-marker gate, error-excerpt, parse-excerpt, unknown-dialect save,
+  trash collision; unit — junctionSet incl. self-ref, SVG mime, filename
+  strip; lint/audit/vet/race clean.
