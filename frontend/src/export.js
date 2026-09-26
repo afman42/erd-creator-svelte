@@ -5,6 +5,7 @@
 // under. Functions take store + flash as params (DI), the same shape fileStore.js
 // uses, so nothing here touches the reactive store directly.
 
+import { api, errMsg } from "./api.js";
 import { downloadBlob, downloadText, execCopy } from "./download.js";
 
 // copy to clipboard via navigator.clipboard, falling back to a hidden
@@ -25,18 +26,13 @@ async function copyText(text, msg, flash) {
 
 export async function copyInserts(store, flash) {
 	try {
-		const res = await fetch("/api/inserts", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ schema: store.schema }),
-		});
-		if (!res.ok) throw new Error(await res.text());
-		await copyText(await res.text(), "copied INSERT templates", flash);
-	} catch (e) {
-		flash(
-			`INSERTs failed: ${e instanceof Error ? e.message : String(e)}`,
-			"err",
+		await copyText(
+			await api("/api/inserts", "POST", { schema: store.schema }),
+			"copied INSERT templates",
+			flash,
 		);
+	} catch (e) {
+		flash(`INSERTs failed: ${errMsg(e)}`, "err");
 	}
 }
 
@@ -62,23 +58,15 @@ export function exportFilename(store) {
 export async function exportDdl(store, flash) {
 	store.exporting = true;
 	try {
-		const res = await fetch("/export", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				dialect: store.schema.dialect,
-				schema: store.schema,
-			}),
+		const text = await api("/export", "POST", {
+			dialect: store.schema.dialect,
+			schema: store.schema,
 		});
-		if (!res.ok) throw new Error(await res.text());
 		const name = exportFilename(store);
-		downloadText(await res.text(), name);
+		downloadText(text, name);
 		flash(`downloaded ${name}`);
 	} catch (e) {
-		flash(
-			`export failed: ${e instanceof Error ? e.message : String(e)}`,
-			"err",
-		);
+		flash(`export failed: ${errMsg(e)}`, "err");
 	} finally {
 		store.exporting = false;
 	}
@@ -101,10 +89,7 @@ export async function exportPng(store, flash) {
 		downloadBlob(blob, name);
 		flash(`downloaded ${name}`);
 	} catch (e) {
-		flash(
-			`png export failed: ${e instanceof Error ? e.message : String(e)}`,
-			"err",
-		);
+		flash(`png export failed: ${errMsg(e)}`, "err");
 	} finally {
 		store.exporting = false;
 	}
@@ -128,13 +113,10 @@ export async function exportSvg(store, flash) {
 		const name = svgFilename(store.currentFile, store.schema.dialect);
 		// downloadText already sets a text charset; an SVG is XML, so it is
 		// passed through as-is with the .svg extension as the type signal.
-		downloadText(svg, name);
+		downloadText(svg, name, "image/svg+xml;charset=utf-8");
 		flash(`downloaded ${name}`);
 	} catch (e) {
-		flash(
-			`svg export failed: ${e instanceof Error ? e.message : String(e)}`,
-			"err",
-		);
+		flash(`svg export failed: ${errMsg(e)}`, "err");
 	} finally {
 		store.exporting = false;
 	}

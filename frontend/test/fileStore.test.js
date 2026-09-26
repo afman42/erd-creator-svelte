@@ -2,32 +2,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { editGeneration, isDirty, setDirty, touch } from "../src/autosave.js";
 import { saveCurrent } from "../src/fileStore.js";
-
-// saveCurrent takes (store, flash, silent). driveSave returns a handle with
-// resolvers so a test can complete the fetch calls in any order.
-function fakeStore() {
-	return { currentFile: "a.sql", schema: { dialect: "mysql", tables: [] } };
-}
-
-function pendingFetch() {
-	const pending = [];
-	const origFetch = globalThis.fetch;
-	globalThis.fetch = () => new Promise((res) => pending.push(res));
-	return {
-		resolveWith(ok, n = 0) {
-			if (n >= pending.length) throw new Error(`no fetch call ${n}`);
-			pending[n]({ ok, text: async () => "" });
-		},
-		restore() {
-			globalThis.fetch = origFetch;
-		},
-	};
-}
+import {
+	makeFlash,
+	makeStore,
+	pendingFetch,
+	resetAutosave,
+	stubFetch,
+	withPrompt,
+} from "./helpers.js";
 
 test("saveCurrent clears dirty when no edits happened in flight", async () => {
 	const pf = pendingFetch();
+	resetAutosave();
 	setDirty(true);
-	const p = saveCurrent(fakeStore(), () => {}, true);
+	const p = saveCurrent(makeStore(), () => {}, true);
 	pf.resolveWith(true);
 	await p;
 	assert.equal(isDirty(), false);
@@ -37,7 +25,7 @@ test("saveCurrent clears dirty when no edits happened in flight", async () => {
 
 test("stale save response does not clear dirty for newer edits", async () => {
 	const pf = pendingFetch();
-	const store = fakeStore();
+	const store = makeStore();
 	const flash = () => {};
 	setDirty(true);
 	// edit 1 → save 1 starts, fetch in flight
@@ -64,7 +52,7 @@ test("stale save response does not clear dirty for newer edits", async () => {
 });
 
 test("touch bumps editGeneration, saveCurrent reads it", async () => {
-	const store = fakeStore();
+	const store = makeStore();
 	const g0 = editGeneration();
 	touch(false, {
 		store,
@@ -121,40 +109,13 @@ import { duplicateFile, renameFile } from "../src/fileStore.js";
 
 // renameFile/duplicateFile prompt for the target name and then refresh the
 // file list, so the mock must serve the op call and the GET /api/files call.
-function opFetch(responses = []) {
-	const calls = [];
-	const origFetch = globalThis.fetch;
-	globalThis.fetch = async (url, opts) => {
-		calls.push({ url, opts });
-		const r = responses.shift() ?? { ok: true, json: [] };
-		return {
-			ok: r.ok,
-			text: async () => r.text ?? "",
-			json: async () => r.json ?? [],
-		};
-	};
-	return { calls, restore: () => (globalThis.fetch = origFetch) };
-}
-
-async function withPrompt(value, fn) {
-	const origPrompt = globalThis.prompt;
-	globalThis.prompt = value;
-	try {
-		return await fn();
-	} finally {
-		globalThis.prompt = origPrompt;
-	}
-}
-
-function flashCollector() {
-	const msgs = [];
-	return [msgs, (m, kind = "ok") => msgs.push(m)];
-}
+// opFetch/withPrompt/flashCollector now live in ./helpers.js as
+// stubFetch/withPrompt/makeFlash.
 
 test("renameFile moves the file and repoints currentFile", async () => {
 	const store = { currentFile: "a.sql", files: [{ name: "a.sql", mtime: 0 }] };
-	const [msgs, flash] = flashCollector();
-	const f = opFetch([
+	const [msgs, flash] = makeFlash();
+	const f = stubFetch([
 		{ ok: true },
 		{ ok: true, json: [{ name: "b.sql", mtime: 1 }] },
 	]);
@@ -175,8 +136,8 @@ test("renameFile moves the file and repoints currentFile", async () => {
 
 test("renameFile refuses a taken name without calling the server", async () => {
 	const store = { currentFile: "a.sql", files: [{ name: "b.sql", mtime: 0 }] };
-	const [msgs, flash] = flashCollector();
-	const f = opFetch();
+	const [msgs, flash] = makeFlash();
+	const f = stubFetch();
 	await withPrompt(
 		() => "b",
 		() => renameFile(store, flash),
@@ -189,8 +150,8 @@ test("renameFile refuses a taken name without calling the server", async () => {
 
 test("renameFile failure keeps currentFile and flashes the server error", async () => {
 	const store = { currentFile: "a.sql", files: [{ name: "a.sql", mtime: 0 }] };
-	const [msgs, flash] = flashCollector();
-	const f = opFetch([
+	const [msgs, flash] = makeFlash();
+	const f = stubFetch([
 		{ ok: false, text: "boom" },
 		{ ok: true, json: [] },
 	]);
@@ -211,11 +172,11 @@ test("duplicateFile skips taken _copy names and echoes the suggestion", async ()
 			{ name: "blog_copy.sql", mtime: 0 },
 		],
 	};
-	const [msgs, flash] = flashCollector();
-	const f = opFetch([{ ok: true }, { ok: true, json: [] }]);
+	const [msgs, flash] = makeFlash();
+	const f = stubFetch([{ ok: true }, { ok: true, json: [] }]);
 	// echo the prompt's default — the derived unused name
 	await withPrompt(
-		(msg, def) => def,
+		(_msg, def) => def,
 		() => duplicateFile(store, flash),
 	);
 	assert.deepEqual(JSON.parse(f.calls[0].opts.body), {
@@ -225,4 +186,14 @@ test("duplicateFile skips taken _copy names and echoes the suggestion", async ()
 	assert.ok(msgs.includes("duplicated as blog_copy2.sql"));
 	assert.equal(store.currentFile, "blog.sql", "editor stays on the original");
 	f.restore();
+});
+
+test("resolveFileName strips separators and controls", async () => {
+	const { resolveFileName } = await import("../src/api.js");
+	assert.equal(resolveFileName("a/b"), "ab.sql");
+	assert.equal(resolveFileName("a\\b"), "ab.sql");
+	assert.equal(resolveFileName("a\x00b"), "ab.sql");
+	assert.equal(resolveFileName("ok name"), "ok name.sql");
+	assert.equal(resolveFileName("x.sql"), "x.sql");
+	assert.equal(resolveFileName(""), "");
 });

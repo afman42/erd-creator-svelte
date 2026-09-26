@@ -3,40 +3,12 @@
 // server: what a toggle does in the DDL, what the type list offers, and what
 // the FK select excludes (its own table — a self-ref is a file-only pattern).
 import { expect, test } from "@playwright/test";
+import { closeCol, openCol, panelSql, setFk, wipeStore } from "./helpers.js";
 
 // Each test starts from an empty schema store.
 test.beforeEach(async ({ request }) => {
-	const res = await request.get("/api/files");
-	for (const f of await res.json()) {
-		await request.delete(`/api/files/${f.name}`);
-	}
+	await wipeStore(request);
 });
-
-async function openCol(page, tableIndex = 0, colIndex = 0) {
-	await page
-		.locator("section.table")
-		.nth(tableIndex)
-		.locator(".row .edit")
-		.nth(colIndex)
-		.click();
-	const dlg = page.locator("dialog.coledit");
-	await expect(dlg).toBeVisible();
-	return dlg;
-}
-
-async function closeCol(dlg) {
-	await dlg.getByRole("button", { name: "Done" }).click();
-	await expect(dlg).toHaveCount(0);
-}
-
-// Open the SQL panel and return its text once loaded (the panel renders a
-// skeleton while the export is in flight, then the DDL).
-async function panelSql(page) {
-	await page.getByRole("button", { name: "Show SQL" }).click();
-	const pre = page.locator("#sql-panel pre");
-	await expect(pre).toBeVisible();
-	return pre.innerText();
-}
 
 // The default column (id INT PK NN AI) has NN disabled by its PK, so flag
 // tests use a freshly added column: `column VARCHAR(255)`, all flags off.
@@ -132,8 +104,8 @@ test("relationship section edits type and deletes the edge without dropping the 
 	// create the FK through the column dialog: the default new column is
 	// id/INT/PK/AI, and a sole PK is unique — so the edge reads 1:1 even
 	// though no UQ flag is set (relKind reads ux only, the legend tells truth)
+	await setFk(page, 1, 0, 1);
 	let dlg = await openCol(page, 1, 0);
-	await dlg.locator("select.fk").selectOption({ index: 1 });
 	await expect(dlg.locator("fieldset.rel legend")).toContainText("0..1 / 1..1");
 	await closeCol(dlg);
 	await expect(page.locator("svg path.edge")).toHaveCount(1);

@@ -83,10 +83,10 @@ let { column, parentName, onEdit } = $props();
 		padding: 0;
 	}
 	.row .edit:hover {
-		color: #63b3ed;
+		color: var(--color-focus);
 	}
 	.row .edit:focus-visible {
-		outline: 1px solid #63b3ed;
+		outline: 1px solid var(--color-focus);
 		outline-offset: 1px;
 	}
 	.cmt {

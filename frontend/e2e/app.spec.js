@@ -1,63 +1,23 @@
 // UI flows against the real server: store CRUD, autosave, undo, lint.
 import { expect, test } from "@playwright/test";
+import {
+	addTableWithFk,
+	awaitFile,
+	closeCol,
+	downloadBytes,
+	newFile,
+	openCol,
+	setFk,
+	wipeStore,
+} from "./helpers.js";
 
 // Each test starts from an empty schema store.
 test.beforeEach(async ({ request }) => {
-	const res = await request.get("/api/files");
-	for (const f of await res.json()) {
-		await request.delete(`/api/files/${f.name}`);
-	}
+	await wipeStore(request);
 });
 
 async function tables(page) {
 	return page.locator(".tname").evaluateAll((els) => els.map((i) => i.value));
-}
-
-// Open the edit dialog for a column and return it. Every per-column control
-// (name, type, flags, FK, action, comment, remove) lives in this dialog now —
-// the card row is a read-only label — so the tests below drive the dialog
-// rather than the row. Note this is an HTML <dialog>, not a JS dialog: it does
-// not emit Playwright's "dialog" event, which stays reserved for the native
-// prompt()/confirm() calls in schema.svelte.js.
-async function openCol(page, tableIndex = 0, colIndex = 0) {
-	await page
-		.locator("section.table")
-		.nth(tableIndex)
-		.locator(".row .edit")
-		.nth(colIndex)
-		.click();
-	const dlg = page.locator("dialog.coledit");
-	await expect(dlg).toBeVisible();
-	return dlg;
-}
-
-// Close the open dialog and wait for it to leave the top layer.
-async function closeCol(dlg) {
-	await dlg.getByRole("button", { name: "Done" }).click();
-	await expect(dlg).toHaveCount(0);
-}
-
-// Add a second table and set its first column as an FK to the first table —
-// the two-table fixture the export-paint tests need.
-async function addTableWithFk(page) {
-	await page.getByRole("button", { name: "+ Table" }).click();
-	const dlg = await openCol(page, 1, 0);
-	await dlg.locator("select.fk").selectOption({ index: 1 });
-	await closeCol(dlg);
-}
-
-// Click an export button and return the download and its bytes.
-async function downloadBytes(page, buttonName) {
-	const dlPromise = page.waitForEvent("download");
-	await page.getByRole("button", { name: buttonName }).click();
-	// await first: the event payload is the Download object, and the callers
-	// call suggestedFilename() on it — returning the raw promise made every
-	// PNG/SVG export test fail with "suggestedFilename is not a function"
-	const dl = await dlPromise;
-	const stream = await dl.createReadStream();
-	const chunks = [];
-	for await (const c of stream) chunks.push(c);
-	return { dl, buf: Buffer.concat(chunks) };
 }
 
 test("empty store → fresh default users table", async ({ page }) => {
@@ -71,19 +31,16 @@ test("New file → save → reload round-trips through server", async ({
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("blog"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("blog.sql");
+	await newFile(page, "blog");
 
 	// add + rename a table → debounced autosave should write it
 	await page.getByRole("button", { name: "+ Table" }).click();
 	const posts = page.locator(".tname").nth(1);
 	await posts.fill("posts");
 	await posts.blur();
-	await expect(async () => {
-		const body = await (await request.get("/api/files/blog.sql")).json();
-		expect(body.tables.some((t) => t.name === "posts")).toBe(true);
-	}).toPass({ timeout: 5000 });
+	await awaitFile(request, "blog.sql", (_b) => {
+		expect(_b.tables.some((t) => t.name === "posts")).toBe(true);
+	});
 
 	await page.reload();
 	await expect(page.locator("section.table")).toHaveCount(2);
@@ -109,9 +66,7 @@ test("min-max cardinality labels render on FK edges", async ({ page }) => {
 
 	// add a table and point its first column at users
 	await page.getByRole("button", { name: "+ Table" }).click();
-	const dlg = await openCol(page, 1, 0);
-	await dlg.locator("select.fk").selectOption({ index: 1 });
-	await closeCol(dlg);
+	await setFk(page, 1, 0, 1);
 
 	// one edge → exactly two labels: child end and parent end
 	const labels = page.locator("svg text.card");
@@ -385,9 +340,7 @@ test("FK type mismatch surfaces server lint in the lint panel", async ({
 test("table delete × removes box and clears dangling FKs", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "+ Table" }).click();
-	const dlg = await openCol(page, 1, 0);
-	await dlg.locator("select.fk").selectOption({ index: 1 });
-	await closeCol(dlg);
+	await setFk(page, 1, 0, 1);
 	// the FK target is now visible on the row label, so the dangling state is
 	// assertable without reopening the dialog
 	await expect(
@@ -410,9 +363,7 @@ test("FK ON UPDATE survives dialog, save, reload and SQL panel", async ({
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("fkupdate"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("fkupdate.sql");
+	await newFile(page, "fkupdate");
 
 	// second table gets an FK to users, then an ON UPDATE action
 	await page.getByRole("button", { name: "+ Table" }).click();
@@ -426,11 +377,10 @@ test("FK ON UPDATE survives dialog, save, reload and SQL panel", async ({
 	// serves the parsed schema envelope (JSON), so the assertion is on the
 	// model field; the DDL rendering is asserted through the SQL panel below,
 	// which goes through the same emitter as the saved file.
-	await expect(async () => {
-		const body = await (await request.get("/api/files/fkupdate.sql")).json();
-		const col = body.tables[1].columns[0];
+	await awaitFile(request, "fkupdate.sql", (_b) => {
+		const col = _b.tables[1].columns[0];
 		expect(col.ref.onUpdate).toBe("CASCADE");
-	}).toPass({ timeout: 5000 });
+	});
 
 	// and survive a reopen: the dialog reads the saved action back
 	await closeCol(dlg);
@@ -451,9 +401,7 @@ test("composite index round-trips through dialog, save, reload and SQL", async (
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("idx"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("idx.sql");
+	await newFile(page, "idx");
 
 	// a second column so an index over two columns is meaningful
 	await page.getByRole("button", { name: "+ column" }).first().click();
@@ -475,12 +423,11 @@ test("composite index round-trips through dialog, save, reload and SQL", async (
 	await expect(dlg.getByTestId("index-row")).toHaveCount(1);
 
 	// it reaches the server as a table-level index, not as two column flags
-	await expect(async () => {
-		const body = await (await request.get("/api/files/idx.sql")).json();
-		const t = body.tables[0];
+	await awaitFile(request, "idx.sql", (_b) => {
+		const t = _b.tables[0];
 		expect(t.indexes?.length).toBe(1);
 		expect(t.indexes[0].cols.length).toBe(2);
-	}).toPass({ timeout: 5000 });
+	});
 
 	// and the emitted DDL has the composite KEY, which is the whole point.
 	// The dialog must be closed first: it is modal, so it intercepts clicks on
@@ -508,9 +455,7 @@ test("postgres array type round-trips and is refused for other dialects", async 
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("arr"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("arr.sql");
+	await newFile(page, "arr");
 
 	// the array control is postgres-only: absent while mysql is selected
 	const mysqlDlg = await openCol(page, 0, 0);
@@ -526,10 +471,9 @@ test("postgres array type round-trips and is refused for other dialects", async 
 	await closeCol(dlg);
 
 	// the suffix reaches the server and survives a reopen
-	await expect(async () => {
-		const body = await (await request.get("/api/files/arr.sql")).json();
-		expect(body.tables[0].columns[0].type).toBe("INT[]");
-	}).toPass({ timeout: 5000 });
+	await awaitFile(request, "arr.sql", (_b) => {
+		expect(_b.tables[0].columns[0].type).toBe("INT[]");
+	});
 
 	await page.getByRole("button", { name: "Show SQL" }).click();
 	await expect(page.locator("aside pre")).toContainText('"id" INT[]');
@@ -576,9 +520,7 @@ test("Del button deletes current file after confirm dialog", async ({
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("tmpfile"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("tmpfile.sql");
+	await newFile(page, "tmpfile");
 	page.once("dialog", (d) => d.accept());
 	await page.getByRole("button", { name: "Del", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveCount(0);
@@ -670,9 +612,7 @@ test("column comment persists through save/reload", async ({
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("cmt"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("cmt.sql");
+	await newFile(page, "cmt");
 	const dlg = await openCol(page, 0, 0);
 	const cmt = dlg.locator("input.cmt");
 	await cmt.fill("hello comment");
@@ -800,9 +740,7 @@ test("dirty indicator appears on edit and clears after autosave", async ({
 
 	// the indicator is for saved files (autosave only applies to one);
 	// a scratch schema with no file shows nothing
-	page.once("dialog", (d) => d.accept("dirty"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("dirty.sql");
+	await newFile(page, "dirty");
 	await expect(dirty).toHaveCount(0);
 
 	await page.getByRole("button", { name: "+ Table" }).click();
@@ -842,10 +780,9 @@ test("Ctrl+Z after switching files must not write the old file's schema", async 
 	const name = page.locator(".tname").first();
 	await name.fill("alpha");
 	await name.blur();
-	await expect(async () => {
-		const body = await (await request.get("/api/files/f0.sql")).json();
-		expect(body.tables[0].name).toBe("alpha");
-	}).toPass({ timeout: 5000 });
+	await awaitFile(request, "f0.sql", (_b) => {
+		expect(_b.tables[0].name).toBe("alpha");
+	});
 	// file B: fresh schema, different file
 	await page.getByRole("button", { name: "New", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText("f1.sql");
@@ -858,10 +795,9 @@ test("Ctrl+Z after switching files must not write the old file's schema", async 
 	// server-side check does not depend on the 800ms autosave having elapsed.
 	// With the bug, the undone A-schema would be what lands in f1.sql.
 	await page.getByRole("button", { name: "Save", exact: true }).click();
-	await expect(async () => {
-		const body = await (await request.get("/api/files/f1.sql")).json();
-		expect(body.tables[0].name).toBe("users");
-	}).toPass({ timeout: 5000 });
+	await awaitFile(request, "f1.sql", (_b) => {
+		expect(_b.tables[0].name).toBe("users");
+	});
 	// f0 must be untouched by any of this
 	const a = await (await request.get("/api/files/f0.sql")).json();
 	expect(a.tables[0].name).toBe("alpha");
@@ -896,9 +832,7 @@ test("saving in postgres writes postgres DDL that reopens intact", async ({
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("pgfile"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("pgfile.sql");
+	await newFile(page, "pgfile");
 	// switch this file to postgres, then edit so a save is scheduled
 	await page.getByTestId("dialect").selectOption("postgres");
 	const name = page.locator(".tname").first();
@@ -908,11 +842,10 @@ test("saving in postgres writes postgres DDL that reopens intact", async ({
 	// GET /api/files/:name returns the PARSED schema, not the raw file, so the
 	// dialect field is what proves the postgres grammar round-tripped. (Reading
 	// the raw bytes would need filesystem access the test doesn't have.)
-	await expect(async () => {
-		const body = await (await request.get("/api/files/pgfile.sql")).json();
-		expect(body.dialect).toBe("postgres");
-		expect(body.tables[0].name).toBe("members");
-	}).toPass({ timeout: 5000 });
+	await awaitFile(request, "pgfile.sql", (_b) => {
+		expect(_b.dialect).toBe("postgres");
+		expect(_b.tables[0].name).toBe("members");
+	});
 	// and the SQL panel renders postgres DDL for that file
 	await page.getByRole("button", { name: "Show SQL" }).click();
 	await expect(page.locator("aside pre")).toContainText(
@@ -1006,9 +939,7 @@ test("column label stays inside the table box, even with an FK set", async ({
 	// worst case: a second table to reference, so the FK label appears
 	await page.getByRole("button", { name: "+ Table" }).click();
 	const second = page.locator("section.table").nth(1);
-	const dlg = await openCol(page, 1, 0);
-	await dlg.locator("select.fk").selectOption({ index: 1 });
-	await closeCol(dlg);
+	await setFk(page, 1, 0, 1);
 	await expect(second.locator(".row .fkinfo")).toBeVisible();
 	// and a name long enough to tempt the row wider
 	const nameDlg = await openCol(page, 1, 0);
@@ -1109,9 +1040,7 @@ test("Export downloads the selected dialect's DDL as a .sql file", async ({
 // expects rather than being renamed to a generic dialect default.
 test("Export of a saved file uses the file's own name", async ({ page }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("mydb"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("mydb.sql");
+	await newFile(page, "mydb");
 	const download = page.waitForEvent("download");
 	await page.getByRole("button", { name: "Export", exact: true }).click();
 	expect((await download).suggestedFilename()).toBe("mydb.sql");
@@ -1152,9 +1081,7 @@ test("Export PNG downloads diagram as .png with PNG signature", async ({
 
 test("Export PNG of saved file uses .png name", async ({ page }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("shot"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("shot.sql");
+	await newFile(page, "shot");
 	const dl = page.waitForEvent("download");
 	await page.getByRole("button", { name: "Export PNG" }).click();
 	expect((await dl).suggestedFilename()).toBe("shot.png");
@@ -1249,9 +1176,7 @@ test("exported PNG actually paints the edge line and its labels", async ({
 
 test("Export SVG of a saved file uses the .svg name", async ({ page }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("vector"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("vector.sql");
+	await newFile(page, "vector");
 	const dl = page.waitForEvent("download");
 	await page.getByRole("button", { name: "Export SVG" }).click();
 	expect((await dl).suggestedFilename()).toBe("vector.svg");

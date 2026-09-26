@@ -243,7 +243,7 @@ function shownName(ix) {
 	}
 	button:focus-visible,
 	input:focus-visible {
-		outline: 1px solid #63b3ed;
+		outline: 1px solid var(--color-focus);
 		outline-offset: 1px;
 	}
 </style>

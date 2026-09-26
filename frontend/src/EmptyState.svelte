@@ -45,7 +45,7 @@ import { addTable } from "./schema.svelte.js";
 		background: var(--color-primary-hover);
 	}
 	.empty-cta:focus-visible {
-		outline: 2px solid #63b3ed;
+		outline: 2px solid var(--color-focus);
 		outline-offset: 2px;
 	}
 </style>

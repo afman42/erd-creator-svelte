@@ -24,9 +24,7 @@ let { onClose } = $props();
 
 const tables = $derived(store.schema.tables);
 // Defaults follow the tab order a user would pick: first table as child,
-// second as parent. Guarded in case a two-table schema ever shrinks to one
-// while the dialog is open. Computed once at init on purpose — the initial
-// value is the default, not a live binding.
+// second as parent.
 function defaultSelection() {
 	const t = tables;
 	return {
@@ -34,7 +32,14 @@ function defaultSelection() {
 		parentId: t.length > 1 ? t[1].id : (t[0]?.id ?? ""),
 	};
 }
-let { childId, parentId } = $state(defaultSelection());
+// Guarded in case a two-table schema ever shrinks to one
+// while the dialog is open. Separate $state bindings: destructuring $state
+// (let { a, b } = $state(...)) loses reactivity on reassignment, so the
+// $derived below would stop updating. Computed once at init on purpose —
+// the initial value is the default, not a live binding.
+const _sel = defaultSelection();
+let childId = $state(_sel.childId);
+let parentId = $state(_sel.parentId);
 let type = $state("1:N");
 
 // Live preview of what Create will draw: derived from the picked type via
@@ -436,7 +441,7 @@ function create() {
 	button:focus-visible,
 	select:focus-visible,
 	.type:focus-within {
-		outline: 1px solid #63b3ed;
+		outline: 1px solid var(--color-focus);
 		outline-offset: 1px;
 	}
 </style>

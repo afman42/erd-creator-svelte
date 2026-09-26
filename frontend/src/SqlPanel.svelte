@@ -1,7 +1,7 @@
 <script>
 import { copySql, store } from "./schema.svelte.js";
 
-let sqlLoading = $derived(!store.sqlText);
+const sqlLoading = $derived(!store.sqlText);
 </script>
 
 <aside id="sql-panel" aria-label="SQL preview">
@@ -56,7 +56,7 @@ let sqlLoading = $derived(!store.sqlText);
 		font: inherit;
 	}
 	.sqlhead button:focus-visible {
-		outline: 2px solid #63b3ed;
+		outline: 2px solid var(--color-focus);
 		outline-offset: 2px;
 	}
 	pre {

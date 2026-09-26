@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { E2E_PORT, probeServer } from "../e2e/server-probe.mjs";
+import { readSrc } from "./helpers.js";
 
 // probeServer verifies the server on the e2e port before the suite adopts it.
 // It refuses a FOREIGN process (different build); our own build is accepted
@@ -18,10 +17,7 @@ function serve(handler) {
 	});
 }
 
-const distIndex = readFileSync(
-	fileURLToPath(new URL("../dist/index.html", import.meta.url)),
-	"utf8",
-);
+const distIndex = readSrc("../dist/index.html");
 
 test("probeServer refutes a foreign process on the port", async () => {
 	const srv = await serve((_req, res) => {

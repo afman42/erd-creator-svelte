@@ -5,30 +5,11 @@ import {
 	createManyToMany,
 	createRelationship,
 	isJunctionTable,
+	junctionSet,
 	previewLabels,
 } from "../src/relationships.js";
 
-const schema = (tables) => ({ tables });
-const tab = (id, name, cols) => ({
-	id,
-	name,
-	x: 0,
-	y: 0,
-	columns: cols,
-	indexes: [],
-});
-const col = (id, name, type, pk) => ({
-	id,
-	name,
-	type,
-	pk,
-	nn: !!pk,
-	ai: false,
-	ux: false,
-	ix: false,
-	comment: "",
-	ref: null,
-});
+import { C as col, S as schema, T as tab } from "./fixtures.js";
 
 // ---- createRelationship: 1:1 ----
 
@@ -197,6 +178,48 @@ test("isJunctionTable rejects non-junction shapes", () => {
 		tab("t5", "referencer", [fk("c10", "t4")]),
 	]);
 	assert.ok(!isJunctionTable(withReferencer.tables[3], withReferencer));
+});
+
+test("junctionSet precompute agrees with the scan (incl. self-reference)", () => {
+	const ref = (tableId) => ({ tableId, action: "CASCADE", onUpdate: "" });
+	const fk = (id, tableId, pk = false) => ({
+		id,
+		name: `${tableId}_id`,
+		type: "INT",
+		pk,
+		nn: pk,
+		ai: false,
+		ux: false,
+		ix: false,
+		comment: "",
+		ref: ref(tableId),
+	});
+	// Self-referencing junction-shaped table (hand-written file can hold one;
+	// the UI forbids it): the inbound set contains its own id, so the fast
+	// path must fall back to the precise scan and still call it a junction.
+	const self = tab("ts", "tree", [
+		fk("cs1", "ts", true),
+		fk("cs2", "t1", true),
+	]);
+	const s = schema([
+		tab("t1", "users", [col("c1", "id", "INT", true)]),
+		self,
+		tab("t4", "users_posts", [fk("c8", "t1", true), fk("c9", "t2", true)]),
+		tab("t2", "posts", [col("c2", "id", "INT", true)]),
+		tab("t5", "referencer", [fk("c10", "t4")]),
+	]);
+	const set = junctionSet(s);
+	assert.ok(set.has("ts"), "own self-ref lands in the set");
+	assert.ok(set.has("t4"), "referencer lands in the set");
+	for (const t of s.tables) {
+		assert.equal(
+			isJunctionTable(t, s, set),
+			isJunctionTable(t, s),
+			`precomputed agrees for ${t.name}`,
+		);
+	}
+	assert.ok(isJunctionTable(s.tables[1], s, set), "self-ref stays a junction");
+	assert.ok(!isJunctionTable(s.tables[2], s, set), "referenced stays demoted");
 });
 
 test("createManyToMany rejections mutate nothing", () => {

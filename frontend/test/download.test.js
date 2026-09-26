@@ -148,3 +148,37 @@ test("execCopy returns false when execCommand fails", () => {
 	assert.equal(ok, false);
 	m.restore();
 });
+
+test("downloadText passes the SVG mime for vector exports", async () => {
+	const seen = [];
+	const origURL = global.URL;
+	global.URL = {
+		createObjectURL: (b) => {
+			seen.push(b);
+			return "blob:x";
+		},
+		revokeObjectURL: () => {},
+	};
+	const origDoc = global.document;
+	global.document = {
+		createElement: () => ({
+			style: {},
+			clickCalled: false,
+			click() {
+				this.clickCalled = true;
+			},
+			remove() {},
+		}),
+		body: { appendChild() {}, removeChild() {} },
+	};
+	try {
+		const { downloadText } = await import("../src/download.js");
+		downloadText("<svg/>", "d.svg", "image/svg+xml;charset=utf-8");
+		assert.equal(seen[0].type, "image/svg+xml;charset=utf-8");
+		downloadText("CREATE TABLE", "d.sql");
+		assert.equal(seen[1].type, "text/plain;charset=utf-8");
+	} finally {
+		global.URL = origURL;
+		global.document = origDoc;
+	}
+});

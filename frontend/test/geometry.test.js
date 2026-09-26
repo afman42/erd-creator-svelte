@@ -14,7 +14,7 @@ import {
 	stackStep,
 } from "../src/geometry.js";
 
-const tab = (id, x, y, cols) => ({ id, x, y, columns: cols });
+import { GT as tab } from "./fixtures.js";
 
 // ---- min-max cardinality ----
 //

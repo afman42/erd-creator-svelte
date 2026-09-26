@@ -14,7 +14,7 @@
 // dropping it would move every row below it.
 import ColumnEditModal from "./ColumnEditModal.svelte";
 import ColumnRow from "./ColumnRow.svelte";
-import { isJunctionTable } from "./relationships.js";
+import { isJunctionTable, junctionSet } from "./relationships.js";
 import {
 	addColumn,
 	commitTableName,
@@ -29,7 +29,7 @@ let { table, onDragStart } = $props();
 // FK target name lookup, memoized per table list: the old parentName()
 // ran `store.schema.tables.find` per COLUMN per render — O(T×C) finds per
 // frame during drag. One Map per schema identity keeps it O(1) per column.
-let nameById = $derived(
+const nameById = $derived(
 	new Map(store.schema.tables.map((t) => [t.id, t.name])),
 );
 
@@ -45,8 +45,10 @@ let showIndexes = $state(false);
 
 // Junction badge, memoized: isJunctionTable scans the whole schema for
 // inbound refs — O(T×C) per card per render, i.e. O(T²×C) per frame during
-// drag. $derived memoizes per card on schema identity.
-const junction = $derived(isJunctionTable(table, store.schema));
+// drag. junctionSet precomputes the inbound set once per schema identity;
+// the per-card check is then O(1). $derived memoizes per card on schema.
+const referenced = $derived(junctionSet(store.schema));
+const junction = $derived(isJunctionTable(table, store.schema, referenced));
 
 const parentName = (c) => nameById.get(c.ref?.tableId);
 </script>
@@ -143,11 +145,11 @@ const parentName = (c) => nameById.get(c.ref?.tableId);
 		box-shadow: 0 2px 8px #0008;
 	}
 	section.selected {
-		/* #63b3ed has no token (it is the selection/focus blue); kept literal. */
-		border-color: #63b3ed;
+		/* var(--color-focus) has no token (it is the selection/focus blue); kept literal. */
+		border-color: var(--color-focus);
 	}
 	section.table:focus-visible {
-		outline: 2px solid #63b3ed;
+		outline: 2px solid var(--color-focus);
 		outline-offset: 2px;
 	}
 	.hdr {
@@ -203,7 +205,7 @@ const parentName = (c) => nameById.get(c.ref?.tableId);
 	}
 	.hdr button:focus-visible,
 	.tname:focus-visible {
-		outline: 1px solid #63b3ed;
+		outline: 1px solid var(--color-focus);
 		outline-offset: -1px;
 	}
 	.addcol {
@@ -219,7 +221,7 @@ const parentName = (c) => nameById.get(c.ref?.tableId);
 		font: inherit;
 	}
 	.addcol:focus-visible {
-		outline: 1px solid #63b3ed;
+		outline: 1px solid var(--color-focus);
 		outline-offset: -1px;
 	}
 </style>

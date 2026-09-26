@@ -2,7 +2,6 @@
 // Go-side grammar already covered by grammar_test.go; UI-e2e by playwright (e2e/).
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
 	adoptIds,
@@ -46,6 +45,7 @@ import {
 	ROW_H,
 	stackStep,
 } from "../src/geometry.js";
+import { readSrc } from "./helpers.js";
 
 function col(name, props) {
 	return Object.assign(newColumn(), { name }, props);
@@ -110,7 +110,7 @@ test("TYPES and DEFAULT_TYPE expose expected values", () => {
 // symptom was a dropdown label contradicting what the server actually did.
 // This reads the Go source so the two lists cannot drift again.
 test("frontend SAVEABLE_DIALECTS agrees with the Go saveable() switch", () => {
-	const go = readFileSync(new URL("../../grammar.go", import.meta.url), "utf8");
+	const go = readSrc("../../grammar.go");
 	// slice between the function signature and the next top-level marker; if
 	// either renames, that is a test failure — not a silent empty matchAll
 	const saveableIdx = go.indexOf("func (s *Schema) saveable() bool");
@@ -477,19 +477,13 @@ test("adoptIds handles missing column ids and empty schema", () => {
 // entirely: ROW_H claimed 42 (row 26 + comment 16) but the real row+comment was
 // 47, so FK edges attached progressively lower down the table — 14px off by the
 // fourth column. These tests read the actual CSS instead.
-const CARD_SRC = readFileSync(
-	new URL("../src/TableCard.svelte", import.meta.url),
-	"utf8",
-);
+const CARD_SRC = readSrc("../src/TableCard.svelte");
 let STYLE = CARD_SRC.slice(
 	CARD_SRC.indexOf("<style>"),
 	CARD_SRC.lastIndexOf("</style>"),
 ).replace(/\/\*[\s\S]*?\*\//g, "");
 // ColumnRow now owns .row/.cmt — merge its style so geometry checks still pass
-const ROW_SRC = readFileSync(
-	new URL("../src/ColumnRow.svelte", import.meta.url),
-	"utf8",
-);
+const ROW_SRC = readSrc("../src/ColumnRow.svelte");
 const rowStyle = ROW_SRC.slice(
 	ROW_SRC.indexOf("<style>"),
 	ROW_SRC.lastIndexOf("</style>"),
@@ -625,20 +619,11 @@ test("TableCard column row fits inside BOX_W", () => {
 // The ten controls that used to live in the 26px row are only actually gone if
 // they are somewhere else. This pins the destination rather than trusting that
 // the row rewrite did not simply delete them.
-const MODAL_SRC = readFileSync(
-	new URL("../src/ColumnEditModal.svelte", import.meta.url),
-	"utf8",
-);
+const MODAL_SRC = readSrc("../src/ColumnEditModal.svelte");
 
 // Read once and shared by the export-paint and marker tests below.
-const APP_SRC = readFileSync(
-	new URL("../src/App.svelte", import.meta.url),
-	"utf8",
-);
-const TOKENS_SRC = readFileSync(
-	new URL("../src/tokens.css", import.meta.url),
-	"utf8",
-);
+const APP_SRC = readSrc("../src/App.svelte");
+const TOKENS_SRC = readSrc("../src/tokens.css");
 
 // ---- cardinality states: flags → labels ----
 //

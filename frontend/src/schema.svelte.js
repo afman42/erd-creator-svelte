@@ -5,6 +5,7 @@
 // that is reassigned, so all state lives on `store` and mutations assign
 // properties (allowed) — never the exported binding itself.
 
+import { api } from "./api.js";
 import {
 	cloneTable,
 	DEFAULT_TYPE,
@@ -59,12 +60,7 @@ layout(store.schema);
 // clears it.
 async function refreshLint() {
 	try {
-		const res = await fetch("/api/lint", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ schema: store.schema }),
-		});
-		store.lint = res.ok ? await res.json() : store.lint;
+		store.lint = await api("/api/lint", "POST", { schema: store.schema });
 	} catch {
 		/* keep last lint */
 	}
@@ -73,19 +69,13 @@ async function refreshLint() {
 // a stale panel from a fresh copy instead of copying whatever was last shown.
 export async function refreshSql() {
 	try {
-		const res = await fetch("/export", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			// The panel shows the schema's own dialect, so it always agrees with
-			// the dropdown and with what Save writes. It used to hardcode mysql,
-			// which contradicted a dropdown reading "PostgreSQL".
-			body: JSON.stringify({
-				dialect: store.schema.dialect,
-				schema: store.schema,
-			}),
+		// The panel shows the schema's own dialect, so it always agrees with
+		// the dropdown and with what Save writes. It used to hardcode mysql,
+		// which contradicted a dropdown reading "PostgreSQL".
+		store.sqlText = await api("/export", "POST", {
+			dialect: store.schema.dialect,
+			schema: store.schema,
 		});
-		if (!res.ok) return false;
-		store.sqlText = await res.text();
 		return true;
 	} catch {
 		/* keep last good text */

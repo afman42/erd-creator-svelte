@@ -2,6 +2,7 @@
 // Extracted from schema.svelte.js to shrink God object (~590→~470).
 // All functions take `store` as first param (DI) to avoid circular import of the $state store.
 
+import { api, errMsg, fail, resolveFileName } from "./api.js";
 import {
 	clearTimers as clearAutosaveTimers,
 	editGeneration,
@@ -53,16 +54,12 @@ export async function saveCurrent(store, flash, silent = false) {
 	// its flush, dropping them).
 	const gen = editGeneration();
 	try {
-		const res = await fetch(
+		await api(
 			`/api/files/${encodeURIComponent(store.currentFile)}`,
-			{
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(store.schema),
-				keepalive: true,
-			},
+			"PUT",
+			store.schema,
+			{ keepalive: true },
 		);
-		if (!res.ok) throw new Error(await res.text());
 		if (gen === editGeneration()) {
 			setDirty(false);
 			// Reactive mirror for the Toolbar's unsaved indicator, written at
@@ -72,10 +69,7 @@ export async function saveCurrent(store, flash, silent = false) {
 		if (!silent) flash(`saved ${store.currentFile}`);
 	} catch (e) {
 		if (!silent) {
-			flash(
-				`save failed: ${e instanceof Error ? e.message : String(e)}`,
-				"err",
-			);
+			flash(`save failed: ${errMsg(e)}`, "err");
 		}
 	}
 }
@@ -132,7 +126,7 @@ export async function openFile(store, name, flash) {
 			);
 		}
 	} catch (e) {
-		flash(`Open failed: ${e instanceof Error ? e.message : String(e)}`, "err");
+		flash(`Open failed: ${errMsg(e)}`, "err");
 		await refreshFiles(store);
 	}
 }
@@ -170,20 +164,11 @@ export async function deleteFile(store, flash) {
 	clearAutosaveTimers();
 	const name = store.currentFile;
 	try {
-		const res = await fetch(`/api/files/${encodeURIComponent(name)}`, {
-			method: "DELETE",
-		});
 		// A failed DELETE leaves the file on disk and the editor still pointed at
 		// it, so currentFile/history are only cleared on success.
-		if (!res.ok) {
-			flash(`delete failed: ${await res.text()}`, "err");
-			return;
-		}
+		await api(`/api/files/${encodeURIComponent(name)}`, "DELETE");
 	} catch (e) {
-		flash(
-			`delete failed: ${e instanceof Error ? e.message : String(e)}`,
-			"err",
-		);
+		fail(flash, "delete failed", e);
 		return;
 	}
 	store.currentFile = "";
@@ -204,26 +189,18 @@ export async function renameFile(store, flash) {
 	const cur = store.currentFile;
 	const to = (prompt("Rename schema file to:", cur) || "").trim();
 	if (!to || to === cur) return;
-	const name = to.replace(/\.sql$/i, "") + ".sql";
+	const name = resolveFileName(to);
 	if (store.files.some((f) => f.name === name)) {
 		flash(`${name} already exists`, "err");
 		return;
 	}
 	await flushCurrent(store, flash);
 	try {
-		const res = await fetch("/api/files/rename", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ from: cur, to: name }),
-		});
-		if (!res.ok) throw new Error(await res.text());
+		await api("/api/files/rename", "POST", { from: cur, to: name });
 		store.currentFile = name;
 		flash(`renamed to ${name}`);
 	} catch (e) {
-		flash(
-			`rename failed: ${e instanceof Error ? e.message : String(e)}`,
-			"err",
-		);
+		fail(flash, "rename failed", e);
 	} finally {
 		await refreshFiles(store);
 	}
@@ -247,22 +224,17 @@ export async function duplicateFile(store, flash) {
 	}
 	const to = (prompt("Duplicate schema file as:", suggested) || "").trim();
 	if (!to) return;
-	const name = to.replace(/\.sql$/i, "") + ".sql";
+	const name = resolveFileName(to);
 	if (name === cur) return;
 	if (store.files.some((f) => f.name === name)) {
 		flash(`${name} already exists`, "err");
 		return;
 	}
 	try {
-		const res = await fetch("/api/files/copy", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ from: cur, to: name }),
-		});
-		if (!res.ok) throw new Error(await res.text());
+		await api("/api/files/copy", "POST", { from: cur, to: name });
 		flash(`duplicated as ${name}`);
 	} catch (e) {
-		flash(`copy failed: ${e instanceof Error ? e.message : String(e)}`, "err");
+		fail(flash, "copy failed", e);
 	} finally {
 		await refreshFiles(store);
 	}

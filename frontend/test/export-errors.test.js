@@ -5,26 +5,10 @@ import { exportDdl } from "../src/export.js";
 import { deleteFile } from "../src/fileStore.js";
 import { clearHistory, snap, undo } from "../src/history.js";
 
-function flashCapture() {
-	const msgs = [];
-	const flash = (msg, kind) => msgs.push([String(msg), kind]);
-	return { msgs, flash };
-}
-
-function stubFetchRejectWith(value) {
-	const origFetch = globalThis.fetch;
-	globalThis.fetch = () => Promise.reject(value);
-	return () => {
-		globalThis.fetch = origFetch;
-	};
-}
+import { flashCapture, makeStore, stubFetchRejectWith } from "./helpers.js";
 
 function fakeExportStore() {
-	return {
-		exporting: false,
-		currentFile: "mydb.sql",
-		schema: { dialect: "mysql", tables: [] },
-	};
+	return makeStore({ exporting: false, currentFile: "mydb.sql" });
 }
 
 test("exportDdl flashes String(e) when fetch rejects with a plain string", async () => {

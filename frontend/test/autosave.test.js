@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-	clearTimers,
 	flushCurrent,
 	installFlush,
 	isDirty,
@@ -9,27 +8,23 @@ import {
 	setDirty,
 	touch,
 } from "../src/autosave.js";
-
-function fakeStore(currentFile = "a.sql") {
-	return { currentFile, schema: { dialect: "mysql", tables: [] }, sqlText: "" };
-}
+import { makeStore, resetAutosave, sleep } from "./helpers.js";
 
 test("isDirty/setDirty", () => {
-	setDirty(false);
+	resetAutosave();
 	assert.equal(isDirty(), false);
 	setDirty(true);
 	assert.equal(isDirty(), true);
-	setDirty(false);
+	resetAutosave();
 	assert.equal(isDirty(), false);
 });
 
 test("touch sets dirty and schedules lint", async () => {
-	setDirty(false);
-	clearTimers();
+	resetAutosave();
 	let lintCalled = 0;
 	let saveCalled = 0;
 	let sqlCalled = 0;
-	const store = fakeStore("a.sql");
+	const store = makeStore();
 	touch(false, {
 		store,
 		refreshLint: () => lintCalled++,
@@ -38,39 +33,35 @@ test("touch sets dirty and schedules lint", async () => {
 	});
 	assert.equal(isDirty(), true);
 	assert.equal(store.dirty, true, "reactive mirror must follow the flag");
-	await new Promise((r) => setTimeout(r, 350));
+	await sleep(350);
 	assert.equal(lintCalled, 1);
 	assert.equal(saveCalled, 0);
-	await new Promise((r) => setTimeout(r, 500));
+	await sleep(500);
 	assert.equal(saveCalled, 1);
 	assert.equal(sqlCalled, 0);
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 });
 
 test("touch with showSql schedules sql", async () => {
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 	let sqlCalled = 0;
-	const store = fakeStore("a.sql");
+	const store = makeStore();
 	touch(true, {
 		store,
 		refreshLint: () => {},
 		refreshSql: () => sqlCalled++,
 		saveCurrent: () => {},
 	});
-	await new Promise((r) => setTimeout(r, 350));
+	await sleep(350);
 	assert.equal(sqlCalled, 1);
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 });
 
 test("markSkipTouch skips next touch", async () => {
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 	markSkipTouch();
 	let lintCalled = 0;
-	const store = fakeStore("a.sql");
+	const store = makeStore();
 	touch(false, {
 		store,
 		refreshLint: () => lintCalled++,
@@ -87,17 +78,15 @@ test("markSkipTouch skips next touch", async () => {
 		saveCurrent: () => {},
 	});
 	assert.equal(isDirty(), true);
-	await new Promise((r) => setTimeout(r, 350));
+	await sleep(350);
 	assert.equal(lintCalled, 1);
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 });
 
 test("touch without currentFile does not schedule save", async () => {
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 	let saveCalled = 0;
-	const store = fakeStore("");
+	const store = makeStore({ currentFile: "" });
 	touch(false, {
 		store,
 		refreshLint: () => {},
@@ -105,57 +94,54 @@ test("touch without currentFile does not schedule save", async () => {
 		saveCurrent: () => saveCalled++,
 	});
 	assert.equal(isDirty(), true);
-	await new Promise((r) => setTimeout(r, 850));
+	await sleep(850);
 	assert.equal(saveCalled, 0);
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 });
 
 test("clearTimers cancels pending", async () => {
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 	let lintCalled = 0;
-	const store = fakeStore("a.sql");
+	const store = makeStore();
 	touch(false, {
 		store,
 		refreshLint: () => lintCalled++,
 		refreshSql: () => {},
 		saveCurrent: () => {},
 	});
-	clearTimers();
-	await new Promise((r) => setTimeout(r, 350));
+	resetAutosave();
+	await sleep(350);
 	assert.equal(lintCalled, 0);
-	setDirty(false);
+	resetAutosave();
 });
 
 test("flushCurrent saves when dirty and has file", async () => {
-	clearTimers();
+	resetAutosave();
 	setDirty(true);
 	let saveCalled = 0;
-	const store = fakeStore("a.sql");
+	const store = makeStore();
 	await flushCurrent({ store, saveCurrent: async () => saveCalled++ });
 	assert.equal(saveCalled, 1);
 	assert.equal(isDirty(), true); // flushCurrent does not clear dirty; the real saveCurrent does
-	setDirty(false);
+	resetAutosave();
 });
 
 test("flushCurrent does nothing when not dirty", async () => {
-	clearTimers();
-	setDirty(false);
+	resetAutosave();
 	let saveCalled = 0;
-	const store = fakeStore("a.sql");
+	const store = makeStore();
 	await flushCurrent({ store, saveCurrent: async () => saveCalled++ });
 	assert.equal(saveCalled, 0);
 });
 
 test("flushCurrent does nothing when no currentFile", async () => {
-	clearTimers();
+	resetAutosave();
 	setDirty(true);
 	let saveCalled = 0;
-	const store = fakeStore("");
+	const store = makeStore({ currentFile: "" });
 	await flushCurrent({ store, saveCurrent: async () => saveCalled++ });
 	assert.equal(saveCalled, 0);
-	setDirty(false);
+	resetAutosave();
 });
 
 test("installFlush registers listeners", () => {

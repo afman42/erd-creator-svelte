@@ -1,42 +1,26 @@
 // ---- column DEFAULT + table comment + lint panel + theme ----
 import { expect, test } from "@playwright/test";
+import {
+	awaitFile,
+	closeCol,
+	downloadBytes,
+	newFile,
+	openCol,
+	panelSql,
+	wipeStore,
+} from "./helpers.js";
 
 // Each test starts from an empty schema store.
 test.beforeEach(async ({ request }) => {
-	const res = await request.get("/api/files");
-	for (const f of await res.json()) {
-		await request.delete(`/api/files/${f.name}`);
-	}
+	await wipeStore(request);
 });
-
-// Open the edit dialog for a column and return it (same helpers as
-// app.spec.js — kept local so the two files stay independent).
-async function openCol(page, tableIndex = 0, colIndex = 0) {
-	await page
-		.locator("section.table")
-		.nth(tableIndex)
-		.locator(".row .edit")
-		.nth(colIndex)
-		.click();
-	const dlg = page.locator("dialog.coledit");
-	await expect(dlg).toBeVisible();
-	return dlg;
-}
-
-// Close the open dialog and wait for it to leave the top layer.
-async function closeCol(dlg) {
-	await dlg.getByRole("button", { name: "Done" }).click();
-	await expect(dlg).toHaveCount(0);
-}
 
 test("column DEFAULT: set, autosave, SQL, reload", async ({
 	page,
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("def.sql"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("def.sql");
+	await newFile(page, "def");
 
 	// add a column and set ITS default — the default id column is AI, and
 	// AI + DEFAULT is refused (the next test pins that refusal)
@@ -47,16 +31,12 @@ test("column DEFAULT: set, autosave, SQL, reload", async ({
 	await closeCol(dlg);
 
 	// autosave persists it in the file JSON (columns[1] = the new column)
-	await expect(async () => {
-		const body = await (await request.get("/api/files/def.sql")).json();
-		expect(body.tables[0].columns[1].default).toBe("CURRENT_TIMESTAMP");
-	}).toPass({ timeout: 5000 });
+	await awaitFile(request, "def.sql", (_b) => {
+		expect(_b.tables[0].columns[1].default).toBe("CURRENT_TIMESTAMP");
+	});
 
 	// the SQL panel shows the clause (mysql = schema dialect)
-	await page.getByRole("button", { name: "Show SQL" }).click();
-	await expect(page.locator("aside pre")).toContainText(
-		"DEFAULT CURRENT_TIMESTAMP",
-	);
+	expect(await panelSql(page)).toContain("DEFAULT CURRENT_TIMESTAMP");
 
 	// reload keeps the value in the dialog and the DDL
 	await page.reload();
@@ -83,8 +63,7 @@ test("table comment: set through the table dialog, emitted, round-trips", async 
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("tc.sql"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
+	await newFile(page, "tc");
 
 	await page.getByRole("button", { name: /composite indexes for/ }).click();
 	const dlg = page.locator("dialog.idxedit");
@@ -92,16 +71,12 @@ test("table comment: set through the table dialog, emitted, round-trips", async 
 	await dlg.getByRole("button", { name: "Done" }).click();
 	await expect(dlg).toHaveCount(0);
 
-	await expect(async () => {
-		const body = await (await request.get("/api/files/tc.sql")).json();
-		expect(body.tables[0].comment).toBe("the users table");
-	}).toPass({ timeout: 5000 });
+	await awaitFile(request, "tc.sql", (_b) => {
+		expect(_b.tables[0].comment).toBe("the users table");
+	});
 
 	// mysql emits it as a table option
-	await page.getByRole("button", { name: "Show SQL" }).click();
-	await expect(page.locator("aside pre")).toContainText(
-		"COMMENT='the users table'",
-	);
+	expect(await panelSql(page)).toContain("COMMENT='the users table'");
 
 	// the card carries it as a tooltip, and a reload keeps everything
 	await expect(page.locator("section.table").first()).toHaveAttribute(
@@ -109,10 +84,7 @@ test("table comment: set through the table dialog, emitted, round-trips", async 
 		"the users table",
 	);
 	await page.reload();
-	await page.getByRole("button", { name: "Show SQL" }).click();
-	await expect(page.locator("aside pre")).toContainText(
-		"COMMENT='the users table'",
-	);
+	expect(await panelSql(page)).toContain("COMMENT='the users table'");
 });
 
 test("lint panel lists findings and jumps to the offending table", async ({
@@ -162,13 +134,8 @@ test("light-theme SVG export carries the light paint constants", async ({
 	await page.goto("/");
 	await page.getByTestId("theme-toggle").click();
 
-	const dlPromise = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export SVG" }).click();
-	const dl = await dlPromise;
-	const stream = await dl.createReadStream();
-	const chunks = [];
-	for await (const c of stream) chunks.push(c);
-	const svg = Buffer.concat(chunks).toString("utf8");
+	const { buf } = await downloadBytes(page, "Export SVG");
+	const svg = buf.toString("utf8");
 	// the crow marker always carries the theme edge stroke
 	expect(svg).toContain("#5b83a5"); // EDGE_STROKE_LIGHT
 	expect(svg).not.toContain("#7fa3c0"); // dark EDGE_STROKE must not leak
@@ -212,9 +179,7 @@ test("rename + duplicate file round-trip through the store", async ({
 	request,
 }) => {
 	await page.goto("/");
-	page.once("dialog", (d) => d.accept("orig"));
-	await page.getByRole("button", { name: "New", exact: true }).click();
-	await expect(page.getByTestId("current-file")).toHaveText("orig.sql");
+	await newFile(page, "orig");
 
 	// rename via the prompt
 	page.once("dialog", (d) => d.accept("renamed"));
