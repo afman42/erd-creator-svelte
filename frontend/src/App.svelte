@@ -86,7 +86,7 @@ let dragRaf = 0;
 // Fix C: hysteresis memory for edge routing — one Map per session, passed to
 // edgePaths so the overlap branch sticks across drag frames instead of
 // flipping at the boundary. Not reactive state: geometry reads it, never renders it.
-	let edgeSticky = new Map();
+let edgeSticky = new Map();
 
 // <4px = click (select), not a drag/pan
 /** @param {{ x0: number, y0: number }} origin */
@@ -362,6 +362,8 @@ function onKey(ev) {
 		class="canvas"
 		class:dragging={!!drag}
 		class:panning={!!pan?.moved}
+		role="application"
+		aria-label="ERD canvas. Drag empty space to pan; arrow keys pan when no table is selected."
 		onwheel={onWheel}
 		onpointerdown={startPan}
 		style="touch-action: pan-x pan-y pinch-zoom"

@@ -337,42 +337,42 @@ export function edgePaths(schema, opts = {}) {
 	for (const t of schema.tables)
 		for (let i = 0; i < t.columns.length; i++) {
 			const c = t.columns[i];
-		const p = c.ref && schema.tables.find((x) => x.id === c.ref.tableId);
-		if (!p) continue;
-		const ci = t.y + HDR_H + i * ROW_H + ROW_CENTER;
-		// Fix B: land on the parent's referenced row (sole-PK row), not the
-		// header centre — row-to-row, so the arrow reads attached at both ends.
-		const py = parentRowY(p);
-		let x1, x2;
-		// childAtStart records which END OF THE CURVE is at the child's
-		// card. The routing starts at the parent's border when the child is
-		// to the right, so the child's end is not always the path's start —
-		// and placing the child's label by a fixed fraction from the start
-		// therefore put it at the parent's end, inverting the notation.
-		let childAtStart;
-		// Interval overlap, not x equality. Testing `x1 === x2` caught only
-		// the exactly-stacked case and missed cards that overlap *partially*
-		// — where the side-to-side routing sent the curve straight through
-		// both card bodies, putting the labels inside a card.
-		// Fix C: hysteresis on the overlap decision. gapR is the signed
-		// separation (>0 apart, <0 overlapping); the branch flips only past
-		// the deadband, keyed per FK column so two edges sharing a table
-		// pair keep independent memory. Pruned below for removed FKs.
-		const sticky = opts.sticky;
-		const stickKey = `${t.id}|${c.id ?? i}|${p.id}`;
-		// gapR is the free space between the two card bodies: the distance
-		// from the left card's right edge to the right card's left edge.
-		// >0 apart, <0 overlapping. (Not min/max of right edges — that
-		// measures protrusion past the leftmost card, not the gap.)
-		const gapR =
-			Math.max(t.x, p.x) > Math.min(t.x, p.x)
-				? Math.max(t.x, p.x) - (Math.min(t.x, p.x) + BOX_W)
-				: -BOX_W;
-		const overlapsX = sticky
-			? stickyOverlap(sticky, stickKey, gapR)
-			: t.x < p.x + BOX_W && p.x < t.x + BOX_W;
-		if (sticky) sticky.set(stickKey, overlapsX ? "bow" : "side");
-		if (t.id === p.id) {
+			const p = c.ref && schema.tables.find((x) => x.id === c.ref.tableId);
+			if (!p) continue;
+			const ci = t.y + HDR_H + i * ROW_H + ROW_CENTER;
+			// Fix B: land on the parent's referenced row (sole-PK row), not the
+			// header centre — row-to-row, so the arrow reads attached at both ends.
+			const py = parentRowY(p);
+			let x1, x2;
+			// childAtStart records which END OF THE CURVE is at the child's
+			// card. The routing starts at the parent's border when the child is
+			// to the right, so the child's end is not always the path's start —
+			// and placing the child's label by a fixed fraction from the start
+			// therefore put it at the parent's end, inverting the notation.
+			let childAtStart;
+			// Interval overlap, not x equality. Testing `x1 === x2` caught only
+			// the exactly-stacked case and missed cards that overlap *partially*
+			// — where the side-to-side routing sent the curve straight through
+			// both card bodies, putting the labels inside a card.
+			// Fix C: hysteresis on the overlap decision. gapR is the signed
+			// separation (>0 apart, <0 overlapping); the branch flips only past
+			// the deadband, keyed per FK column so two edges sharing a table
+			// pair keep independent memory. Pruned below for removed FKs.
+			const sticky = opts.sticky;
+			const stickKey = `${t.id}|${c.id ?? i}|${p.id}`;
+			// gapR is the free space between the two card bodies: the distance
+			// from the left card's right edge to the right card's left edge.
+			// >0 apart, <0 overlapping. (Not min/max of right edges — that
+			// measures protrusion past the leftmost card, not the gap.)
+			const gapR =
+				Math.max(t.x, p.x) > Math.min(t.x, p.x)
+					? Math.max(t.x, p.x) - (Math.min(t.x, p.x) + BOX_W)
+					: -BOX_W;
+			const overlapsX = sticky
+				? stickyOverlap(sticky, stickKey, gapR)
+				: t.x < p.x + BOX_W && p.x < t.x + BOX_W;
+			if (sticky) sticky.set(stickKey, overlapsX ? "bow" : "side");
+			if (t.id === p.id) {
 				// Self-reference (e.g. parent_id → same table): a loop out of
 				// the right border and back into it. Routing it through the
 				// card body, as the old `t.x` → `t.x + 60` did, drew the curve
@@ -405,19 +405,19 @@ export function edgePaths(schema, opts = {}) {
 			// Bowing the control points out makes the edge visible and gives the
 			// labels a line to sit on.
 			const degenerate = x1 === x2;
-		routed.push({
-			t,
-			p,
-			c,
-			ci,
-			py,
-			x1,
-			x2,
-			childAtStart,
-			degenerate,
-			child,
-			parent,
-		});
+			routed.push({
+				t,
+				p,
+				c,
+				ci,
+				py,
+				x1,
+				x2,
+				childAtStart,
+				degenerate,
+				child,
+				parent,
+			});
 		}
 
 	// Group edges that would otherwise be drawn at the SAME coordinates. Two
@@ -437,8 +437,11 @@ export function edgePaths(schema, opts = {}) {
 	// Fix C companion: prune sticky keys for FKs that no longer exist, so
 	// the map cannot grow across sessions or resurrect a stale branch.
 	if (opts.sticky) {
-		const live = new Set(routed.map((r) => `${r.t.id}|${r.c.id ?? ""}|${r.p.id}`));
-		for (const k of [...opts.sticky.keys()]) if (!live.has(k)) opts.sticky.delete(k);
+		const live = new Set(
+			routed.map((r) => `${r.t.id}|${r.c.id ?? ""}|${r.p.id}`),
+		);
+		for (const k of [...opts.sticky.keys()])
+			if (!live.has(k)) opts.sticky.delete(k);
 	}
 
 	const out = [];
@@ -463,26 +466,26 @@ export function edgePaths(schema, opts = {}) {
 			// reader finds the symbol beside the table it describes.
 			const tChild = r.childAtStart ? LBL_T_CHILD : LBL_T_PARENT;
 			const tParent = r.childAtStart ? LBL_T_PARENT : LBL_T_CHILD;
-		out.push({
-			d,
-			self: r.t.id === r.p.id,
-			arrowAtStart,
-			from: {
-				// Fix D: round label coords to whole px. During drag x/y are
-				// snapped but the cubic emits fractions, so labels jitter
-				// sub-pixel every frame while the cards sit on integers.
-				...roundPt(
-					pointOnCubic(r.x1, r.ci, bx, r.ci, bx, r.py, r.x2, r.py, tChild),
-				),
-				text: r.child,
-			},
-			to: {
-				...roundPt(
-					pointOnCubic(r.x1, r.ci, bx, r.ci, bx, r.py, r.x2, r.py, tParent),
-				),
-				text: r.parent,
-			},
-		});
+			out.push({
+				d,
+				self: r.t.id === r.p.id,
+				arrowAtStart,
+				from: {
+					// Fix D: round label coords to whole px. During drag x/y are
+					// snapped but the cubic emits fractions, so labels jitter
+					// sub-pixel every frame while the cards sit on integers.
+					...roundPt(
+						pointOnCubic(r.x1, r.ci, bx, r.ci, bx, r.py, r.x2, r.py, tChild),
+					),
+					text: r.child,
+				},
+				to: {
+					...roundPt(
+						pointOnCubic(r.x1, r.ci, bx, r.ci, bx, r.py, r.x2, r.py, tParent),
+					),
+					text: r.parent,
+				},
+			});
 		});
 	}
 	return out;

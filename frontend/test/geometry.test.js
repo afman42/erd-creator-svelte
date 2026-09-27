@@ -356,12 +356,18 @@ test("edgePaths: py lands on the parent sole-PK row, not the header", () => {
 
 test("edgePaths: py falls back to header centre when parent has no sole PK", () => {
 	// parent at x=600: no x overlap with child at 0 → side branch, py visible
-	const parent = tab("p", 600, 100, [{ id: "a", pk: true }, { id: "b", pk: true }]);
+	const parent = tab("p", 600, 100, [
+		{ id: "a", pk: true },
+		{ id: "b", pk: true },
+	]);
 	const child = tab("c", 0, 0, [{ id: "c1", ref: { tableId: "p" } }]);
 	const [e] = edgePaths({ tables: [parent, child] });
 	const py = 100 + HDR_H / 2; // 114
 	// path ends at the parent x=600 with fallback py: "600 114"
-	assert.ok(e.d.includes(`600 ${py}`), `expected fallback py ${py}, got ${e.d}`);
+	assert.ok(
+		e.d.includes(`600 ${py}`),
+		`expected fallback py ${py}, got ${e.d}`,
+	);
 });
 
 // ---- the crow's foot belongs at the CHILD end ----

@@ -113,6 +113,8 @@ export async function selectTable(page, i = 0) {
 	// traps subsequent keys in BUTTON focus, so blur to body for the !editing
 	// guard in onKey. The body click above usually does this, but a focused
 	// button keeps focus unless explicitly blurred.
-	await page.evaluate(() => /** @type {HTMLElement|null} */ (document.activeElement)?.blur?.());
+	await page.evaluate(() =>
+		/** @type {HTMLElement|null} */ (document.activeElement)?.blur?.(),
+	);
 	await expect(page.locator("section.table").nth(i)).toHaveClass(/selected/);
 }

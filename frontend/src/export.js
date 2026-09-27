@@ -6,7 +6,6 @@
 // uses, so nothing here touches the reactive store directly.
 
 import { api, errMsg } from "./api.js";
-import { exportStem } from "./capture.js";
 import { downloadBlob, downloadText, execCopy } from "./download.js";
 
 // copy to clipboard via navigator.clipboard, falling back to a hidden
@@ -51,12 +50,13 @@ export async function copySql(store, refreshSql, flash) {
 
 // The name to save under. A loaded file keeps its own name (users.sql stays
 // users.sql); an unsaved scratch schema gets a name that says which grammar it
-// is in, since that is the one thing the bytes do not state up front. The
-// unsaved fallback stem is the canonical exportStem() in capture.js — shared
-// with png/svg — so the "<dialect>-schema" rule lives in one place.
+// is in, since that is the one thing the bytes do not state up front. The stem
+// rule mirrors exportStem() in capture.js — kept as a local copy (not an
+// import) so capture.js stays dynamically imported and the SQL path pays
+// 0 bytes for the raster module.
 export function exportFilename(store) {
 	if (store.currentFile) return store.currentFile;
-	return `${exportStem(null, store.schema.dialect)}.sql`;
+	return `${store.schema.dialect || "erd"}-schema.sql`;
 }
 
 export async function exportDdl(store, flash) {

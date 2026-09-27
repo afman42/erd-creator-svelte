@@ -791,7 +791,9 @@ test("click selects a table and Del removes the selection", async ({
 	// The header press lands on the select button; focusing it traps keys in
 	// BUTTON focus, and body-click does not blur a focused button — blur
 	// explicitly so the onKey !editing guard receives Delete.
-	await page.evaluate(() => /** @type {HTMLElement|null} */ (document.activeElement)?.blur?.());
+	await page.evaluate(() =>
+		/** @type {HTMLElement|null} */ (document.activeElement)?.blur?.(),
+	);
 	await page.keyboard.press("Delete");
 	await expect(page.locator("section.table")).toHaveCount(1);
 });
