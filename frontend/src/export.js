@@ -6,6 +6,7 @@
 // uses, so nothing here touches the reactive store directly.
 
 import { api, errMsg } from "./api.js";
+import { exportStem } from "./capture.js";
 import { downloadBlob, downloadText, execCopy } from "./download.js";
 
 // copy to clipboard via navigator.clipboard, falling back to a hidden
@@ -50,9 +51,12 @@ export async function copySql(store, refreshSql, flash) {
 
 // The name to save under. A loaded file keeps its own name (users.sql stays
 // users.sql); an unsaved scratch schema gets a name that says which grammar it
-// is in, since that is the one thing the bytes do not state up front.
+// is in, since that is the one thing the bytes do not state up front. The
+// unsaved fallback stem is the canonical exportStem() in capture.js — shared
+// with png/svg — so the "<dialect>-schema" rule lives in one place.
 export function exportFilename(store) {
-	return store.currentFile || `${store.schema.dialect}-schema.sql`;
+	if (store.currentFile) return store.currentFile;
+	return `${exportStem(null, store.schema.dialect)}.sql`;
 }
 
 export async function exportDdl(store, flash) {
@@ -73,12 +77,7 @@ export async function exportDdl(store, flash) {
 }
 
 export async function exportPng(store, flash) {
-	if (!store.schema.tables.length) {
-		flash("nothing to export — add a table first", "err");
-		return;
-	}
-	store.exporting = true;
-	try {
+	await guardRaster(store, flash, "png", async () => {
 		// The store owns the DOM lookup and the schema; capture.js is handed
 		// both so it stays free of ambient document/store access and can be
 		// driven with a plain element in tests.
@@ -88,8 +87,29 @@ export async function exportPng(store, flash) {
 		const name = pngFilename(store.currentFile, store.schema.dialect);
 		downloadBlob(blob, name);
 		flash(`downloaded ${name}`);
+	});
+}
+
+// guardRaster shares the empty-schema guard + exporting flag between the PNG
+// and SVG arms: same guard, same flag set/reset, same "<kind> export failed"
+// flash on error.
+// kind selects the error label ("png" or "svg").
+/**
+ * @param {any} store
+ * @param {(msg: string, kind?: "ok" | "err" | "warn") => void} flash
+ * @param {string} kind
+ * @param {() => Promise<void>} run
+ */
+async function guardRaster(store, flash, kind, run) {
+	if (!store.schema.tables.length) {
+		flash("nothing to export — add a table first", "err");
+		return;
+	}
+	store.exporting = true;
+	try {
+		await run();
 	} catch (e) {
-		flash(`png export failed: ${errMsg(e)}`, "err");
+		flash(`${kind} export failed: ${errMsg(e)}`, "err");
 	} finally {
 		store.exporting = false;
 	}
@@ -101,12 +121,7 @@ export async function exportPng(store, flash) {
 // docs and slides where the diagram is rescaled, PNG where a bitmap is
 // required. The SVG is written as text, not as a data URL: see decodeSvgDataUrl.
 export async function exportSvg(store, flash) {
-	if (!store.schema.tables.length) {
-		flash("nothing to export — add a table first", "err");
-		return;
-	}
-	store.exporting = true;
-	try {
+	await guardRaster(store, flash, "svg", async () => {
 		const el = document.querySelector(".canvas");
 		const { captureSvg, svgFilename } = await import("./capture.js");
 		const svg = await captureSvg(el, store.schema);
@@ -115,9 +130,5 @@ export async function exportSvg(store, flash) {
 		// passed through as-is with the .svg extension as the type signal.
 		downloadText(svg, name, "image/svg+xml;charset=utf-8");
 		flash(`downloaded ${name}`);
-	} catch (e) {
-		flash(`svg export failed: ${errMsg(e)}`, "err");
-	} finally {
-		store.exporting = false;
-	}
+	});
 }

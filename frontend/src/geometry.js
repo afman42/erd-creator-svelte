@@ -169,6 +169,20 @@ export const LABEL_HALO_LIGHT = "#ffffff"; // --color-bg (light)
 export function stackStep(nColumns) {
 	return boxHeight(nColumns) + GAP;
 }
+// Lowest card bottom over a table list: where addTable/createManyToMany
+// place a new card (one full stack step below the lowest existing card).
+// Owns the placement arithmetic so the two callers cannot drift.
+/**
+ * @param {{ y: number, columns: unknown[] }[]} tables
+ * @param {number} floor minimum y (default CANVAS_ORIGIN.y)
+ * @returns {number}
+ */
+export function lowestY(tables, floor = CANVAS_ORIGIN.y) {
+	return Math.max(
+		floor,
+		...tables.map((t) => t.y + stackStep(t.columns.length)),
+	);
+}
 
 // cardinality derives the min-max notation for an FK edge, in the standard
 // "min..max" form (0..1, 1..1, 0..N).
@@ -210,12 +224,10 @@ export function stackStep(nColumns) {
  */
 export function cardinality(t, c) {
 	// A sole PK is unique; a composite-PK member is not.
-	const unique = isUniqueRef(t, c);
 	// nn || pk, because that is what the emitters write — see above.
-	const required = !!(c.nn || c.pk);
 	return {
-		child: unique ? "0..1" : "0..N",
-		parent: required ? "1..1" : "0..1",
+		child: isUniqueRef(t, c) ? "0..1" : "0..N",
+		parent: c.nn || c.pk ? "1..1" : "0..1",
 	};
 }
 
@@ -273,10 +285,10 @@ export const CARDINALITY_STATES = [
  */
 export function cardinalityState(t, c) {
 	const { child, parent } = cardinality(t, c);
-	const found = CARDINALITY_STATES.find(
-		(s) => s.child === child && s.parent === parent,
+	return (
+		CARDINALITY_STATES.find((s) => s.child === child && s.parent === parent)
+			?.id ?? null
 	);
-	return found ? found.id : null;
 }
 
 // parentRowY: which row of the parent card an FK edge lands on (Fix B).
@@ -292,6 +304,15 @@ export function parentRowY(p) {
 	if (pkCount !== 1) return p.y + HDR_H / 2;
 	const pkIdx = p.columns.findIndex((c) => c.pk);
 	return p.y + HDR_H + pkIdx * ROW_H + ROW_CENTER;
+}
+
+// stickyOverlap applies the hysteresis deadband to the overlap decision:
+// clearly apart (gap > HYST_PX) → side-to-side, clearly overlapping
+// (gap < -HYST_PX) → bowed, inside the band → keep the previous branch.
+function stickyOverlap(sticky, stickKey, gapR) {
+	if (gapR > HYST_PX) return false;
+	if (gapR < -HYST_PX) return true;
+	return (sticky.get(stickKey) ?? (gapR <= 0 ? "bow" : "side")) === "bow";
 }
 
 /**
@@ -348,11 +369,7 @@ export function edgePaths(schema, opts = {}) {
 				? Math.max(t.x, p.x) - (Math.min(t.x, p.x) + BOX_W)
 				: -BOX_W;
 		const overlapsX = sticky
-			? gapR > HYST_PX
-				? false
-				: gapR < -HYST_PX
-					? true
-					: (sticky.get(stickKey) ?? (gapR <= 0 ? "bow" : "side")) === "bow"
+			? stickyOverlap(sticky, stickKey, gapR)
 			: t.x < p.x + BOX_W && p.x < t.x + BOX_W;
 		if (sticky) sticky.set(stickKey, overlapsX ? "bow" : "side");
 		if (t.id === p.id) {

@@ -10,13 +10,13 @@
 //
 // A native <dialog> rather than a hand-rolled overlay: showModal() puts it in
 // the top layer, traps focus, and wires Escape to cancel — three things an
-// overlay would have to reimplement, and the top layer is also why the dialog
-// needs no inline styles (the CSP is style-src 'self', so it could not have
-// them anyway).
+// overlay would have to reimplement. (The old comment here claimed the CSP's
+// style-src forbids inline styles on the dialog; corrected: style-src governs
+// static style attributes, not the Svelte runtime's CSSOM writes — and this
+// modal uses neither. See the note on the .zoom layer in App.svelte.)
 import { showDialog } from "./dialog.js";
 import { baseType, isInt, TYPES } from "./erd.js";
 import { cardinalityState } from "./geometry.js";
-import { isJunctionTable } from "./relationships.js";
 import {
 	commitColName,
 	commitComment,
@@ -28,21 +28,37 @@ import {
 	setRefOnUpdate,
 	setType,
 	store,
+	toggleAi,
 	toggleArray,
 	toggleFlag,
 	togglePk,
 	unsetRef,
 } from "./schema.svelte.js";
 
-let { table, column, onClose } = $props();
+let {
+	table,
+	column,
+	columnIndex = -1,
+	columnCount = 0,
+	others = [],
+	junction = false,
+	onClose,
+} = $props();
 
 const actions = ["CASCADE", "RESTRICT", "SET NULL", "SET DEFAULT", "NO ACTION"];
-const others = $derived(store.schema.tables.filter((x) => x.id !== table.id));
+// FK-target list, move bounds, and junction state arrive as props from
+// TableCard/App (hoisted per-schema maps): the old others filter + indexOf
+// per keystroke + isJunctionTable full scan re-ran on every render of the
+// open modal. Props default so the modal still renders standalone in tests.
 // Reordering: the column list order IS the DDL order, so ↑/↓ are real edits.
 // null at the edges disables the button (native disabled, not a no-op click).
-const canMoveUp = $derived(table.columns.indexOf(column) > 0);
+const canMoveUp = $derived(
+	columnIndex >= 0 ? columnIndex > 0 : table.columns.indexOf(column) > 0,
+);
 const canMoveDown = $derived(
-	table.columns.indexOf(column) < table.columns.length - 1,
+	columnIndex >= 0
+		? columnIndex < (columnCount || table.columns.length) - 1
+		: table.columns.indexOf(column) < table.columns.length - 1,
 );
 
 // The relationship IS this column's FK: target + flags read back through
@@ -50,13 +66,17 @@ const canMoveDown = $derived(
 // column) or Remove column (drops it). Junction members get a hint: dropping
 // one FK demotes the table from N:N to a plain child.
 //
-// relKind reads ux only (UQ → 1:1 else 1:N): a sole PK also pins the child
+// relKindOf reads ux only (UQ → 1:1 else 1:N): a sole PK also pins the child
 // end to 0..1 via isUniqueRef, but PK is a column identity, not a type the
 // radio should claim — the radio would then read 1:N while the edge says
 // 0..1. The legend (cardinalityState) always shows the truth.
+/** @param {{ ref: unknown, ux: boolean }} col */
+function relKindOf(col) {
+	if (!col.ref) return null;
+	return col.ux ? "1:1" : "1:N";
+}
 const relState = $derived(column.ref ? cardinalityState(table, column) : null);
-const relKind = $derived(!column.ref ? null : column.ux ? "1:1" : "1:N");
-const inJunction = $derived(isJunctionTable(table, store.schema));
+const relKind = $derived(relKindOf(column));
 
 function setRelKind(kind) {
 	if (!column.ref) return;
@@ -71,6 +91,9 @@ $effect(() => {
 	showDialog(dlg);
 });
 
+// Inline field-error text (S8): mirrors the toast for empty-name and
+// AI+default refusals so the recovery hint sits at the field.
+let fieldError = $state("");
 function remove() {
 	const id = column.id;
 	rmColumn(table, column);
@@ -81,15 +104,25 @@ function remove() {
 }
 </script>
 
-<dialog bind:this={dlg} onclose={onClose} class="coledit">
+<dialog bind:this={dlg} onclose={onClose} class="modal coledit">
 	<h2>{table.name} · column</h2>
+	<!-- Inline field errors (S8): the same failures flash() toasts now also
+	     anchor to the field — the toast stays for AT users, the <p> pins the
+	     recovery hint where the eye is. Local view state, cleared on close. -->
+	{#if fieldError}
+		<p class="ferr" role="alert">{fieldError}</p>
+	{/if}
 
 	<label class="fld">
 		<span>Name</span>
 		<input
 			class="cname"
 			value={column.name}
-			onchange={(e) => commitColName(column, e)}
+			onchange={(e) => {
+				const v = e.currentTarget.value.trim();
+				fieldError = v ? "" : "Name can't be empty — the old name was kept.";
+				commitColName(table, column, e);
+			}}
 			spellcheck="false"
 		/>
 	</label>
@@ -122,33 +155,33 @@ function remove() {
 	{/if}
 
 	<fieldset class="flags">
-			<legend>Flags</legend>
-			<label title="primary key"
-				><input type="checkbox" checked={column.pk} onchange={() => togglePk(column)} />PK</label
-			>
-			<label title="not null"
-				><input
-					type="checkbox"
-					checked={column.nn || column.pk}
-					disabled={column.pk}
-					onchange={() => toggleFlag(column, "nn")}
-					/>NN</label
-			>
-			<label title="unique"
-				><input type="checkbox" checked={column.ux} onchange={() => toggleFlag(column, "ux")} />UQ</label
-			>
-			<label title="auto increment"
-				><input
-					type="checkbox"
-					checked={column.ai}
-					disabled={!isInt(column.type)}
-					onchange={() => toggleFlag(column, "ai")}
-					/>AI</label
-			>
-			<label title="index"
-				><input type="checkbox" checked={column.ix} onchange={() => toggleFlag(column, "ix")} />IX</label
-			>
-		</fieldset>
+		<legend>Flags</legend>
+		<label title="primary key"
+			><input type="checkbox" checked={column.pk} onchange={() => togglePk(column)} />PK <small>primary key</small></label
+		>
+		<label title="not null"
+			><input
+				type="checkbox"
+				checked={column.nn || column.pk}
+				disabled={column.pk}
+				onchange={() => toggleFlag(column, "nn")}
+				/>NN <small>not null</small></label
+		>
+		<label title="unique"
+			><input type="checkbox" checked={column.ux} onchange={() => toggleFlag(column, "ux")} />UQ <small>unique</small></label
+		>
+		<label title="auto increment"
+			><input
+				type="checkbox"
+				checked={column.ai}
+				disabled={!isInt(column.type)}
+				onchange={() => toggleAi(column)}
+				/>AI <small>auto-inc</small></label
+		>
+		<label title="index"
+			><input type="checkbox" checked={column.ix} onchange={() => toggleFlag(column, "ix")} />IX <small>indexed</small></label
+		>
+	</fieldset>
 
 		<label class="fld">
 			<span>Default</span>
@@ -156,7 +189,14 @@ function remove() {
 				class="dflt"
 				placeholder="0 · 'x' · CURRENT_TIMESTAMP"
 				value={column.default ?? ""}
-				onchange={(e) => commitDefault(column, e)}
+				onchange={(e) => {
+					const v = e.currentTarget.value.trim();
+					fieldError =
+						v && column.ai
+							? "An auto-increment column can't have a default — clear AI first."
+							: "";
+					commitDefault(column, e);
+				}}
 				spellcheck="false"
 				title="SQL DEFAULT expression, emitted verbatim after server validation (e.g. 0, 'active', CURRENT_TIMESTAMP, (uuid()))"
 			/>
@@ -202,7 +242,7 @@ function remove() {
 					title="Delete this relationship (keeps the column)"
 				>Remove relationship</button>
 			</div>
-			{#if inJunction}
+			{#if junction}
 				<p class="jhint">Junction member — removing this FK demotes {table.name} from N:N to a plain table.</p>
 			{/if}
 		</fieldset>
@@ -265,51 +305,25 @@ function remove() {
 </dialog>
 
 <style>
+	/* Base skin (bg/border/backdrop/h2/fields/footer) lives in dialog.css —
+	   only the coledit width + label-column width stay here. */
 	dialog.coledit {
-		background: var(--color-surface);
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		padding: 14px 16px;
 		min-width: 300px;
-		box-shadow: 0 8px 32px #000a;
 	}
-	dialog.coledit::backdrop {
-		background: #0007;
-	}
-	h2 {
-		margin: 0 0 10px;
-		font-size: 13px;
-		font-weight: 600;
-		color: var(--color-text-muted);
+	.ferr {
+		margin: 0 0 8px;
+		font-size: 11px;
+		color: var(--color-danger);
 	}
 	.fld {
-		display: grid;
 		grid-template-columns: 76px 1fr;
-		align-items: center;
-		gap: 8px;
-		margin-bottom: 8px;
-	}
-	.fld > span {
-		font-size: 11px;
-		color: var(--color-text-muted);
-	}
-	.fld input,
-	.fld select {
-		background: var(--color-bg);
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		padding: 4px 6px;
-		font: 12px ui-monospace, monospace;
-		width: 100%;
-		box-sizing: border-box;
 	}
 	.flags {
 		display: flex;
-		gap: 10px;
+		flex-wrap: wrap;
+		gap: 4px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		margin: 0 0 8px;
 		padding: 6px 8px;
 	}
@@ -321,14 +335,19 @@ function remove() {
 	.flags label {
 		display: flex;
 		gap: 4px;
-		align-items: center;
+		align-items: baseline;
 		font-size: 11px;
+		min-height: 44px;
+	}
+	.flags label small {
+		font-size: 10px;
+		color: var(--color-text-faint);
 	}
 	/* Relationship block: the FK's type (UQ flag) + delete for this edge.
 	   Same bordered fieldset vocabulary as .flags so it reads as one group. */
 	.rel {
 		border: 1px solid var(--color-border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		margin: 0 0 8px;
 		padding: 6px 8px;
 	}
@@ -336,7 +355,7 @@ function remove() {
 		font-size: 11px;
 		color: var(--color-text-muted);
 		padding: 0 4px;
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono);
 	}
 	.relkinds {
 		display: flex;
@@ -347,17 +366,18 @@ function remove() {
 		display: flex;
 		gap: 4px;
 		align-items: center;
-		font: 600 11px ui-monospace, monospace;
+		font: 600 11px var(--font-mono);
 		color: var(--color-text-muted);
 		border: 1px solid var(--color-border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		padding: 3px 8px;
 		cursor: pointer;
+		min-height: 44px;
 	}
 	.relkind.on {
 		border-color: var(--color-primary);
-		background: #233448;
-		color: #fff;
+		background: var(--color-on-bg);
+		color: var(--color-on-text);
 	}
 	.rmrel {
 		background: transparent;
@@ -370,26 +390,20 @@ function remove() {
 		border-radius: 4px;
 	}
 	.rmrel:hover {
-		background: #2a1a1d;
+		background: var(--color-danger-hover);
 	}
 	.jhint {
 		margin: 6px 0 0;
 		font-size: 11px;
 		color: var(--color-warning);
 	}
-	footer {
-		display: flex;
-		gap: 8px;
-		justify-content: flex-end;
-		align-items: center;
-		margin-top: 12px;
-	}
 	footer button {
 		border: 0;
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 6px 12px;
 		cursor: pointer;
 		font: inherit;
+		min-height: 44px;
 	}
 	/* ↑/↓ are compact square controls beside the remove button; the footer
 	   buttons are otherwise unstyled because they inherit `footer button`.
@@ -419,6 +433,6 @@ function remove() {
 		margin-right: auto;
 	}
 	.rmcol:hover {
-		background: #2a1a1d;
+		background: var(--color-danger-hover);
 	}
 </style>

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newSchema, newTable } from "../src/erd.js";
-import { clearHistory, snap, snapRaw, undo } from "../src/history.js";
+import { clearHistory, depth, snap, snapRaw, undo } from "../src/history.js";
 
 test("history snap/undo round-trips schema", () => {
 	clearHistory();
@@ -19,6 +19,19 @@ test("history snap/undo round-trips schema", () => {
 test("undo returns null when empty", () => {
 	clearHistory();
 	assert.equal(undo(), null);
+});
+
+test("depth mirrors push/pop/drain", () => {
+	clearHistory();
+	assert.equal(depth(), 0);
+	snap(newSchema("mysql", [newTable("a")]));
+	assert.equal(depth(), 1);
+	snap(newSchema("mysql", [newTable("b")]));
+	assert.equal(depth(), 2);
+	assert.ok(undo());
+	assert.equal(depth(), 1);
+	clearHistory();
+	assert.equal(depth(), 0);
 });
 
 test("snap caps at 60", () => {

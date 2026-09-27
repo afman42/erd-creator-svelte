@@ -17,8 +17,13 @@ import {
 	shiftColumn,
 	uniqName,
 } from "./erd.js";
-import { CANVAS_ORIGIN, DUP_OFFSET, stackStep } from "./geometry.js";
-import { snap as snapHistory, undo as undoHistory } from "./history.js";
+import { CANVAS_ORIGIN, DUP_OFFSET, lowestY } from "./geometry.js";
+import {
+	depth as depthHistory,
+	dropLast as dropHistory,
+	snap as snapHistory,
+	undo as undoHistory,
+} from "./history.js";
 import { createManyToMany, createRelationship } from "./relationships.js";
 import { initialTheme, saveTheme, THEME_DARK, THEME_LIGHT } from "./theme.js";
 
@@ -39,18 +44,27 @@ export const store = $state({
 	// save, the SQL panel, copy and export, and the file remembers its grammar.
 	schema: newSchema("mysql", [newTable("users")]),
 	sqlText: "",
+	sqlLoading: false, // true while refreshSql is in flight; distinct from ""
 	error: "",
 	errorKind: "err",
+	// Toast queue (max 3, oldest evicted): error/errorKind above mirror the
+	// latest entry so existing text assertions keep working. Each entry is
+	// {id, msg, kind}; id is a monotonic counter, never reused.
+	/** @type {{id: number, msg: string, kind: string}[]} */
+	notices: [],
 	selected: null,
 	lint: [],
 	exporting: false,
 	// Mirror of autosave's dirty flag, made reactive so the Toolbar can render
 	// an unsaved indicator. autosave.js owns the truth (it drives the flush
-	// gates); the mirror is written at exactly the two places the flag changes.
+	// gates); the mirror is kept in lockstep via setDirtyBoth() in autosave.js.
 	dirty: false,
 	// UI theme; NOT part of the schema, so it never enters undo snapshots or
 	// the saved file. App.svelte applies it as data-theme on <html>.
 	theme: initialTheme(),
+	// Reactive mirror of the history.js stack depth — drives the Toolbar Undo
+	// disabled state. Synced in snap()/undo() below and on clearHistory sites.
+	undoDepth: 0,
 });
 layout(store.schema);
 
@@ -68,6 +82,7 @@ async function refreshLint() {
 // refreshSql returns whether the export succeeded so callers (copySql) can tell
 // a stale panel from a fresh copy instead of copying whatever was last shown.
 export async function refreshSql() {
+	store.sqlLoading = true;
 	try {
 		// The panel shows the schema's own dialect, so it always agrees with
 		// the dropdown and with what Save writes. It used to hardcode mysql,
@@ -80,6 +95,8 @@ export async function refreshSql() {
 	} catch {
 		/* keep last good text */
 		return false;
+	} finally {
+		store.sqlLoading = false;
 	}
 }
 
@@ -103,9 +120,13 @@ export function touch(showSql) {
 // ---- undo (client-only, JSON snapshots) ----
 export function snap() {
 	snapHistory(store.schema);
+	store.undoDepth = depthHistory();
 }
 export function undo() {
 	const prev = undoHistory();
+	// Sync even on null: undo() drains corrupt entries, so depth can move
+	// while returning nothing.
+	store.undoDepth = depthHistory();
 	if (!prev) return;
 	store.schema = prev;
 	store.selected = null;
@@ -125,17 +146,21 @@ installFlush(() => flushCurrent());
 // Names come from erd.js's uniqName (pure + unit-tested); it needs the taken
 // set passed in, since it has no access to the store. Returned as Set for O(1)
 // lookup when many tables exist (bench: 500 tables 5× faster).
+// Lowest card bottom helper lives in geometry.js (lowestY); layout() in
+// erd.js owns the same stacking via stackStep(). takenNames feeds uniqName
+// the taken set (pure + unit-tested, needs it passed in — no store access).
 const takenNames = () => new Set(store.schema.tables.map((t) => t.name));
+// dupOf reports whether name is taken by any table other than t,
+// case-insensitively. Shared by commitTableName/commitColName.
+function dupOf(list, name, self, key = (x) => x.name) {
+	const v = name.toLowerCase();
+	return list.some((x) => x !== self && key(x).toLowerCase() === v);
+}
 export function addTable() {
 	snap();
 	// Place the new card one full stack step below the lowest existing card,
-	// using the same arithmetic layout() uses. This was a bare `+36` with no
-	// derivation; it agreed with layout()'s `24 + GAP` only by coincidence
-	// (24+12=36), and both understated the real card by 3px.
-	const y = Math.max(
-		CANVAS_ORIGIN.y,
-		...store.schema.tables.map((t) => t.y + stackStep(t.columns.length)),
-	);
+	// via lowestY() — the same arithmetic layout()/createManyToMany use.
+	const y = lowestY(store.schema.tables);
 	store.schema.tables.push(
 		Object.assign(newTable(uniqName("table1", takenNames())), {
 			x: CANVAS_ORIGIN.x,
@@ -152,6 +177,10 @@ export function dupTable(t) {
 	c.name = uniqName(`${t.name}_copy`, takenNames());
 	c.x = t.x + DUP_OFFSET;
 	c.y = t.y + DUP_OFFSET;
+	// A self-referencing FK (ref.tableId === source id) must follow the copy:
+	// otherwise the clone points at the ORIGINAL table, not itself.
+	for (const col of c.columns)
+		if (col.ref?.tableId === t.id) col.ref.tableId = c.id;
 	store.schema.tables.push(c);
 }
 /**
@@ -175,6 +204,9 @@ export function rmColumn(t, c) {
 	} // empty table = invalid DDL
 	snap();
 	t.columns = t.columns.filter((x) => x.id !== c.id);
+	// Composite indexes key columns by NAME — prune the deleted one so the
+	// table cannot keep an index over a column that no longer exists.
+	dropIndexCol(t, c.name);
 }
 // moveColumn reorders a column within its table: the array order is the DDL
 // order, so the emitters follow. The edge check runs BEFORE snap so a no-op
@@ -199,19 +231,20 @@ export function addColumn(t) {
 	t.columns.push(newColumn());
 }
 /**
- * commitCreate applies a creator result: a failure flashes its error and
- * leaves the schema untouched (no dead undo entry); a success snapshots for
- * undo and re-lints. Shared by addRelationship and addManyToMany.
- * @param {{ ok: boolean, error?: string }} r
+ * commitCreate applies a creator thunk: snap BEFORE the mutation (like every
+ * other mutation), run, and on failure drop the dead entry + flash.
+ * @param {() => ({ ok: boolean, error?: string } | undefined)} fn
  * @returns {boolean}
  */
-function commitCreate(r) {
-	if (!r.ok) {
-		flash(r.error, "err");
+function commitCreate(fn) {
+	snap();
+	const r = fn();
+	if (!r?.ok) {
+		dropHistory();
+		store.undoDepth = depthHistory();
+		flash(r?.error ?? "could not create relationship", "err");
 		return false;
 	}
-	snap();
-
 	return true;
 }
 /**
@@ -223,7 +256,7 @@ function commitCreate(r) {
  * @returns {boolean}
  */
 export function addRelationship(childId, parentId, type) {
-	return commitCreate(
+	return commitCreate(() =>
 		createRelationship(store.schema, childId, parentId, type),
 	);
 }
@@ -236,35 +269,109 @@ export function addRelationship(childId, parentId, type) {
  * @returns {boolean}
  */
 export function addManyToMany(aId, bId) {
-	return commitCreate(createManyToMany(store.schema, aId, bId));
+	return commitCreate(() => createManyToMany(store.schema, aId, bId));
 }
 /**
  * @param {Table} t
  */
 export function commitTableName(t, ev) {
-	const v = ev.target.value.trim();
-	if (v && !store.schema.tables.some((x) => x !== t && x.name === v)) {
+	commitName({
+		list: store.schema.tables,
+		self: t,
+		ev,
+		dupMsg: (v) => `table ${v} already exists`,
+		apply: (v) => {
+			t.name = v;
+		},
+	});
+}
+// commitName is the shared rename body behind commitTableName/commitColName:
+// trim, reject empty/dup (resetting the input), no-op same-value without a
+// snap, else snapshot + apply. dupMsg labels the flash per caller.
+/**
+ * @param {{ list: { name: string }[], self: { name: string }, ev: Event, dupMsg: (v: string) => string, apply: (v: string) => void }} args
+ */
+function commitName({ list, self, ev, dupMsg, apply }) {
+	const el = /** @type {HTMLInputElement} */ (ev.target ?? ev.currentTarget);
+	const v = el.value.trim();
+	const dup = dupOf(list, v, self);
+	if (v && !dup) {
+		if (v === self.name) return; // no-op same-value: no snap
 		snap();
-		t.name = v;
-	} else ev.target.value = t.name;
+		apply(v);
+	} else {
+		if (dup) flash(dupMsg(v), "err");
+		el.value = self.name;
+	}
 }
 /**
+ * Sync ix.cols with a column rename: the composite index stores NAMES.
+ * @param {Table} t
+ * @param {string} from
+ * @param {string} to
+ */
+function renameIndexCol(t, from, to) {
+	updateIndexCol(t, from, (ix, i) => (ix.cols[i] = to));
+}
+/**
+ * Drop a deleted column from every composite index on its table.
+ * @param {Table} t
+ * @param {string} name
+ */
+function dropIndexCol(t, name) {
+	updateIndexCol(t, name, (ix, i) => ix.cols.splice(i, 1));
+}
+/**
+ * Apply fn to every occurrence of a column name in the table's indexes.
+ * @param {Table} t
+ * @param {string} name
+ * @param {(ix: Index, i: number) => void} fn
+ */
+function updateIndexCol(t, name, fn) {
+	for (const ix of t.indexes ?? []) {
+		const i = ix.cols.indexOf(name);
+		if (i >= 0) fn(ix, i);
+	}
+}
+/**
+ * @param {Table} t
  * @param {Column} c
  */
-export function commitColName(c, ev) {
-	const v = ev.target.value.trim();
-	if (v) {
-		snap();
-		c.name = v;
-	} else ev.target.value = c.name;
+export function commitColName(t, c, ev) {
+	commitName({
+		list: t.columns,
+		self: c,
+		ev,
+		dupMsg: (v) => `column ${v} already exists in ${t.name}`,
+		apply: (v) => {
+			renameIndexCol(t, c.name, v);
+			c.name = v;
+		},
+	});
+}
+// commitText reads a trimmed input value; empty is legitimate for comments
+// and defaults (clearing one) but resets for names. Returns null when the
+// caller must bail (empty name), leaving el.value reset to the old value.
+/**
+ * @param {HTMLInputElement} el
+ * @param {string} oldValue
+ * @param {boolean} allowEmpty
+ * @returns {string | null}
+ */
+function commitText(el, oldValue, allowEmpty = false) {
+	const v = el.value.trim();
+	if (!v && !allowEmpty) {
+		el.value = oldValue;
+		return null;
+	}
+	return v;
 }
 // Comments accept empty (clearing one is legitimate), unlike names.
 /**
  * @param {Column} c
  */
 export function commitComment(c, ev) {
-	snap();
-	c.comment = ev.target.value.trim();
+	commitFreeText(c, ev, "comment");
 }
 // commitDefault stores the column's DEFAULT expression as typed; empty clears
 // it. The server validates the expression (validateDefault); the one rule the
@@ -272,28 +379,35 @@ export function commitComment(c, ev) {
 // same proactive refusal the array toggle uses for PK/AI.
 /**
  * @param {Column} c
- * @param {Event & { target: HTMLInputElement }} ev
+ * @param {Event & { target: HTMLInputElement, currentTarget: HTMLInputElement }} ev
  */
 export function commitDefault(c, ev) {
-	const v = ev.target.value.trim();
+	const el = ev.currentTarget ?? ev.target;
+	const v = el.value.trim();
 	if (v && c.ai) {
 		flash("an auto-increment column cannot also have a default", "err");
-		ev.target.value = c.default ?? "";
+		el.value = c.default ?? "";
 		return;
 	}
+	if (v === c.default) return; // no-op same-value: no snap
 	snap();
 	c.default = v;
 }
 // commitTableComment is the table-level twin of commitComment: the comment is
 // edited in the table dialog (TableIndexModal) and emitted where the dialect
 // supports table comments.
-/**
- * @param {Table} t
- * @param {Event & { target: HTMLInputElement }} ev
- */
 export function commitTableComment(t, ev) {
+	commitFreeText(t, ev, "comment");
+}
+// commitFreeText applies a free-text field (comment): empty clears it
+// (legitimate, unlike names). No-op same-value: no snap.
+function commitFreeText(obj, ev, field) {
+	const el = ev.target ?? ev.currentTarget;
+	const v = commitText(el, obj[field], true);
+	if (v === null) return;
+	if (v === obj[field]) return;
 	snap();
-	t.comment = ev.target.value.trim();
+	obj[field] = v;
 }
 /**
  * @param {"dark" | "light"} t
@@ -326,8 +440,12 @@ export function setType(c, base) {
 			")";
 		return;
 	}
+	const next = DEFAULT_TYPE[base] ?? base;
+	if (next === c.type) return; // no-op same-value: no snap
 	snap();
-	c.type = DEFAULT_TYPE[base] ?? base;
+	c.type = next;
+	// AI survives only on integer types: clearing it here (and in setRef/
+	// toggleArray below) is the same guard commitDefault/toggleAi enforce.
 	if (!isInt(c.type)) c.ai = false;
 }
 
@@ -352,33 +470,65 @@ export function toggleArray(c) {
 	if (c.type.endsWith("[]")) {
 		c.ai = false;
 		c.pk = false;
+		c.nn = false;
+	}
+}
+/**
+ * setFk is the single FK dispatcher: retarget (tableId), ON DELETE (action),
+ * ON UPDATE (onUpdate), or clear (null). The three callers in ColumnEditModal
+ * pass events; prompt-free object form keeps snap-once semantics.
+ * @param {Column} c
+ * @param {{ tableId?: string, action?: string, onUpdate?: string } | null} patch
+ */
+export function setFk(c, patch) {
+	if (patch === null) {
+		if (!c.ref) return; // no-op: no snap
+		snap();
+		c.ref = null;
+		return;
+	}
+	if (patch.tableId !== undefined) {
+		const id = patch.tableId;
+		if ((c.ref?.tableId ?? "") === id) return; // no-op retarget: no snap
+		snap();
+		// Both actions are carried across a re-target: changing which table an
+		// FK points at must not silently reset the referential actions chosen.
+		// onUpdate keeps its "" (meaning "omit the clause") rather than gaining
+		// a default, which is the asymmetry documented on Ref in grammar.go.
+		c.ref = id
+			? {
+					tableId: id,
+					action: c.ref?.action ?? "CASCADE",
+					onUpdate: c.ref?.onUpdate ?? "",
+				}
+			: null;
+		if (id) c.ai = false;
+		return;
+	}
+	if (!c.ref) return; // no-op: actions on a column with no FK
+	if (patch.action !== undefined) {
+		if (c.ref.action === patch.action) return; // no-op: no snap
+		snap();
+		c.ref.action = patch.action;
+		return;
+	}
+	if (patch.onUpdate !== undefined) {
+		if (c.ref.onUpdate === patch.onUpdate) return; // no-op: no snap
+		snap();
+		c.ref.onUpdate = patch.onUpdate;
 	}
 }
 /**
  * @param {Column} c
  */
 export function setRef(c, ev) {
-	snap();
-	const id = ev.target.value;
-	// Both actions are carried across a re-target: changing which table an FK
-	// points at must not silently reset the referential actions the user chose.
-	// onUpdate keeps its "" (meaning "omit the clause") rather than gaining a
-	// default, which is the asymmetry documented on Ref in grammar.go.
-	c.ref = id
-		? {
-				tableId: id,
-				action: c.ref?.action ?? "CASCADE",
-				onUpdate: c.ref?.onUpdate ?? "",
-			}
-		: null;
-	if (id) c.ai = false;
+	setFk(c, { tableId: ev.target.value });
 }
 /**
  * @param {Column} c
  */
 export function setRefAction(c, ev) {
-	snap();
-	if (c.ref) c.ref.action = ev.target.value;
+	setFk(c, { action: ev.target.value });
 }
 // setRefOnUpdate sets ON UPDATE. Unlike setRefAction there is no default: the
 // empty option means "omit the clause" and is stored as "", because a schema
@@ -388,16 +538,13 @@ export function setRefAction(c, ev) {
  * @param {Column} c
  */
 export function setRefOnUpdate(c, ev) {
-	snap();
-	if (c.ref) c.ref.onUpdate = ev.target.value;
+	setFk(c, { onUpdate: ev.target.value });
 }
 // unsetRef deletes the relationship without dropping the column: clears the
 // FK so the edge disappears but name/type/flags stay. Separate from setRef
 // (retarget) and rmColumn (drop) — the column modal's Remove relationship.
 export function unsetRef(c) {
-	if (!c.ref) return;
-	snap();
-	c.ref = null;
+	setFk(c, null);
 }
 /**
  * @param {Column} c
@@ -405,7 +552,19 @@ export function unsetRef(c) {
 export function togglePk(c) {
 	snap();
 	c.pk = !c.pk;
-	if (c.pk) c.nn = true;
+	// pk=true forces nn (emitters write NOT NULL for PK regardless); pk=false
+	// clears the sticky nn the force set — but only the STICKY one: a column
+	// that was already NOT NULL before PK keeps nn (it was explicit, and the
+	// NN checkbox is enabled again so the user can still clear it by hand).
+	if (c.pk) {
+		if (!c.nn) {
+			c.nn = true;
+			c._stickyNn = true;
+		}
+	} else if (c._stickyNn) {
+		c.nn = false;
+		c._stickyNn = false;
+	}
 }
 
 // toggleFlag flips one of a column's boolean flags (nn/ux/ai/ix). Lives here
@@ -422,8 +581,27 @@ export function togglePk(c) {
  * @param {Column} c
  */
 export function toggleFlag(c, flag) {
+	// pk/ai steer through togglePk/toggleAi: toggling them raw would skip the
+	// nn/ai invariants (PK forces nn; AI needs an int type and no default).
+	if (flag === "pk") return togglePk(c);
+	if (flag === "ai") return toggleAi(c);
 	snap();
 	c[flag] = !c[flag];
+}
+/**
+ * @param {Column} c
+ */
+export function toggleAi(c) {
+	if (!c.ai && (!isInt(c.type) || c.type.endsWith("[]"))) {
+		flash("auto-increment needs an integer type", "err");
+		return;
+	}
+	if (!c.ai && c.default) {
+		flash("an auto-increment column cannot also have a default", "err");
+		return;
+	}
+	snap();
+	c.ai = !c.ai;
 }
 
 // ---- composite indexes ----
@@ -453,10 +631,11 @@ export function addIndex(t, cols) {
 	const unique = [...new Set(cols.filter(Boolean))];
 	if (unique.length < 2) {
 		flash("pick at least two columns for a composite index", "err");
-		return;
+		return false;
 	}
 	snap();
 	ensureIndexes(t).push({ cols: unique });
+	return true;
 }
 
 /**
@@ -478,8 +657,10 @@ export function rmIndex(t, ix) {
  * @param {string} name
  */
 export function setIndexName(ix, name) {
+	const v = name.trim();
+	if (v === (ix.name ?? "")) return; // no-op same-value: no snap
 	snap();
-	ix.name = name.trim();
+	ix.name = v;
 }
 
 // toggleIndexCol adds or removes one column from an existing composite index.
@@ -501,20 +682,44 @@ export function toggleIndexCol(ix, colName) {
 	else ix.cols.push(colName);
 }
 
+let noticeId = 0;
 /**
  * @param {string} msg
- * @param {string} kind
+ * @param {"ok" | "err" | "warn"} [kind]
  */
 export function flash(msg, kind = "ok") {
 	store.error = msg;
 	store.errorKind = kind;
+	const id = ++noticeId;
+	store.notices = [...store.notices, { id, msg, kind }].slice(-3);
 	setTimeout(() => {
-		if (store.error === msg) store.error = "";
+		// Compare by id, not by string: two identical messages in flight must
+		// not clear each other, and a newer different error must survive —
+		// clear only when no newer notice owns store.error.
+		const latest = store.notices.at(-1);
+		const owned = !!latest && latest.id !== id && store.error !== latest.msg;
+		if (!owned && (!latest || store.error === msg)) store.error = "";
+		store.notices = store.notices.filter((n) => n.id !== id);
 	}, 1400);
 }
 /** @param {?string} id */
 export function setSelected(id) {
 	store.selected = id;
+}
+// setSchemaField assigns one schema-level field (dialect, sqliteTypes, …).
+// setDialect/setSqliteTypes share this shape: no-op same-value early-return
+// (no snap), then snapshot, assign, and refresh the SQL panel eagerly — even
+// when it is closed, so reopening cannot show the old dialect's text.
+/**
+ * @param {string} field
+ * @param {string} value
+ */
+function setSchemaField(field, value) {
+	if (store.schema[field] === value) return;
+	snap();
+	store.schema[field] = value;
+	store.sqlText = "";
+	void refreshSql();
 }
 // setDialect switches the schema's grammar. It is a real mutation (the saved
 // bytes change), so it snapshots for undo and refreshes the SQL panel when it
@@ -522,10 +727,7 @@ export function setSelected(id) {
 // reacted to the change.
 /** @param {string} d */
 export function setDialect(d) {
-	if (store.schema.dialect === d) return;
-	snap();
-	store.schema.dialect = d;
-	if (store.sqlText) refreshSql();
+	setSchemaField("dialect", d);
 }
 
 // setSqliteTypes switches how SQLite renders the types it has no storage class
@@ -533,10 +735,7 @@ export function setDialect(d) {
 // snapshots for undo and refreshes the SQL panel when it is open.
 /** @param {string} mode */
 export function setSqliteTypes(mode) {
-	if (store.schema.sqliteTypes === mode) return;
-	snap();
-	store.schema.sqliteTypes = mode;
-	if (store.sqlText) refreshSql();
+	setSchemaField("sqliteTypes", mode);
 }
 
 import {

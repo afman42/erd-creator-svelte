@@ -1,19 +1,25 @@
 <script>
 import { store } from "./schema.svelte.js";
 
-// Renders the flash notices (store.error/errorKind, written by flash()).
-// Lint findings are NOT toasted: they live in the Lint panel only — the
-// toast would duplicate them and fire on every edit. Text interpolation
-// only — server strings are never {@html}.
+// Renders the flash notices (store.notices, written by flash()).
+// Queue of max 3: rapid flashes no longer overwrite each other, and the
+// `title` gives sighted users the full text the ellipsis truncates (SR
+// already gets it via the live region). Lint findings are NOT toasted:
+// they live in the Lint panel only. Text interpolation only — server
+// strings are never {@html}.
+//
+// store.error/errorKind stay as the latest-notice mirror so existing
+// e2e (getByTestId("toast") text assertions) keeps passing unchanged.
 </script>
 
 <div data-testid="toast" aria-live="off">
-	{#if store.error}
+	{#each store.notices as n (n.id)}
 		<span
-			class={store.errorKind}
-			role={store.errorKind === "err" ? "alert" : "status"}
-			aria-live={store.errorKind === "err" ? "assertive" : "polite"}>{store.error}</span>
-	{/if}
+			class={n.kind}
+			title={n.msg}
+			role={n.kind === "err" ? "alert" : "status"}
+			aria-live={n.kind === "err" ? "assertive" : "polite"}>{n.msg}</span>
+	{/each}
 </div>
 
 <style>
@@ -42,5 +48,8 @@ import { store } from "./schema.svelte.js";
 	}
 	.ok {
 		color: var(--color-success);
+	}
+	.warn {
+		color: var(--color-warning);
 	}
 </style>

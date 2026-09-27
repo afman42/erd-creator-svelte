@@ -12,6 +12,7 @@
 // separate indexes. So an index is a table-level list, and a one-column index
 // deliberately stays on Col.ix. The server routes by arity on the way back in,
 // which is what keeps both shapes round-tripping.
+
 import { showDialog } from "./dialog.js";
 import {
 	addIndex,
@@ -27,6 +28,8 @@ let { table, onClose } = $props();
 // Columns offered for a new index. The checkboxes below toggle membership of
 // the index currently being edited; this draft is only for creation, so a new
 // index starts as a selection rather than appearing immediately.
+// Keyed by column ID, not name: two columns can share a display name while a
+// rename is mid-flight, and addIndex takes names — resolved at create() time.
 let draft = $state([]);
 
 const indexes = $derived(table.indexes ?? []);
@@ -38,18 +41,19 @@ $effect(() => {
 	showDialog(dlg);
 });
 
-function toggleDraft(name) {
-	draft = draft.includes(name)
-		? draft.filter((n) => n !== name)
-		: [...draft, name];
+function toggleDraft(id) {
+	draft = draft.includes(id) ? draft.filter((n) => n !== id) : [...draft, id];
 }
 
 function create() {
-	addIndex(table, draft);
-	// Only clear the draft when the index was actually added: addIndex refuses
-	// fewer than two columns and flashes, and clearing then would lose the
-	// user's selection along with the error they need to read.
-	if (indexes.length > 0 && draft.length >= 2) draft = [];
+	// Resolve ids → names at create time (ix.cols are names). Only clear the
+	// draft when the index was actually added: addIndex refuses fewer than
+	// two columns and flashes, and clearing then would lose the selection
+	// along with the error the user needs to read.
+	const names = draft
+		.map((id) => table.columns.find((c) => c.id === id)?.name)
+		.filter(Boolean);
+	if (addIndex(table, names)) draft = [];
 }
 
 // Derived index name, mirroring indexName() in export.go so the dialog shows
@@ -59,7 +63,7 @@ function shownName(ix) {
 }
 </script>
 
-<dialog bind:this={dlg} onclose={onClose} class="idxedit">
+<dialog bind:this={dlg} onclose={onClose} class="modal idxedit">
 	<h2>{table.name} · table</h2>
 
 	<!-- The table-level dialog hosts the table comment too: it is the one
@@ -114,13 +118,13 @@ function shownName(ix) {
 		<legend>New index</legend>
 		<div class="picks">
 			{#each table.columns as c (c.id)}
-				<label title="pick {c.name}"
-					><input
-						type="checkbox"
-						checked={draft.includes(c.name)}
-						onchange={() => toggleDraft(c.name)}
-					/>{c.name}</label
-				>
+					<label title="pick {c.name}"
+						><input
+							type="checkbox"
+							checked={draft.includes(c.id)}
+							onchange={() => toggleDraft(c.id)}
+						/>{c.name}</label
+					>
 			{/each}
 		</div>
 		<button class="mkix" onclick={create}>Add index</button>
@@ -132,24 +136,9 @@ function shownName(ix) {
 </dialog>
 
 <style>
+	/* Base skin in dialog.css — only idxedit width + own layout stay here. */
 	dialog.idxedit {
-		background: var(--color-surface);
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		padding: 14px 16px;
 		min-width: 320px;
-		max-width: 460px;
-		box-shadow: 0 8px 32px #000a;
-	}
-	dialog.idxedit::backdrop {
-		background: #0007;
-	}
-	h2 {
-		margin: 0 0 10px;
-		font-size: 13px;
-		font-weight: 600;
-		color: var(--color-text-muted);
 	}
 	.none {
 		margin: 0 0 10px;
@@ -158,34 +147,16 @@ function shownName(ix) {
 	}
 	.ix {
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-lg);
 		padding: 8px;
 		margin-bottom: 8px;
 	}
 	.fld {
-		display: grid;
 		grid-template-columns: 52px 1fr;
-		align-items: center;
-		gap: 8px;
-		margin-bottom: 6px;
-	}
-	.fld > span {
-		font-size: 11px;
-		color: var(--color-text-muted);
-	}
-	.fld input {
-		background: var(--color-bg);
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		padding: 4px 6px;
-		font: 12px ui-monospace, monospace;
-		width: 100%;
-		box-sizing: border-box;
 	}
 	fieldset {
 		border: 1px solid var(--color-border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		margin: 0 0 6px;
 		padding: 6px 8px;
 	}
@@ -206,6 +177,7 @@ function shownName(ix) {
 		gap: 4px;
 		align-items: center;
 		font-size: 11px;
+		min-height: 44px;
 	}
 	.new {
 		border-style: dashed;
@@ -213,37 +185,29 @@ function shownName(ix) {
 	.rmix,
 	.mkix {
 		border: 0;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		padding: 4px 10px;
 		cursor: pointer;
 		font: 11px inherit;
+		min-height: 44px;
 	}
 	.rmix {
-		background: #7f1d1d;
-		color: #fecaca;
+		background: var(--color-danger-bg);
+		color: var(--color-danger-text);
 	}
 	.mkix {
-		background: #2f6f4f;
-		color: #d1fae5;
+		background: var(--color-ok-bg);
+		color: var(--color-ok-text);
 		margin-top: 6px;
-	}
-	footer {
-		display: flex;
-		justify-content: flex-end;
-		margin-top: 10px;
 	}
 	.done {
 		background: var(--color-primary);
 		color: #fff;
 		border: 0;
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 6px 12px;
 		cursor: pointer;
 		font: inherit;
-	}
-	button:focus-visible,
-	input:focus-visible {
-		outline: 1px solid var(--color-focus);
-		outline-offset: 1px;
+		min-height: 44px;
 	}
 </style>

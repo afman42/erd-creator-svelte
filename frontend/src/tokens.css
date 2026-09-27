@@ -14,6 +14,17 @@
 	--color-danger: #f87171;
 	--color-accent: #bb5588;
 	--color-flag: #66bb88;
+	/* Selected pills (.relkind.on / .type.on): dark-navy literal, moved here so
+	   the light palette below can override it instead of inheriting dark. */
+	--color-on-bg: #233448;
+	--color-on-text: #ffffff;
+	/* Destructive / constructive actions (.rmix/.rmcol/.rmrel, .mkix): were
+	   #7f1d1d/#fecaca + #2f6f4f/#d1fae5 literals with no light variants. */
+	--color-danger-bg: #7f1d1d;
+	--color-danger-text: #fecaca;
+	--color-danger-hover: #2a1a1d;
+	--color-ok-bg: #2f6f4f;
+	--color-ok-text: #d1fae5;
 	/* Relationship edges: the line, its crow's-foot arrowhead, and nothing
 	   else. Brighter than the old #888, which was the same grey as the marker
 	   and made a 6x7px hairline arrow effectively invisible in an exported PNG.
@@ -33,6 +44,21 @@
 	--space-3: 12px;
 	--space-4: 16px;
 	--font-mono: ui-monospace, monospace;
+}
+
+/* Visually-hidden but screen-reader-readable. Single shared class: Svelte
+   scopes <style> per component, so the four local copies (App, Toolbar,
+   TableCard, RelationshipModal) could never agree — global here instead. */
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
 }
 
 /* Light palette: [data-theme="light"] on <html> (theme.js / main.js). Every
@@ -57,6 +83,13 @@
 	--color-danger: #b91c1c;
 	--color-accent: #a94d7a;
 	--color-flag: #2f8f5f;
+	--color-on-bg: #d6e4f0;
+	--color-on-text: #1d2835;
+	--color-danger-bg: #fde2e2;
+	--color-danger-text: #7f1d1d;
+	--color-danger-hover: #f6d2d2;
+	--color-ok-bg: #d7efe0;
+	--color-ok-text: #14532d;
 	--color-edge: #5b83a5;
 	--color-sql: #3f6d96;
 }

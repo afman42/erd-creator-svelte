@@ -1,5 +1,15 @@
 <script>
 import { untrack } from "svelte";
+import {
+	clampZoom,
+	contentSize,
+	referencedSet,
+	relationshipList,
+	tableNameById,
+	VIEW_PAD,
+	ZMAX,
+	ZMIN,
+} from "./canvasView.js";
 import EmptyState from "./EmptyState.svelte";
 import {
 	EDGE_SELF_STROKE,
@@ -37,8 +47,36 @@ import Toolbar from "./Toolbar.svelte";
 let showSql = $state(false);
 let showRelationship = $state(false);
 let showLint = $state(false);
-/** @type {{ id: string, x0: number, y0: number, tx0: number, ty0: number, moved: boolean } | null} */
+// Canvas zoom (S7): CSS-transform scale on .zoom, clamped 0.25–2. Pinch
+// (ctrl+wheel) + buttons + Fit. Local view state — never enters schema/undo.
+let zoom = $state(1);
+/** @param {number} z */
+function setZoom(z) {
+	zoom = clampZoom(z);
+}
+function fitZoom() {
+	const n = store.schema.tables.length;
+	if (n > 12) setZoom(0.5);
+	else if (n > 6) setZoom(0.75);
+	else setZoom(1);
+	announce = `zoom ${Math.round(zoom * 100)} percent`;
+}
+// Scrollable area at zoom: transform: scale() never changes layout, so the
+// scrollbars cannot see scaled content. The layout box is sized in the markup
+// instead — content bounds × zoom + pad — while the transform stays visual.
+// contentSize() measures the model bounds (see canvasView.js); the derivation
+// splits w/h so Svelte tracks each axis separately.
+const contentW = $derived(contentSize(store.schema).w);
+const contentH = $derived(contentSize(store.schema).h);
+/** @type {{ id: string, x0: number, y0: number, tx0: number, ty0: number, z: number, moved: boolean } | null} */
 let drag = $state(null);
+// Bound canvas viewport: Svelte 5 delegates events, so ev.currentTarget is
+// unreliable in startPan — read scroll off this instead of the event.
+/** @type {HTMLElement | null} */
+let canvasEl = $state(null);
+// Empty-canvas pan: press origin + scroll origin; moves scroll, never schema.
+/** @type {{ x0: number, y0: number, sl0: number, st0: number, moved: boolean } | null} */
+let pan = $state(null);
 // Pending drag position, coalesced behind rAF: pointermove fires faster than
 // frames, and every x/y write re-runs the $effect tracker (JSON.stringify,
 // measured ~4.4ms at 200 tables) + edgePaths + Svelte DOM churn. Writing once
@@ -48,7 +86,13 @@ let dragRaf = 0;
 // Fix C: hysteresis memory for edge routing — one Map per session, passed to
 // edgePaths so the overlap branch sticks across drag frames instead of
 // flipping at the boundary. Not reactive state: geometry reads it, never renders it.
-let edgeSticky = new Map();
+	let edgeSticky = new Map();
+
+// <4px = click (select), not a drag/pan
+/** @param {{ x0: number, y0: number }} origin */
+function pastClickThreshold(origin, ev) {
+	return Math.hypot(ev.clientX - origin.x0, ev.clientY - origin.y0) >= 4;
+}
 
 function applyDragPending() {
 	dragRaf = 0;
@@ -64,10 +108,6 @@ function applyDragPending() {
 	dragPending = null;
 }
 
-function toggleRelationship() {
-	showRelationship = !showRelationship;
-}
-
 // Fix A companion: subscribe to the in-progress drag write. t.x/t.y are
 // mutated in applyDragPending (not replaced), so without an explicit read of
 // the drag generation here the $derived may render the arrow a frame behind
@@ -77,6 +117,28 @@ const edges = $derived.by(() => {
 	void dragGen;
 	return edgePaths(store.schema, { sticky: edgeSticky });
 });
+
+// Polite announcer for selection/position changes (nudge, drag-drop,
+// select): the canvas moves silently otherwise. One string, mirrored into
+// the aria-live region below; emptied by nothing — each write re-announces.
+let announce = $state("");
+
+// Screen-reader text alternative for the edge SVG (aria-hidden below): one
+// "<child>.<col> <childEnd> references <parent> <parentEnd>" string per FK.
+// Memoized per schema identity in canvasView.js — the drag frame mutates x/y
+// in place without replacing the schema, so the cached list + name map are
+// reused across frames instead of running a find() per FK per frame. Also
+// hoisted once here (not per TableCard): nameById/referenced below are the
+// same single computation, passed down as props. The dragGen read keeps the
+// list live across applied drag frames (same Fix A subscription as edges).
+const relList = $derived.by(() => {
+	void dragGen;
+	return relationshipList(store.schema);
+});
+// Hoisted per-schema maps: TableCard used to rebuild both per card per change
+// (nameById map + junctionSet scan). One computation here, props below.
+const nameById = $derived(tableNameById(store.schema));
+const referenced = $derived(referencedSet(store.schema));
 
 // The SVG paint is applied as presentation attributes (the export-capture
 // constraint: html-to-image does not carry the stylesheet), and attributes
@@ -108,35 +170,103 @@ function toggleSql() {
  * @param {import("./erd.js").Table} t
  */
 function startDrag(t, ev) {
-	if (ev.target.closest("button")) return;
+	// Click-select lives on .hdr (both the select button and the header
+	// surface bubble there): the press must always set drag state, or the
+	// onUp click-select never fires. Buttons keep their own actions via
+	// stopPropagation at their own handlers.
+	setSelected(t.id);
 	// Pure delta: only the pointer origin and the table's origin matter. The
 	// previous form stored the canvas rect and scroll offsets too, but they
 	// cancel out of `client - cl + sl - ox`, so they were dead state.
+	// z snapshots zoom at press: one screen px is 1/z model px inside .zoom,
+	// and a mid-drag zoom step must not shear the in-flight delta.
 	drag = {
 		id: t.id,
 		x0: ev.clientX,
 		y0: ev.clientY,
 		tx0: t.x,
 		ty0: t.y,
+		z: zoom,
 		moved: false,
 	};
 	if (!ev.target.closest("input")) ev.preventDefault();
 }
+// Empty-canvas drag pans the viewport, the partner to the layout-box fix:
+// zoomed content is reachable by drag, not just scrollbars. Table headers own
+// their press (startDrag above — the closest() guard returns here), buttons
+// and inputs keep theirs; touch keeps native pan via touch-action, so JS
+// stays out and cannot double-scroll.
+/** @param {PointerEvent} ev */
+function startPan(ev) {
+	if (ev.button !== 0 || ev.pointerType === "touch" || !canvasEl) return;
+	if (
+		ev.target.closest("section.table, dialog, button, input, select, textarea")
+	)
+		return;
+	pan = {
+		x0: ev.clientX,
+		y0: ev.clientY,
+		sl0: canvasEl.scrollLeft,
+		st0: canvasEl.scrollTop,
+		moved: false,
+	};
+	ev.preventDefault();
+}
 function onMove(ev) {
+	if (pan && canvasEl) {
+		if (!pan.moved && !pastClickThreshold(pan, ev)) return;
+		if (!pan.moved) {
+			pan.moved = true;
+		}
+		canvasEl.scrollLeft = pan.sl0 - (ev.clientX - pan.x0);
+		canvasEl.scrollTop = pan.st0 - (ev.clientY - pan.y0);
+		return;
+	}
 	if (!drag) return;
+	if (!drag.moved && !pastClickThreshold(drag, ev)) return;
 	if (!drag.moved) {
-		// <4px = click (select), not a drag
-		if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < 4) return;
 		drag.moved = true;
 		// One undo step per drag, snapshot before the first position write so
 		// undo restores the pre-drag coordinates.
 		snap();
 	}
 	// Coalesce behind rAF: one reactive write per frame, not per pointer event.
-	dragPending = { dx: ev.clientX - drag.x0, dy: ev.clientY - drag.y0 };
+	dragPending = {
+		dx: (ev.clientX - drag.x0) / drag.z,
+		dy: (ev.clientY - drag.y0) / drag.z,
+	};
 	if (!dragRaf) dragRaf = requestAnimationFrame(applyDragPending);
+	autoscroll(ev);
+}
+// Viewport follows the pointer near the canvas edge mid-drag, so a card can
+// be pushed to (and past) the bottom-right at zoom. Scroll-only: the drag
+// delta above is client px minus origin, scroll-independent, so scrolling
+// alongside cannot shear the card. Speed ramps with closeness; writes past
+// the max clamp, never throw. Immediate, not rAF: scroll writes skip Svelte
+// reactivity, so there is nothing to coalesce.
+/** @param {PointerEvent} ev */
+function autoscroll(ev) {
+	if (!canvasEl) return;
+	const r = canvasEl.getBoundingClientRect();
+	const px = ev.clientX - r.left;
+	const py = ev.clientY - r.top;
+	if (px < 0 || py < 0 || px > r.width || py > r.height) return;
+	const EDGE_PX = 48;
+	const MAX_PX = 24;
+	/** @param {number} d */
+	const near = (d) => (d < EDGE_PX ? MAX_PX * (1 - d / EDGE_PX) : 0);
+	canvasEl.scrollLeft += near(r.width - px) - near(px);
+	canvasEl.scrollTop += near(r.height - py) - near(py);
+}
+// Ctrl+wheel = pinch-zoom on the canvas (plain wheel keeps scrolling).
+/** @param {WheelEvent} ev */
+function onWheel(ev) {
+	if (!ev.ctrlKey) return;
+	ev.preventDefault();
+	setZoom(zoom - Math.sign(ev.deltaY) * 0.1);
 }
 function onUp() {
+	if (pan) pan = null;
 	if (!drag) return;
 	// Fix A: flush the pending frame synchronously so the card and its arrow
 	// land together — otherwise the last pointermove's delta is dropped by the
@@ -151,7 +281,12 @@ function onUp() {
 	const t = store.schema.tables.find((x) => x.id === id);
 	drag = null;
 	dragPending = null;
-	if (t && !moved) setSelected(t.id);
+	if (t && !moved) {
+		setSelected(t.id);
+		announce = `${t.name} selected`;
+	} else if (t) {
+		announce = `${t.name} moved to ${t.x}, ${t.y}`;
+	}
 }
 function onKey(ev) {
 	// The column dialog owns the keyboard while it is open. Without this, a
@@ -159,6 +294,9 @@ function onKey(ev) {
 	// false and Delete would delete the whole TABLE out from under the dialog;
 	// Escape would likewise clear the selection on its way to closing it.
 	if (document.querySelector("dialog[open]")) return;
+	// Delete/Backspace deletes the selected table (S8 split the old
+	// role=button header into a real select button + drag surface, so inner
+	// focus can no longer fake a selection — the !editing guard is enough).
 	const tag = document.activeElement?.tagName ?? "";
 	const editing = /INPUT|SELECT|TEXTAREA/.test(tag);
 	if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {
@@ -170,10 +308,11 @@ function onKey(ev) {
 	} else if (ev.key === "Escape") setSelected(null);
 	else if (
 		!editing &&
-		store.selected &&
 		["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(ev.key)
 	) {
-		const t = store.schema.tables.find((x) => x.id === store.selected);
+		const t = store.selected
+			? store.schema.tables.find((x) => x.id === store.selected)
+			: null;
 		if (t) {
 			ev.preventDefault();
 			// One undo step per nudge press; snapshot before moving so undo
@@ -184,6 +323,18 @@ function onKey(ev) {
 			if (ev.key === "ArrowDown") t.y += step;
 			if (ev.key === "ArrowLeft") t.x = Math.max(0, t.x - step);
 			if (ev.key === "ArrowRight") t.x += step;
+			announce = `${t.name} moved to ${t.x}, ${t.y}`;
+		} else if (!store.selected) {
+			// No selection: arrows pan the canvas instead of doing nothing.
+			const el = document.querySelector(".canvas");
+			if (el) {
+				ev.preventDefault();
+				const step = ev.shiftKey ? 80 : 40;
+				if (ev.key === "ArrowUp") el.scrollTop -= step;
+				if (ev.key === "ArrowDown") el.scrollTop += step;
+				if (ev.key === "ArrowLeft") el.scrollLeft -= step;
+				if (ev.key === "ArrowRight") el.scrollLeft += step;
+			}
 		}
 	}
 }
@@ -194,14 +345,36 @@ function onKey(ev) {
 <Toolbar
 	showSql={showSql}
 	onToggleSql={toggleSql}
-	onToggleRelationship={toggleRelationship}
+	onToggleRelationship={() => (showRelationship = !showRelationship)}
 	showLint={showLint}
 	onToggleLint={() => (showLint = !showLint)}
+	zoom={zoom}
+	zoomMin={ZMIN}
+	zoomMax={ZMAX}
+	onZoomOut={() => setZoom(zoom - 0.25)}
+	onZoomIn={() => setZoom(zoom + 0.25)}
+	onZoomFit={fitZoom}
 />
 
 <main>
-	<div class="canvas" class:dragging={!!drag}>
-		<svg>
+	<div
+		bind:this={canvasEl}
+		class="canvas"
+		class:dragging={!!drag}
+		class:panning={!!pan?.moved}
+		onwheel={onWheel}
+		onpointerdown={startPan}
+		style="touch-action: pan-x pan-y pinch-zoom"
+	>
+		<!-- Inline style= here is a Svelte-compiled el.style.setProperty() call,
+		     not a parsed `style` attribute: the CSP is style-src 'self' with
+		     no 'unsafe-inline', and that directive governs only static style
+		     attributes parsed by the HTML parser — CSSOM writes bypass it.
+		     The same holds for TableCard's left/top and download.js's
+		     cssText. Moving these to CSS vars would change nothing about the
+		     policy; the old comments claiming otherwise are corrected. -->
+		<div class="zoom" style="transform: scale({zoom}); width: {contentW * zoom + VIEW_PAD}px; height: {contentH * zoom + VIEW_PAD}px">
+		<svg aria-hidden="true">
 			<defs>
 				<!-- The crow's foot ("many") marker.
 				     Sized up from 7x7 with an explicit stroke-width. At 7x7 the
@@ -285,12 +458,21 @@ function onKey(ev) {
 							>{e.to.text}</text>
 			{/each}
 		</svg>
+		<!-- Text alternative for the edge SVG above (aria-hidden): screen
+		     readers get the same relationships as a list instead of raw
+		     path/text nodes. -->
+		<ul class="sr-only" aria-label="Relationships">
+			{#each relList as r (r)}
+				<li>{r}</li>
+			{/each}
+		</ul>
 		{#each store.schema.tables as t (t.id)}
-			<TableCard table={t} onDragStart={startDrag} />
+			<TableCard table={t} onDragStart={startDrag} {nameById} {referenced} />
 		{/each}
 		{#if store.schema.tables.length === 0}
 			<EmptyState />
 		{/if}
+		</div>
 	</div>
 
 	{#if showSql}
@@ -304,8 +486,10 @@ function onKey(ev) {
 	{#if showRelationship}
 		<RelationshipModal onClose={() => (showRelationship = false)} />
 	{/if}
-</main>
-<Toast />
+	</main>
+	<!-- Polite live region for canvas position/selection changes (S5). -->
+	<div class="sr-only" role="status" aria-live="polite">{announce}</div>
+	<Toast />
 
 <style>
 	:global(body) {
@@ -318,6 +502,7 @@ function onKey(ev) {
 		display: flex;
 		height: calc(100vh - 41px);
 	}
+	/* .sr-only lives in tokens.css (global) — one class, not four copies. */
 	.canvas {
 		position: relative;
 		flex: 1;
@@ -326,9 +511,22 @@ function onKey(ev) {
 		background-size: 20px 20px;
 		min-height: 300px;
 	}
-	.canvas.dragging {
+	.canvas.dragging,
+	.canvas.panning {
 		user-select: none;
 		cursor: grabbing;
+	}
+	/* Zoom layer: transform-origin top-left so scale grows right/down. The
+	   explicit width/height (content bounds × zoom + pad, set inline above)
+	   is the layout box the scrollbars see — transform: scale() alone is
+	   visual only and never grows the scroll area. min-width/min-height win
+	   when content is smaller than the viewport, so empty/small schemas are
+	   unaffected. Cards keep absolute px layout. */
+	.zoom {
+		position: relative;
+		transform-origin: 0 0;
+		min-width: 100%;
+		min-height: 100%;
 	}
 	.canvas svg {
 		position: absolute;
@@ -345,11 +543,13 @@ function onKey(ev) {
 		stroke-width: 2;
 	}
 	/* Min-max cardinality labels, centred on their curve point so the symbol
-	   straddles the line it describes. Styled via a class, not an inline style:
-	   the CSP is style-src 'self' and would block the latter. */
+	   straddles the line it describes. Styled via a class so the paint also
+	   survives export capture (html-to-image does not carry the stylesheet —
+	   the attribute paint above is what actually exports). 10px floor (was
+	   9px): glyphs smaller than 10px fail readability regardless of contrast. */
 	.card {
 		fill: var(--color-text-muted);
-		font: 9px ui-monospace, monospace;
+		font: 10px ui-monospace, monospace;
 		text-anchor: middle;
 		paint-order: stroke;
 		stroke: var(--color-bg);
@@ -358,6 +558,42 @@ function onKey(ev) {
 	.self {
 		stroke: var(--color-accent);
 	}
+	/* Modal open animation: fade + scale on every native <dialog>. Close stays
+	   instant (an exit animation would need a JS-delayed close). One GLOBAL
+	   <style> so every dialog gets it without triplicating the block; Svelte
+	   scopes @keyframes by default, so wrap each name in -global- to unmangle.
+	   Killed under prefers-reduced-motion. */
+	:global(dialog[open]) {
+		animation: dialog-in 140ms ease-out;
+	}
+	:global(dialog[open]::backdrop) {
+		animation: backdrop-in 140ms ease-out;
+	}
+	@keyframes -global-dialog-in {
+		from {
+			opacity: 0;
+			transform: scale(0.96) translateY(4px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	@keyframes -global-backdrop-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		:global(dialog[open]),
+		:global(dialog[open]::backdrop) {
+			animation: none;
+		}
+	}
+
 	@media (max-width: 768px) {
 		main {
 			flex-direction: column;

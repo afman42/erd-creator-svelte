@@ -1,5 +1,5 @@
 import { newColumn, newTable, uniqName } from "./erd.js";
-import { CANVAS_ORIGIN, stackStep } from "./geometry.js";
+import { CANVAS_ORIGIN, lowestY } from "./geometry.js";
 
 // pkTypeOf returns the parent's sole-PK type for the FK column to inherit,
 // else null (callers default to INT).
@@ -10,6 +10,18 @@ import { CANVAS_ORIGIN, stackStep } from "./geometry.js";
 function pkTypeOf(t) {
 	const pk = t.columns.filter((c) => c.pk);
 	return pk.length === 1 ? pk[0].type : null;
+}
+
+// findPair resolves both ends of a relationship, rejecting same-table picks
+// with the caller's distinct error text. Same id with EQUAL types is the only
+// case that reaches here with a real table pair missing: distinct check first,
+// unknown-table check second.
+function findPair(schema, childId, parentId, distinctMsg) {
+	if (childId === parentId) return { same: distinctMsg };
+	const child = schema.tables.find((t) => t.id === childId);
+	const parent = schema.tables.find((t) => t.id === parentId);
+	if (!child || !parent) return null;
+	return { child, parent };
 }
 
 // fkColumnName derives the default name for a relationship FK column by
@@ -47,13 +59,18 @@ function fkColumnName(parentName) {
  * @returns {{ ok: boolean, error?: string, column?: import("./erd.js").Column }}
  */
 export function createRelationship(schema, childId, parentId, type) {
-	if (childId === parentId)
-		return { ok: false, error: "child and parent must be distinct tables" };
-	const child = schema.tables.find((t) => t.id === childId);
-	const parent = schema.tables.find((t) => t.id === parentId);
-	if (!child || !parent) return { ok: false, error: "unknown table" };
+	const pair = findPair(
+		schema,
+		childId,
+		parentId,
+		"child and parent must be distinct tables",
+	);
+	if (pair?.same) return { ok: false, error: pair.same };
+	if (!pair) return { ok: false, error: "unknown table" };
 	if (type !== "1:1" && type !== "1:N")
 		return { ok: false, error: `unknown relationship type: ${type}` };
+
+	const { child, parent } = pair;
 
 	const column = Object.assign(newColumn(), {
 		name: uniqName(
@@ -76,15 +93,18 @@ export function createRelationship(schema, childId, parentId, type) {
 // builds a junction whose two FK edges each read child 0..N / parent 1..1
 // (a composite-PK member is not unique — see cardinality() in geometry.js).
 // Unknown types return null; the dialog renders no preview for those.
+const PREVIEW_LABELS = {
+	"1:1": { child: "0..1", parent: "1..1" },
+	"1:N": { child: "0..N", parent: "1..1" },
+	"N:N": { child: "0..N", parent: "1..1" },
+};
 /**
  * @param {"1:1" | "1:N" | "N:N" | string} type
  * @returns {{ child: string, parent: string } | null}
  */
 export function previewLabels(type) {
-	if (type === "1:1") return { child: "0..1", parent: "1..1" };
-	if (type === "1:N") return { child: "0..N", parent: "1..1" };
-	if (type === "N:N") return { child: "0..N", parent: "1..1" };
-	return null;
+	const found = PREVIEW_LABELS[type];
+	return found ? { ...found } : null;
 }
 
 // junctionSet precomputes the inbound-reference half of isJunctionTable once
@@ -93,11 +113,8 @@ export function previewLabels(type) {
 // render pass drops from O(T²×C) to O(T×C). Measured 200t×10c: 27.8ms → 1.1ms.
 export function junctionSet(schema) {
 	const referenced = new Set();
-	for (const other of schema.tables) {
-		for (const c of other.columns) {
-			if (c.ref) referenced.add(c.ref.tableId);
-		}
-	}
+	for (const other of schema.tables)
+		for (const c of other.columns) if (c.ref) referenced.add(c.ref.tableId);
 	return referenced;
 }
 
@@ -145,11 +162,15 @@ export function isJunctionTable(t, schema, referenced) {
  * @returns {{ ok: boolean, error?: string, table?: import("./erd.js").Table }}
  */
 export function createManyToMany(schema, aId, bId) {
-	if (aId === bId)
-		return { ok: false, error: "a many-to-many needs two distinct tables" };
-	const a = schema.tables.find((t) => t.id === aId);
-	const b = schema.tables.find((t) => t.id === bId);
-	if (!a || !b) return { ok: false, error: "unknown table" };
+	const pair = findPair(
+		schema,
+		aId,
+		bId,
+		"a many-to-many needs two distinct tables",
+	);
+	if (pair?.same) return { ok: false, error: pair.same };
+	if (!pair) return { ok: false, error: "unknown table" };
+	const { child: a, parent: b } = pair;
 	const name = `${a.name}_${b.name}`;
 	// The same pair in either order is one junction: a reversed create
 	// (`posts` + `users` after `users_posts` exists) must fail, not mint a
@@ -164,10 +185,7 @@ export function createManyToMany(schema, aId, bId) {
 		// One full stack step below the lowest card — the same arithmetic
 		// addTable/layout use, so the new card never overlaps.
 		x: CANVAS_ORIGIN.x,
-		y: Math.max(
-			CANVAS_ORIGIN.y,
-			...schema.tables.map((t) => t.y + stackStep(t.columns.length)),
-		),
+		y: lowestY(schema.tables),
 		// No surrogate id: the PK IS the two FKs.
 		columns: [a, b].map((side) =>
 			Object.assign(newColumn(), {

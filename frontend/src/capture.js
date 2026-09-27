@@ -7,6 +7,11 @@
 // pass explicit width/height from captureSize(), which measures the cards
 // themselves via geometry.js rather than the viewport.
 //
+// Zoom independence: the clone keeps the live `.zoom` scale (transform:
+// scale(z)), so a 50% export shrank into padding and 200% cropped — while
+// captureSize() is zoom-blind model px. Both paths therefore capture the
+// inner `.zoom` layer with its transform neutralized (see captureOptions).
+//
 // The html-to-image import stays dynamic so the SQL path pays 0 bytes for it.
 
 import { BOX_W, boxHeight } from "./geometry.js";
@@ -14,15 +19,38 @@ import { BOX_W, boxHeight } from "./geometry.js";
 const PAD = 40;
 const BG = "#101418";
 
-/** Shared stem rule for raster/vector export filenames (private). */
-function filenameWithExt(currentFile, dialect, ext) {
-	if (currentFile) return currentFile.replace(/\.sql$/i, `.${ext}`);
-	return `${dialect || "erd"}-schema.${ext}`;
+// Shared stem rule for raster/vector export filenames. Exported (not private):
+// export.js's exportFilename() builds the .sql name off the same stem, so the
+// fallback rule (<dialect>-schema) cannot drift between DDL and raster/vector.
+// Non-.sql currentFile passthrough below is preserved as-is (pinned in
+// capture-filenames.test.js) — only the stem construction is shared.
+/**
+ * @param {?string} currentFile
+ * @param {?string} dialect
+ */
+export function exportStem(currentFile, dialect) {
+	if (currentFile) return currentFile.replace(/\.sql$/i, "");
+	return `${dialect || "erd"}-schema`;
 }
 
 /** Filename for PNG export, mirrors exportFilename() in export.js */
 export const pngFilename = (currentFile, dialect) =>
 	filenameWithExt(currentFile, dialect, "png");
+
+// filenameWithExt swaps a trailing .sql for the export extension; anything
+// else passes through unchanged (pinned in capture-filenames.test.js) — only
+// the no-file fallback goes through exportStem().
+/**
+ * @param {?string} currentFile
+ * @param {?string} dialect
+ * @param {string} ext
+ */
+function filenameWithExt(currentFile, dialect, ext) {
+	if (currentFile && /\.sql$/i.test(currentFile))
+		return currentFile.replace(/\.sql$/i, `.${ext}`);
+	if (currentFile) return currentFile;
+	return `${exportStem(currentFile, dialect)}.${ext}`;
+}
 
 /** Filename for SVG export, pinned independently from pngFilename in tests. */
 export const svgFilename = (currentFile, dialect) =>
@@ -47,15 +75,13 @@ export function decodeSvgDataUrl(dataUrl) {
 	}
 	const comma = dataUrl.indexOf(",");
 	if (comma < 0) throw new Error("svg data URL is malformed");
-	const meta = dataUrl.slice(5, comma);
-	const body = dataUrl.slice(comma + 1);
 	// base64 is the other legal form; html-to-image uses encodeURIComponent
 	// today, so this is a guard against a library change silently producing a
 	// file full of percent-escapes rather than an SVG.
-	if (meta.includes("base64")) {
-		return atob(body);
+	if (dataUrl.slice(5, comma).includes("base64")) {
+		return atob(dataUrl.slice(comma + 1));
 	}
-	const svg = decodeURIComponent(body);
+	const svg = decodeURIComponent(dataUrl.slice(comma + 1));
 	if (!svg.trimStart().startsWith("<svg")) {
 		throw new Error("svg data URL did not decode to SVG source");
 	}
@@ -71,20 +97,61 @@ export function decodeSvgDataUrl(dataUrl) {
  * directly — so it stays inside the policy while producing a vector file that
  * scales without the pixelation a PNG gets when zoomed.
  */
-export async function captureSvg(canvasEl, schema) {
+/**
+ * Shared canvas guards + data-URL capture for the SVG/PNG arms: same
+ * canvas-missing / nothing-to-capture errors, same zoom-neutralized root +
+ * model-px options. kind selects the html-to-image entry ("svg" or "blob").
+ */
+async function captureDataUrl(canvasEl, schema, kind) {
 	if (!canvasEl) throw new Error("canvas not found");
 	const size = captureSize(schema);
 	if (!size) throw new Error("nothing to capture");
-	const { toSvg } = await import("html-to-image");
-	const dataUrl = await toSvg(canvasEl, {
+	const { toSvg, toBlob } = await import("html-to-image");
+	if (kind === "svg") return toSvg(captureRoot(canvasEl), captureOptions(size));
+	const blob = await toBlob(captureRoot(canvasEl), {
+		...captureOptions(size),
+		pixelRatio: 1,
+		cacheBust: false,
+	});
+	if (!blob) throw new Error("png capture returned empty");
+	return blob;
+}
+
+export async function captureSvg(canvasEl, schema) {
+	return decodeSvgDataUrl(await captureDataUrl(canvasEl, schema, "svg"));
+}
+
+/**
+ * Root html-to-image captures: the inner `.zoom` layer, not `.canvas`.
+ *
+ * The live zoom scale lives on `.zoom` (`transform: scale(z)`), and the
+ * `style` option below only reaches the capture root — capturing `.canvas`
+ * would leave the inner scale untouched. Capturing `.zoom` directly makes
+ * the root IS the scaled layer, so `transform: "none"` neutralizes it.
+ * Falls back to canvasEl when there is no `.zoom` (markup drift, tests).
+ */
+export function captureRoot(canvasEl) {
+	return canvasEl?.querySelector?.(".zoom") ?? canvasEl;
+}
+
+/**
+ * Shared html-to-image options: fixed model-px size, zoom-neutralized clone.
+ *
+ * `width`/`height` are applied to the clone root by the library (overriding
+ * `.zoom`'s zoom-scaled layout box), and `transform: "none"` overrides its
+ * copied `scale(z)` — children sit at model coords, so export is identical
+ * at 50%, 100%, 200%. Both PNG and SVG go through here; no per-path tweaks.
+ */
+export function captureOptions(size) {
+	return {
 		backgroundColor: BG,
 		width: size.width,
 		height: size.height,
-		// Same reasoning as the PNG path: the clone inherits `overflow: auto`,
-		// which would paint scrollbars into the output.
-		style: { overflow: "hidden" },
-	});
-	return decodeSvgDataUrl(dataUrl);
+		// The clone inherits `overflow: auto` from `.canvas`, which would
+		// paint scrollbars into the image. Hidden matches the intent: the
+		// whole diagram, no window chrome.
+		style: { overflow: "hidden", transform: "none" },
+	};
 }
 
 /** Capture the canvas element to a PNG Blob, sized to the whole diagram. */
@@ -111,23 +178,7 @@ export function captureSize(schema) {
 }
 
 /** Capture the canvas element to a PNG Blob, sized to the whole diagram. */
+// toBlob directly — toPng→fetch(data:) is blocked by CSP connect-src 'self'
 export async function capturePng(canvasEl, schema) {
-	if (!canvasEl) throw new Error("canvas not found");
-	const size = captureSize(schema);
-	if (!size) throw new Error("nothing to capture");
-	// toBlob directly — toPng→fetch(data:) is blocked by CSP connect-src 'self'
-	const { toBlob } = await import("html-to-image");
-	const blob = await toBlob(canvasEl, {
-		backgroundColor: BG,
-		pixelRatio: 1,
-		cacheBust: false,
-		width: size.width,
-		height: size.height,
-		// The clone inherits `overflow: auto`, which paints the browser's
-		// scrollbars into the image. Hidden matches the intent: the whole
-		// diagram, no window chrome.
-		style: { overflow: "hidden" },
-	});
-	if (!blob) throw new Error("png capture returned empty");
-	return blob;
+	return captureDataUrl(canvasEl, schema, "blob");
 }

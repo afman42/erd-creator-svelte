@@ -1,0 +1,77 @@
+/* dialog.css — one shared dialog skin for the three native <dialog> modals
+   (column / index / relationship). Imported once in main.js so the base +
+   backdrop + title + field vocabulary lives in one place instead of being
+   copied per dialog; each modal keeps only its own layout classes. */
+
+dialog.modal {
+	background: var(--color-surface);
+	color: var(--color-text);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-xl);
+	padding: 14px 16px;
+	box-shadow: 0 8px 32px #000a;
+	max-width: min(460px, calc(100vw - 32px));
+}
+
+dialog.modal::backdrop {
+	background: #0007;
+}
+
+dialog.modal h2 {
+	margin: 0 0 10px;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--color-text);
+}
+
+dialog.modal .fld {
+	display: grid;
+	align-items: center;
+	gap: var(--space-2);
+	margin-bottom: var(--space-2);
+}
+
+dialog.modal .fld > span {
+	font-size: 11px;
+	color: var(--color-text-muted);
+}
+
+dialog.modal .fld input,
+dialog.modal .fld select {
+	background: var(--color-bg);
+	color: var(--color-text);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	padding: 4px 6px;
+	font: 12px var(--font-mono);
+	width: 100%;
+	box-sizing: border-box;
+}
+
+dialog.modal fieldset {
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	margin: 0 0 var(--space-2);
+	padding: 6px 8px;
+}
+
+dialog.modal legend {
+	font-size: 11px;
+	color: var(--color-text-muted);
+	padding: 0 4px;
+}
+
+dialog.modal footer {
+	display: flex;
+	gap: var(--space-2);
+	justify-content: flex-end;
+	align-items: center;
+	margin-top: 12px;
+}
+
+dialog.modal button:focus-visible,
+dialog.modal input:focus-visible,
+dialog.modal select:focus-visible {
+	outline: 1px solid var(--color-focus);
+	outline-offset: 1px;
+}

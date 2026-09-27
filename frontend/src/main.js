@@ -1,4 +1,5 @@
 import "./tokens.css";
+import "./dialog.css";
 import { mount } from "svelte";
 import App from "./App.svelte";
 import { initialTheme } from "./theme.js";

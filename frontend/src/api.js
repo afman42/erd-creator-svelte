@@ -22,6 +22,16 @@ export async function api(path, method = "GET", payload, opts = {}) {
 	return ct.includes("json") ? res.json() : res.text();
 }
 
+// apiJson GETs and parses JSON; throws Error(await res.text()) on !ok.
+// The GET-JSON twin of api(): refreshFiles/openFile used to paste their own
+// fetch + res.ok branches; the stubbed-fetch tests serve res.json() with no
+// content-type header, so content sniffing (as in api()) cannot pick JSON here.
+export async function apiJson(path) {
+	const res = await fetch(path);
+	if (!res.ok) throw new Error(await res.text());
+	return res.json();
+}
+
 // fail flashes a prefixed error: flash(`${prefix}: ${errMsg(e)}`, "err").
 export function fail(flash, prefix, e) {
 	flash(`${prefix}: ${errMsg(e)}`, "err");

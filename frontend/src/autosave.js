@@ -27,6 +27,26 @@ export function isDirty() {
 	return dirty;
 }
 /**
+ * Schedule one debounced callback on a timer slot.
+ * @param {ReturnType<typeof setTimeout> | undefined} timer
+ * @param {number} ms
+ * @param {() => void} fn
+ */
+function schedule(timer, ms, fn) {
+	clearTimeout(timer);
+	return setTimeout(() => fn(), ms);
+}
+/**
+ * Set the dirty flag AND its reactive store mirror together, keeping the two
+ * in lockstep. Every writer must use this — split writes drift.
+ * @param {AutosaveStore} store
+ * @param {boolean} v
+ */
+export function setDirtyBoth(store, v) {
+	dirty = v;
+	store.dirty = v;
+}
+/**
  * @param {boolean} v
  */
 export function setDirty(v) {
@@ -66,32 +86,23 @@ export function touch(
 		return;
 	}
 	editGen++;
-	clearTimeout(lintTimer);
-	lintTimer = setTimeout(() => {
-		lintTimer = undefined;
-		refreshLint();
-	}, LINT_DEBOUNCE_MS);
+	lintTimer = schedule(lintTimer, LINT_DEBOUNCE_MS, refreshLint);
 	if (store.currentFile) {
-		clearTimeout(saveTimer);
-		saveTimer = setTimeout(() => saveCurrent(true), SAVE_DEBOUNCE_MS);
+		saveTimer = schedule(saveTimer, SAVE_DEBOUNCE_MS, () => saveCurrent(true));
 	}
-	dirty = true;
-	// Reactive mirror for the Toolbar's unsaved indicator; the module flag
-	// stays the source of truth for flush gating.
-	store.dirty = true;
+	setDirtyBoth(store, true);
 	if (showSql) {
-		clearTimeout(sqlTimer);
-		sqlTimer = setTimeout(() => refreshSql(), SQL_DEBOUNCE_MS);
+		sqlTimer = schedule(sqlTimer, SQL_DEBOUNCE_MS, refreshSql);
 	}
 }
 
 export function clearTimers() {
-	if (lintTimer) {
-		clearTimeout(lintTimer);
-		lintTimer = undefined;
-	}
+	clearTimeout(lintTimer);
+	lintTimer = undefined;
 	clearTimeout(saveTimer);
+	saveTimer = undefined;
 	clearTimeout(sqlTimer);
+	sqlTimer = undefined;
 }
 
 /**

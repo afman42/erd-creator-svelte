@@ -3,8 +3,8 @@ let { column, parentName, onEdit } = $props();
 </script>
 
 <div class="row">
-	<span class="cname" class:pk={column.pk} title={column.name}>{column.name}</span>
-	<span class="ty" title={column.type}>{column.type}</span>
+	<span class="cname" class:pk={column.pk} title={column.name || undefined}>{column.name}</span>
+	<span class="ty" title={column.type || undefined}>{column.type}</span>
 	<span class="flags">
 		{#if column.pk}<b>PK</b>{/if}
 		{#if column.nn || column.pk}<b>NN</b>{/if}
@@ -17,13 +17,16 @@ let { column, parentName, onEdit } = $props();
 	{/if}
 	<button class="edit" title="edit column" aria-label="edit {column.name}" onclick={onEdit}>✎</button>
 </div>
-<div class="cmt" title={column.comment}>{column.comment}</div>
+<div class="cmt" title={column.comment || undefined}>{column.comment}</div>
 
 <style>
 	.row {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		/* gap 2px: the 44px ✎ (S4) added 28px to the row budget, pushing the
+		   widest row 2px past BOX_W — the BOX_W fit test caught it. Gap is the
+		   only free variable: widths are data-driven, heights pin geometry. */
+		gap: 2px;
 		padding: 1px 2px;
 		height: 26px;
 		box-sizing: border-box;
@@ -47,7 +50,7 @@ let { column, parentName, onEdit } = $props();
 	.row .ty {
 		flex: 0 0 auto;
 		max-width: 80px;
-		font: 9px ui-monospace, monospace;
+		font: 10px var(--font-mono);
 		color: var(--color-text-faint);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -57,7 +60,7 @@ let { column, parentName, onEdit } = $props();
 		flex: 0 0 auto;
 		display: flex;
 		gap: 2px;
-		font: 8px ui-monospace, monospace;
+		font: 10px var(--font-mono);
 		color: var(--color-flag);
 		max-width: 62px;
 		overflow: hidden;
@@ -65,7 +68,7 @@ let { column, parentName, onEdit } = $props();
 	.row .fkinfo {
 		flex: 0 0 auto;
 		max-width: 52px;
-		font: 9px ui-monospace, monospace;
+		font: 10px var(--font-mono);
 		color: var(--color-accent);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -73,13 +76,18 @@ let { column, parentName, onEdit } = $props();
 	}
 	.row .edit {
 		flex: 0 0 auto;
-		width: 16px;
+		/* 44px touch target that does NOT move the 26px height model: the
+		   button overflows the row vertically (negative margin), so ROW_H,
+		   boxHeight() and every FK anchor in geometry.js are untouched. */
+		width: 44px;
+		height: 44px;
+		margin: -9px -2px -9px 0;
 		box-sizing: border-box;
 		background: transparent;
 		color: var(--color-text-muted);
 		border: 0;
 		cursor: pointer;
-		font-size: 11px;
+		font-size: 14px;
 		padding: 0;
 	}
 	.row .edit:hover {

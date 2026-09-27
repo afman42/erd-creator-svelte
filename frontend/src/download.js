@@ -27,6 +27,9 @@ export function downloadText(
 export function execCopy(text) {
 	const ta = document.createElement("textarea");
 	ta.value = text;
+	// Direct CSSOM property writes, not a parsed style attribute: the CSP's
+	// style-src 'self' governs only static style attributes in markup — plain
+	// el.style assignments bypass it. cssText here is the same class of write.
 	ta.style.cssText = "position:fixed;opacity:0";
 	document.body.appendChild(ta);
 	ta.select();

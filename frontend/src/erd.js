@@ -23,13 +23,10 @@ export const DEFAULT_TYPE = {
 	VARCHAR: "VARCHAR(255)",
 };
 // Dialects the server can emit. All four are saveable: each has a parser, so a
-// saved file reopens. SAVEABLE_DIALECTS is kept as a separate list because the
-// dropdown labels anything absent from it "(export only)" — and because it must
-// agree with the server's Schema.saveable().
-//
-// That agreement is the whole point: the two disagreed twice. The UI called
-// MariaDB export-only while the server would have saved it as mysql, and sqlite
-// was genuinely refused until it gained a parser.
+// saved file reopens — and the "(export only)" branch is gone because no
+// offered dialect is export-only. isSaveable/SAVEABLE_DIALECTS stay exported
+// (always true) only because erd.test.js pins agreement with the server's
+// Schema.saveable(); the dropdown no longer branches on them.
 /** @type {string[]} */
 export const DIALECTS = ["mysql", "mariadb", "postgres", "sqlite"];
 /** @type {string[]} */

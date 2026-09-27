@@ -18,8 +18,8 @@ import { addTable } from "./schema.svelte.js";
 		padding: 24px 32px;
 		background: var(--color-surface);
 		border: 1px dashed var(--color-border);
-		border-radius: 8px;
-		max-width: 320px;
+		border-radius: var(--radius-xl);
+		max-width: 20rem;
 	}
 	.empty-title {
 		margin: 0 0 6px;
@@ -36,10 +36,12 @@ import { addTable } from "./schema.svelte.js";
 		background: var(--color-primary);
 		color: #fff;
 		border: 0;
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 6px 14px;
 		cursor: pointer;
 		font: inherit;
+		min-height: 44px;
+		min-width: 44px;
 	}
 	.empty-cta:hover {
 		background: var(--color-primary-hover);

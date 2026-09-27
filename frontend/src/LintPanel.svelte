@@ -7,20 +7,28 @@
 // its table (select + scroll into view), which is the whole point of a list
 // the toast cannot offer.
 import { setSelected, store } from "./schema.svelte.js";
+import { scrollToTable } from "./ui.js";
 
 // Lint messages start "<table>.<column> → …" in every Lint() branch. The
-// table name is everything before the first dot — names may contain spaces,
-// so the message text itself is the only reliable source.
+// server returns plain strings (no structured ids), so the table is matched
+// by LONGEST table-name prefix before a dot — a first-dot split breaks on
+// dotted table names ("a.b.c" would match "a" instead of "a.b").
+// Names may contain spaces, so the message text is the only reliable source.
+/** @param {string} msg */
 function jumpTo(msg) {
-	const dot = msg.indexOf(".");
-	if (dot <= 0) return;
-	const name = msg.slice(0, dot);
-	const t = store.schema.tables.find((x) => x.name === name);
+	const t = longestTablePrefix(msg);
 	if (!t) return;
-	setSelected(t.id);
-	document
-		.querySelector(`[aria-label="Table ${CSS.escape(name)}"]`)
-		?.scrollIntoView({ block: "center", inline: "center" });
+	scrollToTable(t.id, t.name, setSelected);
+}
+/** @param {string} msg */
+function longestTablePrefix(msg) {
+	let best = null;
+	for (const t of store.schema.tables) {
+		if (msg === t.name || msg.startsWith(`${t.name}.`)) {
+			if (!best || t.name.length > best.name.length) best = t;
+		}
+	}
+	return best;
 }
 </script>
 
@@ -48,7 +56,7 @@ function jumpTo(msg) {
 
 <style>
 	aside {
-		width: 320px;
+		width: 20rem;
 		border-left: 1px solid var(--color-border-strong);
 		display: flex;
 		flex-direction: column;
@@ -65,7 +73,7 @@ function jumpTo(msg) {
 	}
 	.linthead .hint {
 		color: var(--color-text-faint);
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 400;
 		margin-left: auto;
 	}
@@ -91,9 +99,10 @@ function jumpTo(msg) {
 		background: transparent;
 		border: 0;
 		color: var(--color-warning);
-		font: 11px/1.5 ui-monospace, monospace;
+		font: 11px/1.5 var(--font-mono);
 		padding: 6px 10px;
 		cursor: pointer;
+		min-height: 44px;
 	}
 	li button:hover {
 		background: var(--color-surface-hover);

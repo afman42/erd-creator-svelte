@@ -2,13 +2,13 @@
 // Extracted from schema.svelte.js to shrink God object (~590→~470).
 // All functions take `store` as first param (DI) to avoid circular import of the $state store.
 
-import { api, errMsg, fail, resolveFileName } from "./api.js";
+import { api, apiJson, errMsg, fail, resolveFileName } from "./api.js";
 import {
 	clearTimers as clearAutosaveTimers,
 	editGeneration,
-	isDirty,
+	flushCurrent as flushAutosave,
 	markSkipTouch,
-	setDirty,
+	setDirtyBoth,
 } from "./autosave.js";
 import {
 	adoptIds,
@@ -30,8 +30,7 @@ import { clearHistory } from "./history.js";
  */
 export async function refreshFiles(store) {
 	try {
-		const res = await fetch("/api/files");
-		store.files = res.ok ? await res.json() : [];
+		store.files = await apiJson("/api/files");
 	} catch {
 		store.files = [];
 	}
@@ -61,10 +60,7 @@ export async function saveCurrent(store, flash, silent = false) {
 			{ keepalive: true },
 		);
 		if (gen === editGeneration()) {
-			setDirty(false);
-			// Reactive mirror for the Toolbar's unsaved indicator, written at
-			// the only place the flag goes false.
-			store.dirty = false;
+			setDirtyBoth(store, false);
 		}
 		if (!silent) flash(`saved ${store.currentFile}`);
 	} catch (e) {
@@ -79,14 +75,55 @@ export async function saveCurrent(store, flash, silent = false) {
  * @param {Flash} flash
  */
 async function flushCurrent(store, flash) {
-	clearAutosaveTimers();
-	if (isDirty() && store.currentFile) {
-		try {
-			await saveCurrent(store, flash, true);
-		} catch {
-			// saveCurrent flashes itself; edit stays in memory
-		}
-	}
+	await flushAutosave({
+		store,
+		saveCurrent: (silent) => saveCurrent(store, flash, silent),
+	});
+}
+
+/**
+ * @param {Store} store
+ */
+function resetUndo(store) {
+	clearHistory();
+	store.undoDepth = 0;
+}
+
+/**
+ * Prompt for a .sql file name, normalized via resolveFileName (""/cancel → "").
+ * Single prompt+normalize body behind newFile/renameFile/duplicateFile.
+ * @param {string} message
+ * @param {string} initial
+ * @returns {string}
+ */
+export function promptFileName(message, initial) {
+	return resolveFileName((prompt(message, initial) || "").trim());
+}
+
+/**
+ * @param {Store} store
+ * @param {string} name
+ */
+function nameTaken(store, name) {
+	return store.files.some((f) => f.name === name);
+}
+
+/**
+ * @param {{ warnings?: unknown }} loaded
+ * @param {Flash} flash
+ */
+function flashWarnings(loaded, flash) {
+	// Best-effort import report: the loss list rides the open response, and
+	// a warn toast names the skips (server excerpts are capped/sanitized;
+	// Toast interpolates text, never html). Canvas loads regardless.
+	if (!Array.isArray(loaded.warnings) || !loaded.warnings.length) return;
+	const shown = loaded.warnings.slice(0, 3).join("; ");
+	const more =
+		loaded.warnings.length > 3 ? ` (+${loaded.warnings.length - 3} more)` : "";
+	flash(
+		`imported with ${loaded.warnings.length} skips: ${shown}${more}`,
+		"warn",
+	);
 }
 
 /**
@@ -98,33 +135,17 @@ export async function openFile(store, name, flash) {
 	if (!name) return;
 	await flushCurrent(store, flash);
 	try {
-		const res = await fetch(`/api/files/${encodeURIComponent(name)}`);
-		if (!res.ok) throw new Error(await res.text());
+		const loaded = await apiJson(`/api/files/${encodeURIComponent(name)}`);
 		markSkipTouch();
-		const loaded = await res.json();
 		if (!loaded.dialect) loaded.dialect = DEFAULT_DIALECT;
 		if (!loaded.sqliteTypes) loaded.sqliteTypes = DEFAULT_SQLITE_TYPES;
 		store.schema = adoptIds(loaded);
 		layout(store.schema);
 		store.currentFile = name;
 		store.error = "";
-		setDirty(false);
-		store.dirty = false; // reactive mirror (Toolbar indicator)
-		clearHistory();
-		// Best-effort import report: the loss list rides the open response, and
-		// a warn toast names the skips (server excerpts are capped/sanitized;
-		// Toast interpolates text, never html). Canvas loads regardless.
-		if (Array.isArray(loaded.warnings) && loaded.warnings.length) {
-			const shown = loaded.warnings.slice(0, 3).join("; ");
-			const more =
-				loaded.warnings.length > 3
-					? ` (+${loaded.warnings.length - 3} more)`
-					: "";
-			flash(
-				`imported with ${loaded.warnings.length} skips: ${shown}${more}`,
-				"warn",
-			);
-		}
+		setDirtyBoth(store, false); // reactive mirror (Toolbar indicator)
+		resetUndo(store);
+		flashWarnings(loaded, flash);
 	} catch (e) {
 		flash(`Open failed: ${errMsg(e)}`, "err");
 		await refreshFiles(store);
@@ -136,20 +157,18 @@ export async function openFile(store, name, flash) {
  * @param {Flash} flash
  */
 export async function newFile(store, flash) {
-	const name = (prompt("New schema file name:", "schema") || "")
-		.trim()
-		.replace(/\.sql$/i, "");
+	const name = promptFileName("New schema file name:", "schema");
 	if (!name) return;
-	if (store.files.some((f) => f.name === `${name}.sql`)) {
-		flash(`${name}.sql already exists`, "err");
+	if (nameTaken(store, name)) {
+		flash(`${name} already exists`, "err");
 		return;
 	}
 	await flushCurrent(store, flash);
 	markSkipTouch();
 	store.schema = newSchema(store.schema.dialect, [newTable("users")]);
 	layout(store.schema);
-	store.currentFile = `${name}.sql`;
-	clearHistory();
+	store.currentFile = name;
+	resetUndo(store);
 	await saveCurrent(store, flash);
 	await refreshFiles(store);
 }
@@ -172,7 +191,7 @@ export async function deleteFile(store, flash) {
 		return;
 	}
 	store.currentFile = "";
-	clearHistory();
+	resetUndo(store);
 	flash(`deleted ${name}`);
 	await refreshFiles(store);
 }
@@ -187,10 +206,9 @@ export async function deleteFile(store, flash) {
 export async function renameFile(store, flash) {
 	if (!store.currentFile) return;
 	const cur = store.currentFile;
-	const to = (prompt("Rename schema file to:", cur) || "").trim();
-	if (!to || to === cur) return;
-	const name = resolveFileName(to);
-	if (store.files.some((f) => f.name === name)) {
+	const name = promptFileName("Rename schema file to:", cur);
+	if (!name || name === cur) return;
+	if (nameTaken(store, name)) {
 		flash(`${name} already exists`, "err");
 		return;
 	}
@@ -222,11 +240,10 @@ export async function duplicateFile(store, flash) {
 	for (let n = 2; taken.has(suggested); n++) {
 		suggested = `${base}_copy${n}.sql`;
 	}
-	const to = (prompt("Duplicate schema file as:", suggested) || "").trim();
-	if (!to) return;
-	const name = resolveFileName(to);
+	const name = promptFileName("Duplicate schema file as:", suggested);
+	if (!name) return;
 	if (name === cur) return;
-	if (store.files.some((f) => f.name === name)) {
+	if (nameTaken(store, name)) {
 		flash(`${name} already exists`, "err");
 		return;
 	}

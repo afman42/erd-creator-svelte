@@ -998,6 +998,8 @@ test("uniqName handles multi-digit suffixes and empty taken sets", () => {
 });
 
 import {
+	captureOptions,
+	captureRoot,
 	captureSize,
 	decodeSvgDataUrl,
 	pngFilename,
@@ -1081,4 +1083,24 @@ test("captureSize includes cards below the fold", () => {
 test("captureSize returns null with nothing to draw", () => {
 	assert.equal(captureSize({ tables: [] }), null);
 	assert.equal(captureSize(null), null);
+});
+
+test("captureOptions neutralizes zoom and sizes to the diagram", () => {
+	assert.equal(captureOptions({ width: 360, height: 337 }).width, 360);
+	assert.equal(captureOptions({ width: 360, height: 337 }).height, 337);
+	// the clone copies `.zoom`'s scale(z): without this the export follows zoom
+	assert.equal(
+		captureOptions({ width: 360, height: 337 }).style.transform,
+		"none",
+	);
+});
+
+test("captureRoot targets the zoom layer when present", () => {
+	const zoom = { cls: "zoom" };
+	const canvas = { querySelector: (sel) => (sel === ".zoom" ? zoom : null) };
+	assert.equal(captureRoot(canvas), zoom);
+	// markup drift / plain-element tests: fall back to the given element
+	const bare = { querySelector: () => null };
+	assert.equal(captureRoot(bare), bare);
+	assert.equal(captureRoot(null), null);
 });

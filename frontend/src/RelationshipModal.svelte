@@ -67,13 +67,12 @@ $effect(() => {
 
 // Human description per type, shown under the select so the flags written
 // (NOT NULL / UNIQUE / junction) are visible before Create.
-const typeDesc = $derived(
-	type === "1:1"
-		? "One row links to exactly one row — FK is NOT NULL + UNIQUE."
-		: type === "N:N"
-			? "Builds a junction table with two FKs — two edges."
-			: "Many rows link to one row — FK is NOT NULL.",
-);
+const TYPE_DESC = {
+	"1:1": "One row links to exactly one row — FK is NOT NULL + UNIQUE.",
+	"N:N": "Builds a junction table with two FKs — two edges.",
+	"1:N": "Many rows link to one row — FK is NOT NULL.",
+};
+const typeDesc = $derived(TYPE_DESC[type] ?? TYPE_DESC["1:N"]);
 
 const invalid = $derived(!childId || !parentId || childId === parentId);
 // Note: `invalid` drives the hint/title only — Create stays enabled so a
@@ -88,17 +87,15 @@ function swap() {
 function create() {
 	// The N:N arm takes the junction creator; the else arm is 1:1 | 1:N, so
 	// the type narrows to addRelationship's parameter without a cast.
-	const ok =
-		type === "N:N"
-			? addManyToMany(childId, parentId)
-			: type === "1:1"
-				? addRelationship(childId, parentId, "1:1")
-				: addRelationship(childId, parentId, "1:N");
-	if (ok) onClose();
+	if (type === "N:N") {
+		if (addManyToMany(childId, parentId)) onClose();
+	} else if (addRelationship(childId, parentId, type)) {
+		onClose();
+	}
 }
 </script>
 
-<dialog bind:this={dlg} onclose={onClose} class="reledit" aria-labelledby="rel-title">
+<dialog bind:this={dlg} onclose={onClose} class="modal reledit" aria-labelledby="rel-title">
 	<h2 id="rel-title">New relationship</h2>
 	<p class="sub">Pick the two tables and how they link — the FK is added for you.</p>
 
@@ -186,7 +183,17 @@ function create() {
 		</select>
 	</fieldset>
 	<p class="typedesc">{typeDesc}</p>
-
+	<!-- On-canvas legend (S8): the edge labels (0..N, 0..1, …) decode nowhere
+	     in UI — truth lives in geometry.js cardinality(). One static list so
+	     the canvas notation reads without opening this dialog. -->
+	<details class="legend">
+		<summary>Edge labels</summary>
+		<ul>
+			<li><code>0..N</code> — many rows may link</li>
+			<li><code>0..1</code> — at most one row links</li>
+			<li><code>1..1</code> — exactly one row links</li>
+		</ul>
+	</details>
 	{#if preview}
 		<!-- Live edge-label sample: static curve, live <text> labels in the same
 		     paint vocabulary as the canvas (geometry.js constants as presentation
@@ -246,24 +253,9 @@ function create() {
 </dialog>
 
 <style>
+	/* Base skin in dialog.css — only reledit width + own layout stay here. */
 	dialog.reledit {
-		background: var(--color-surface);
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		padding: 14px 16px;
 		width: 340px;
-		max-width: calc(100vw - 32px);
-		box-shadow: 0 8px 32px #000a;
-	}
-	dialog.reledit::backdrop {
-		background: #0007;
-	}
-	h2 {
-		margin: 0;
-		font-size: 13px;
-		font-weight: 600;
-		color: var(--color-text-muted);
 	}
 	.sub {
 		margin: 4px 0 12px;
@@ -294,23 +286,26 @@ function create() {
 	.fld select {
 		background: var(--color-bg);
 		border: 1px solid var(--color-border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		color: var(--color-text);
 		padding: 4px 6px;
-		font: 12px ui-monospace, monospace;
+		font: 12px var(--font-mono);
 		width: 100%;
 		box-sizing: border-box;
+		min-height: 44px;
 	}
 	.swap {
 		margin-top: 20px;
 		background: transparent;
 		color: var(--color-text-muted);
 		border: 1px solid var(--color-border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		cursor: pointer;
 		padding: 3px 7px;
 		font-size: 13px;
 		line-height: 1;
+		min-width: 44px;
+		min-height: 44px;
 	}
 	.swap:hover {
 		color: var(--color-text);
@@ -343,9 +338,10 @@ function create() {
 		gap: 1px;
 		padding: 7px 4px 6px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-lg);
 		cursor: pointer;
 		font-size: 11px;
+		min-height: 44px;
 	}
 	.type input {
 		position: absolute;
@@ -353,7 +349,7 @@ function create() {
 		pointer-events: none;
 	}
 	.type .tn {
-		font: 600 12px ui-monospace, monospace;
+		font: 600 12px var(--font-mono);
 		color: var(--color-text-muted);
 	}
 	.type small {
@@ -366,33 +362,45 @@ function create() {
 	}
 	.type.on {
 		border-color: var(--color-primary);
-		background: #233448;
+		background: var(--color-on-bg);
 	}
 	.type.on .tn {
-		color: #fff;
-	}
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		padding: 0;
-		margin: -1px;
-		overflow: hidden;
-		clip: rect(0, 0, 0, 0);
-		white-space: nowrap;
-		border: 0;
+		color: var(--color-on-text);
 	}
 	.typedesc {
 		margin: 6px 0 0;
 		font-size: 11px;
 		color: var(--color-text-muted);
 	}
+	.legend {
+		margin: 6px 0 0;
+		font-size: 11px;
+		color: var(--color-text-muted);
+	}
+	.legend > summary {
+		cursor: pointer;
+		min-height: 44px;
+		display: inline-flex;
+		align-items: center;
+	}
+	.legend > summary:focus-visible {
+		outline: 1px solid var(--color-focus);
+		outline-offset: 1px;
+	}
+	.legend ul {
+		margin: 4px 0 0;
+		padding-left: 18px;
+	}
+	.legend code {
+		font: 11px var(--font-mono);
+		color: var(--color-text);
+	}
 	/* Preview sits in its own bordered box so the live edge sample reads as a
 	   result, not as another input; the sentence under it names both ends. */
 	.preview {
 		margin-top: 10px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-lg);
 		padding: 6px 8px 7px;
 		background: var(--color-bg);
 	}
@@ -407,21 +415,16 @@ function create() {
 		margin: 2px 0 0;
 	}
 	.preview .cap code {
-		font: 11px ui-monospace, monospace;
+		font: 11px var(--font-mono);
 		color: var(--color-text);
-	}
-	.acts {
-		display: flex;
-		gap: 8px;
-		justify-content: flex-end;
-		margin-top: 12px;
 	}
 	.acts button {
 		border: 0;
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 6px 12px;
 		cursor: pointer;
 		font: inherit;
+		min-height: 44px;
 	}
 	.create {
 		background: var(--color-primary);
