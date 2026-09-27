@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	bumpStruct,
 	clampZoom,
 	contentSize,
 	referencedSet,
 	relationshipList,
 	tableNameById,
 } from "../src/canvasView.js";
+import { setSnapHook, snap } from "../src/history.js";
+import { resetAutosave } from "./helpers.js";
+
+setSnapHook(bumpStruct);
+
 import { exportStem } from "../src/capture.js";
 import { exportFilename } from "../src/export.js";
 import { scrollToTable } from "../src/ui.js";
@@ -67,6 +73,52 @@ test("relationshipList uses the memoized names (no per-FK scan)", () => {
 		"posts.user_id 0..N references users 1..1",
 	]);
 	assert.equal(relationshipList(s), relationshipList(s));
+});
+
+test("memo invalidates on structural snap, reuses across x/y drag writes", () => {
+	resetAutosave();
+	const s = schema();
+	const names = tableNameById(s);
+	const rel = relationshipList(s);
+	const refs = referencedSet(s);
+	// drag frame: x/y only, no snap → identity reuse
+	s.tables[0].x = 99;
+	assert.equal(tableNameById(s), names, "drag must reuse the name map");
+	assert.equal(relationshipList(s), rel, "drag must reuse the rel list");
+	assert.equal(referencedSet(s), refs, "drag must reuse the ref set");
+	// structural edit flow (snap, then in-place apply — as schema.svelte does)
+	snap(s);
+	s.tables[0].name = "people";
+	assert.equal(
+		tableNameById(s).get("t1"),
+		"people",
+		"rename must rebuild the name map",
+	);
+	assert.deepEqual(relationshipList(s), [
+		"posts.user_id 0..N references people 1..1",
+	]);
+	resetAutosave();
+});
+
+test("memo invalidates on FK retarget and flag flip", () => {
+	resetAutosave();
+	const s = schema();
+	relationshipList(s);
+	referencedSet(s);
+	// retarget the FK away from t1: ref set must drop t1, rel text must follow
+	snap(s);
+	s.tables[1].columns[0].ref.tableId = "t2";
+	assert.ok(!referencedSet(s).has("t1"), "retarget must drop t1 from ref set");
+	assert.deepEqual(relationshipList(s), [
+		"posts.user_id 0..N references posts 1..1",
+	]);
+	// flip ux: child end must read 0..1
+	snap(s);
+	s.tables[1].columns[0].ux = true;
+	assert.deepEqual(relationshipList(s), [
+		"posts.user_id 0..1 references posts 1..1",
+	]);
+	resetAutosave();
 });
 
 test("clampZoom + contentSize cover the zoom/view helpers", () => {

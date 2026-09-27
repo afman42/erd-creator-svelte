@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { newSchema, newTable } from "../src/erd.js";
-import { clearHistory, depth, snap, snapRaw, undo } from "../src/history.js";
+import {
+	clearHistory,
+	depth,
+	setSnapHook,
+	snap,
+	snapRaw,
+	undo,
+} from "../src/history.js";
 
 test("history snap/undo round-trips schema", () => {
 	clearHistory();
@@ -88,4 +95,29 @@ test("snap preserves dialect and columns", () => {
 	const prev = undo();
 	assert.equal(prev.dialect, "postgres");
 	assert.equal(prev.tables[0].columns.length, 2);
+});
+
+test("snap fires the snap hook once per call", () => {
+	clearHistory();
+	let calls = 0;
+	setSnapHook(() => calls++);
+	try {
+		const s = newSchema("mysql", [newTable("a")]);
+		snap(s);
+		snap(s);
+		assert.equal(calls, 2);
+		assert.equal(depth(), 2);
+	} finally {
+		setSnapHook(() => {});
+	}
+});
+
+test("snap hook defaults to a no-op without wiring", () => {
+	clearHistory();
+	setSnapHook(() => {});
+	const s = newSchema("mysql", [newTable("a")]);
+	snap(s);
+	assert.equal(depth(), 1);
+	const prev = undo();
+	assert.equal(prev.tables[0].name, "a");
 });
