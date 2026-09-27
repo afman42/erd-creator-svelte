@@ -45,17 +45,10 @@ const LABELS = {
 	sqlite: "SQLite",
 };
 
-// Filter queries: fileQuery narrows the file <select> options; tableQuery
-// jumps to the first matching card on Enter. Local view state — never enters
-// the schema or undo.
+// tableQuery jumps to the first matching card on Enter. Local view state —
+// never enters the schema or undo.
 
-let fileQuery = $state("");
 let tableQuery = $state("");
-const fileOptions = $derived(
-	store.files.filter((f) =>
-		f.name.toLowerCase().includes(fileQuery.trim().toLowerCase()),
-	),
-);
 
 function jumpToTable() {
 	const q = tableQuery.trim().toLowerCase();
@@ -95,16 +88,8 @@ function jumpToTable() {
 			aria-label="Open schema file"
 		>
 			<option value="">Open file…</option>
-			{#each fileOptions as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
+			{#each store.files as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
 		</select>
-		<input
-			class="search"
-			type="search"
-			placeholder="Filter files…"
-			aria-label="Filter files"
-			value={fileQuery}
-			oninput={(e) => (fileQuery = e.currentTarget.value)}
-		/>
 		<button onclick={newFile} aria-label="New" title="Create a new schema file">New</button>
 		<button onclick={() => saveCurrent()} disabled={!store.currentFile} aria-label="Save" title="Save the current file">Save</button>
 		<button onclick={renameFile} disabled={!store.currentFile} aria-label="Rename file" title="Rename the current schema file">Rename</button>
@@ -203,7 +188,7 @@ function jumpToTable() {
 </header>
 
 <style>
-		header {
+	header {
 		display: flex;
 		gap: 8px;
 		align-items: center;
@@ -217,13 +202,24 @@ function jumpToTable() {
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: thin;
+		scrollbar-color: var(--color-border) transparent;
 		-webkit-overflow-scrolling: touch;
+		scroll-behavior: smooth;
+		scroll-padding-inline: 12px;
+		scroll-snap-type: x proximity;
 	}
 	header::-webkit-scrollbar {
-		height: 4px;
+		height: 6px;
+	}
+	header::-webkit-scrollbar-track {
+		background: transparent;
 	}
 	header::-webkit-scrollbar-thumb {
 		background: var(--color-border);
+		border-radius: 999px;
+	}
+	header::-webkit-scrollbar-thumb:hover {
+		background: var(--color-border-strong);
 	}
 	header button {
 		background: var(--color-primary);
@@ -236,6 +232,17 @@ function jumpToTable() {
 		flex: 0 0 auto;
 		white-space: nowrap;
 		min-height: 44px;
+		transition: background-color 0.15s ease, transform 0.15s ease, filter 0.15s ease;
+	}
+	header button:not(:disabled):hover {
+		filter: brightness(1.08);
+	}
+	header button:not(:disabled):active {
+		transform: translateY(1px);
+	}
+	header button:focus-visible {
+		outline: 2px solid var(--color-focus);
+		outline-offset: 2px;
 	}
 	header button:disabled {
 		background: var(--color-border);
@@ -258,18 +265,42 @@ function jumpToTable() {
 		max-width: 160px;
 		min-height: 44px;
 	}
-	/* Group separators: related controls read as one cluster. */
+	/* Tab pills: each group reads as one tab; the ::after bar slides in on
+	   hover or keyboard focus-within. Separators are gone — the pill border
+	   carries the grouping now. */
 	.grp {
 		display: flex;
 		gap: 8px;
 		align-items: center;
 		flex: 0 0 auto;
+		position: relative;
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		padding: 6px 8px;
+		scroll-snap-align: start;
+		transition: border-color 0.18s ease, background-color 0.18s ease;
 	}
-	.grp + .grp,
-	.grp + .more,
-	.more + .grp {
-		border-left: 1px solid var(--color-border);
-		padding-left: 8px;
+	.grp::after {
+		content: "";
+		position: absolute;
+		left: 8px;
+		right: 8px;
+		bottom: 2px;
+		height: 2px;
+		border-radius: 999px;
+		background: var(--color-primary);
+		transform: scaleX(0);
+		transform-origin: left;
+		transition: transform 0.22s ease;
+		pointer-events: none;
+	}
+	.grp:hover {
+		border-color: var(--color-border-strong);
+	}
+	.grp:hover::after,
+	.grp:focus-within::after {
+		transform: scaleX(1);
 	}
 	header input.search {
 		background: var(--color-bg);
@@ -283,9 +314,15 @@ function jumpToTable() {
 		min-height: 44px;
 		box-sizing: border-box;
 	}
-	/* ⋯ overflow popover on narrow screens; inline row on wide ones. */
+	/* ⋯ overflow popover on narrow screens; inline row on wide ones. Open
+	   animates via keyframes (close snaps shut — <details> close is not
+	   transitionable in pure CSS). Resolved against the header so the
+	   absolute popover anchors to the toolbar, and scrolls with the row:
+	   unavoidable inside overflow-x:auto without popover JS. */
 	.more {
 		flex: 0 0 auto;
+		position: relative;
+		scroll-snap-align: start;
 	}
 	.more > summary {
 		list-style: none;
@@ -298,6 +335,13 @@ function jumpToTable() {
 		box-sizing: border-box;
 		display: inline-flex;
 		align-items: center;
+		transition: border-color 0.18s ease, background-color 0.18s ease;
+	}
+	.more > summary:hover {
+		border-color: var(--color-border-strong);
+	}
+	.more[open] > summary {
+		border-color: var(--color-primary);
 	}
 	.more > summary::-webkit-details-marker {
 		display: none;
@@ -307,14 +351,46 @@ function jumpToTable() {
 		outline-offset: 2px;
 	}
 	@media (max-width: 1100px) {
+		/* fixed, not absolute: the header is a scrollport (overflow-x:auto),
+		   which clips absolute descendants. Fixed escapes to the viewport. */
 		.more .grp {
-			position: absolute;
+			position: fixed;
+			top: 64px;
+			right: 8px;
 			background: var(--color-surface);
 			border: 1px solid var(--color-border);
 			border-radius: var(--radius-md);
 			padding: 8px;
 			z-index: 10;
 			flex-wrap: wrap;
+		}
+		.more[open] .grp {
+			animation: more-pop 0.18s ease;
+		}
+	}
+	@keyframes more-pop {
+		from {
+			opacity: 0;
+			transform: translateY(-4px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		header {
+			scroll-behavior: auto;
+			scroll-snap-type: none;
+		}
+		.grp,
+		.grp::after,
+		header button,
+		.more > summary {
+			transition: none;
+		}
+		.more[open] .grp {
+			animation: none;
 		}
 	}
 .ok,
