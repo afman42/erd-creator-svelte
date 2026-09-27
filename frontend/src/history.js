@@ -3,6 +3,17 @@
 // The stack holds JSON snapshots of the schema; it is not reactive itself.
 import { adoptIds } from "./erd.js";
 
+// Structural-revision hook, wired by schema.svelte.js to canvasView's
+// bumpStruct(). history.js cannot import canvasView (canvasView imports
+// geometry/relationships only — importing it here would cycle through the
+// store). The hook defaults to a no-op so unit tests driving history.js
+// directly keep working.
+let onSnap = () => {};
+/** @param {() => void} fn */
+export function setSnapHook(fn) {
+	onSnap = fn;
+}
+
 /** @type {string[]} */
 const stack = [];
 
@@ -15,6 +26,7 @@ function pushCapped(json) {
 /** @param {unknown} schema */
 export function snap(schema) {
 	pushCapped(JSON.stringify(schema));
+	onSnap();
 }
 
 // snapRaw pushes a pre-serialized entry, bypassing JSON.stringify. It exists as

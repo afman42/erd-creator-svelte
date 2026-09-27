@@ -6,11 +6,11 @@
 // stay in App.svelte: they close over rAF ids, scroll element refs, and the
 // store, and lifting them would only move behavior risk, not cost.
 //
-// nameById/junctionSets are memoized per schema OBJECT identity in a module
-// WeakMap: the drag frame mutates table x/y in place without replacing the
-// schema object, so a key on the tables array alone would go stale. The entry
-// is rebuilt only when the schema object (or, for relList, schema+theme
-// inputs) changes — drag frames reuse the cached maps instead of rebuilding.
+// nameById/junctionSets/relList are memoized per schema OBJECT identity plus
+// a structural revision: the drag frame mutates table x/y in place without
+// replacing the schema object, so a key on the tables array alone would go
+// stale. The snap()→bumpStruct() hook invalidates on every structural edit
+// (same object, in-place rename/flags/FK), while drag frames reuse the cache.
 import { BOX_W, boxHeight, cardinality } from "./geometry.js";
 import { junctionSet } from "./relationships.js";
 
@@ -35,24 +35,54 @@ export function contentSize(schema) {
 	return { w, h };
 }
 
-/** @type {WeakMap<object, { nameById?: Map<string, string>, referenced?: Set<string>, relList?: string[] }>} */
+/** @type {WeakMap<object, { structRev: number, nameById: Map<string, string> | null, referenced: Set<string> | null, relList: string[] | null }>} */
 const cache = new WeakMap();
 
+// Structural revision: bumped by snap() before every structural mutation
+// (rename/flags/FK/columns/tables — drag-start and nudge snaps included, so
+// one rebuild per drag/nudge is the cost and correctness stays trivial).
+// Drag x/y writes bump only App.svelte's local pos state, so the memoized
+// maps stay valid across all frames after that one rebuild. fileStore loads
+// and undo() replace store.schema (fresh object → fresh cache entry), so
+// entries can never leak across a load/undo boundary.
+let structRev = 0;
+
+/** @returns {number} */
+export function structRevision() {
+	return structRev;
+}
+/** Bump on structural mutation (names/flags/refs/columns/tables). */
+export function bumpStruct() {
+	structRev++;
+}
+
 /**
- * Cache entry for a schema object, created on first use.
+ * Cache entry for a schema object, created on first use. The entry records
+ * the structRev it was built under; a mismatch means a structural edit
+ * happened since (same object, in-place mutation) and the entry rebuilds.
  * @param {{ tables: import("./erd.js").Table[] }} schema
  */
 function entry(schema) {
 	let e = cache.get(schema);
 	if (!e) {
-		e = {};
+		e = {
+			structRev,
+			nameById: null,
+			referenced: null,
+			relList: null,
+		};
 		cache.set(schema, e);
+	} else if (e.structRev !== structRev) {
+		e.structRev = structRev;
+		e.nameById = null;
+		e.referenced = null;
+		e.relList = null;
 	}
 	return e;
 }
 
 /**
- * FK target name lookup, memoized per schema object identity.
+ * FK target name lookup, memoized per schema object identity + struct rev.
  * @param {{ tables: import("./erd.js").Table[] }} schema
  * @returns {Map<string, string>}
  */
@@ -64,7 +94,7 @@ export function tableNameById(schema) {
 }
 
 /**
- * Inbound-reference set, memoized per schema object identity.
+ * Inbound-reference set, memoized per schema object identity + struct rev.
  * @param {{ tables: import("./erd.js").Table[] }} schema
  * @returns {Set<string>}
  */
@@ -75,11 +105,11 @@ export function referencedSet(schema) {
 }
 
 /**
- * Screen-reader relationship strings, memoized per schema object identity.
- * The text depends only on names/flags, so the cache key is the schema
- * object — same object across drag frames reuses the list, a replaced schema
- * (undo/load/edit) rebuilds it. The inner per-FK find() is served by the
- * memoized name map above instead of a linear scan per FK.
+ * Screen-reader relationship strings, memoized per schema identity + rev.
+ * The text depends only on names/flags; any structural edit bumps the rev
+ * (via snap) and rebuilds, while drag frames reuse the list. The inner
+ * per-FK find() is served by the memoized name map above instead of a
+ * linear scan per FK.
  * @param {{ tables: import("./erd.js").Table[] }} schema
  * @returns {string[]}
  */

@@ -6,6 +6,7 @@
 // properties (allowed) — never the exported binding itself.
 
 import { api } from "./api.js";
+import { bumpStruct } from "./canvasView.js";
 import {
 	cloneTable,
 	DEFAULT_TYPE,
@@ -21,9 +22,13 @@ import { CANVAS_ORIGIN, DUP_OFFSET, lowestY } from "./geometry.js";
 import {
 	depth as depthHistory,
 	dropLast as dropHistory,
+	setSnapHook as setSnapHookHistory,
 	snap as snapHistory,
 	undo as undoHistory,
 } from "./history.js";
+
+setSnapHookHistory(bumpStruct);
+
 import { createManyToMany, createRelationship } from "./relationships.js";
 import { initialTheme, saveTheme, THEME_DARK, THEME_LIGHT } from "./theme.js";
 

@@ -5,6 +5,7 @@ import {
 	contentSize,
 	referencedSet,
 	relationshipList,
+	structRevision,
 	tableNameById,
 	VIEW_PAD,
 	ZMAX,
@@ -101,20 +102,22 @@ function applyDragPending() {
 	if (t) {
 		t.x = snapCoord(Math.max(0, drag.tx0 + dragPending.dx));
 		t.y = snapCoord(Math.max(0, drag.ty0 + dragPending.dy));
-		// Fix A: bump so the edge derivation re-runs on the same frame as
-		// the card write — the mutation alone may not invalidate $derived.
-		dragGen++;
+		// Position-only write: bump the local pos state (not struct) so the
+		// edge derivation re-runs on the same frame — the mutation alone may
+		// not invalidate $derived — while the memoized name/ref maps in
+		// canvasView.js stay valid across the whole drag.
+		pos++;
 	}
 	dragPending = null;
 }
 
-// Fix A companion: subscribe to the in-progress drag write. t.x/t.y are
-// mutated in applyDragPending (not replaced), so without an explicit read of
-// the drag generation here the $derived may render the arrow a frame behind
-// the card. dragGen bumps once per applied frame (see applyDragPending).
-let dragGen = $state(0);
+// Position revision: bumped once per applied drag frame / nudge (see
+// applyDragPending + onKey). t.x/t.y are mutated in place, so without an
+// explicit subscription the $derived below may render the arrow a frame
+// behind the card.
+let pos = $state(0);
 const edges = $derived.by(() => {
-	void dragGen;
+	void pos;
 	return edgePaths(store.schema, { sticky: edgeSticky });
 });
 
@@ -125,20 +128,25 @@ let announce = $state("");
 
 // Screen-reader text alternative for the edge SVG (aria-hidden below): one
 // "<child>.<col> <childEnd> references <parent> <parentEnd>" string per FK.
-// Memoized per schema identity in canvasView.js — the drag frame mutates x/y
-// in place without replacing the schema, so the cached list + name map are
-// reused across frames instead of running a find() per FK per frame. Also
-// hoisted once here (not per TableCard): nameById/referenced below are the
-// same single computation, passed down as props. The dragGen read keeps the
-// list live across applied drag frames (same Fix A subscription as edges).
+// Memoized on the structural revision in canvasView.js — the drag frame bumps
+// only the pos revision, so the cached list + name map are reused across
+// frames instead of rebuilding per frame. Any structural edit (snap →
+// bumpStruct) invalidates via the structRevision() read below.
 const relList = $derived.by(() => {
-	void dragGen;
+	void structRevision();
 	return relationshipList(store.schema);
 });
 // Hoisted per-schema maps: TableCard used to rebuild both per card per change
 // (nameById map + junctionSet scan). One computation here, props below.
-const nameById = $derived(tableNameById(store.schema));
-const referenced = $derived(referencedSet(store.schema));
+// Same struct subscription: renames/flag/FK edits rebuild, drags reuse.
+const nameById = $derived.by(() => {
+	void structRevision();
+	return tableNameById(store.schema);
+});
+const referenced = $derived.by(() => {
+	void structRevision();
+	return referencedSet(store.schema);
+});
 
 // The SVG paint is applied as presentation attributes (the export-capture
 // constraint: html-to-image does not carry the stylesheet), and attributes
@@ -323,6 +331,9 @@ function onKey(ev) {
 			if (ev.key === "ArrowDown") t.y += step;
 			if (ev.key === "ArrowLeft") t.x = Math.max(0, t.x - step);
 			if (ev.key === "ArrowRight") t.x += step;
+			// Position-only write (same as a drag frame): bump pos so the
+			// edges re-render, structural memo stays cached.
+			pos++;
 			announce = `${t.name} moved to ${t.x}, ${t.y}`;
 		} else if (!store.selected) {
 			// No selection: arrows pan the canvas instead of doing nothing.
