@@ -334,10 +334,11 @@ export function edgePaths(schema, opts = {}) {
 	// other at both ends. Each edge in such a group is offset along its control
 	// points so every relationship stays separately visible.
 	const routed = [];
+	const byId = new Map(schema.tables.map((x) => [x.id, x]));
 	for (const t of schema.tables)
 		for (let i = 0; i < t.columns.length; i++) {
 			const c = t.columns[i];
-			const p = c.ref && schema.tables.find((x) => x.id === c.ref.tableId);
+			const p = c.ref && byId.get(c.ref.tableId);
 			if (!p) continue;
 			const ci = t.y + HDR_H + i * ROW_H + ROW_CENTER;
 			// Fix B: land on the parent's referenced row (sole-PK row), not the
