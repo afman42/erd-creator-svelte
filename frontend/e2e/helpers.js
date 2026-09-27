@@ -57,8 +57,22 @@ export async function awaitFile(request, name, pred) {
 	}).toPass({ timeout: 5000 });
 }
 
+// Export/share buttons live inside the ⋯ overflow <details> in the current
+// working tree. The helper opens it idempotently; when the menu markup is
+// absent (older committed UI), it is a no-op and the buttons click directly.
+export async function openShare(page) {
+	const more = page.locator("details.more");
+	if ((await more.count()) === 0) return;
+	// getAttribute returns null when absent but "" when `<details open>` is
+	// present — a truthiness check would re-click and toggle the menu shut.
+	if ((await more.getAttribute("open")) === null) {
+		await page.getByLabel("More share actions").click();
+	}
+}
+
 // Click an export button and return the download and its bytes.
 export async function downloadBytes(page, buttonName) {
+	await openShare(page);
 	const dlPromise = page.waitForEvent("download");
 	await page.getByRole("button", { name: buttonName }).click();
 	const dl = await dlPromise;
@@ -95,5 +109,10 @@ export async function selectTable(page, i = 0) {
 	await page.mouse.down();
 	await page.mouse.up();
 	await page.locator("body").click({ position: { x: 5, y: 400 } }); // defocus
+	// The header press lands on the select button (S8 split); focusing it
+	// traps subsequent keys in BUTTON focus, so blur to body for the !editing
+	// guard in onKey. The body click above usually does this, but a focused
+	// button keeps focus unless explicitly blurred.
+	await page.evaluate(() => /** @type {HTMLElement|null} */ (document.activeElement)?.blur?.());
 	await expect(page.locator("section.table").nth(i)).toHaveClass(/selected/);
 }

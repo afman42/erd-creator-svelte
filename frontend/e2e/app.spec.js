@@ -7,6 +7,7 @@ import {
 	downloadBytes,
 	newFile,
 	openCol,
+	openShare,
 	setFk,
 	wipeStore,
 } from "./helpers.js";
@@ -647,6 +648,134 @@ test("dragging a table by its header moves it (even over the name input)", async
 	expect(before).not.toBe(after);
 });
 
+// Drag math is zoom-aware: one screen px is 1/zoom model px inside .zoom.
+// At 50% the old code moved the card at half pointer speed (felt stuck);
+// at zoom it flew at double. Assert a pointer move of N screen px lands the
+// card N/zoom model px away, at both ends of the zoom range.
+test("dragging a table at 50% and 200% zoom tracks the pointer", async ({
+	page,
+}) => {
+	await page.goto("/");
+	const t = page.locator("section.table").first();
+	const left = () => t.evaluate((el) => el.style.left);
+	const top = () => t.evaluate((el) => el.style.top);
+	const zoomOut = page.getByRole("button", { name: "Zoom out" });
+	const zoomIn = page.getByRole("button", { name: "Zoom in" });
+
+	async function dragBy(dx, dy) {
+		const hdr = await t.locator(".hdr").boundingBox();
+		await page.mouse.move(hdr.x + hdr.width / 2, hdr.y + hdr.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(
+			hdr.x + hdr.width / 2 + dx,
+			hdr.y + hdr.height / 2 + dy,
+			{
+				steps: 8,
+			},
+		);
+		await page.mouse.up();
+	}
+
+	for (let i = 0; i < 2; i++) await zoomOut.click();
+	await expect(page.getByText("50%")).toBeVisible();
+	const x0 = parseInt(await left(), 10);
+	const y0 = parseInt(await top(), 10);
+	await dragBy(100, 60);
+	// 100/0.5 = 200 model px right, 60/0.5 = 120 down
+	await expect.poll(left).toBe(`${x0 + 200}px`);
+	await expect.poll(top).toBe(`${y0 + 120}px`);
+
+	for (let i = 0; i < 6; i++) await zoomIn.click();
+	await expect(page.getByText("200%")).toBeVisible();
+	const x1 = parseInt(await left(), 10);
+	const y1 = parseInt(await top(), 10);
+	await dragBy(100, 60);
+	// 100/2 = 50 model px right, 60/2 = 30 down
+	await expect.poll(left).toBe(`${x1 + 50}px`);
+	await expect.poll(top).toBe(`${y1 + 30}px`);
+});
+
+// Viewport follows a table drag near the canvas edge at zoom: stall repro.
+// A 12-table stack overflows the viewport; dragging the first card toward
+// the bottom-right corner must advance scroll AND move the card past where
+// the frozen viewport used to trap it.
+test("dragging a table to the bottom-right edge at zoom scrolls the canvas", async ({
+	page,
+}) => {
+	await page.goto("/");
+	for (let i = 0; i < 11; i++) {
+		await page.getByRole("button", { name: "+ Table" }).click();
+	}
+	await expect(page.locator("section.table")).toHaveCount(12);
+	for (let i = 0; i < 4; i++) {
+		await page.getByRole("button", { name: "Zoom in" }).click();
+	}
+	await expect(page.getByText("200%")).toBeVisible();
+	const t = page.locator("section.table").first();
+	const left = () => t.evaluate((el) => el.style.left);
+	const scroll = () =>
+		page
+			.locator(".canvas")
+			.evaluate((el) => `${el.scrollLeft},${el.scrollTop}`);
+	const x0 = parseInt(await left(), 10);
+	const s0 = await scroll();
+	const box = await page.locator(".canvas").boundingBox();
+	const hdr = await t.locator(".hdr").boundingBox();
+	await page.mouse.move(hdr.x + hdr.width / 2, hdr.y + hdr.height / 2);
+	await page.mouse.down();
+	// park the pointer in the bottom-right edge zone and hold it there —
+	// autoscroll fires per pointermove, so step slowly toward the corner.
+	for (let i = 1; i <= 10; i++) {
+		await page.mouse.move(
+			hdr.x + hdr.width / 2 + ((box.x + box.width - 20 - hdr.x) * i) / 10,
+			hdr.y + hdr.height / 2 + ((box.y + box.height - 20 - hdr.y) * i) / 10,
+			{ steps: 2 },
+		);
+	}
+	await page.mouse.up();
+	expect(await scroll()).not.toBe(s0);
+	expect(parseInt(await left(), 10)).toBeGreaterThan(x0);
+});
+// Empty-canvas drag pans the viewport: press on empty space and the scroll
+// position follows the pointer. Table headers keep their own drag (covered
+test("dragging empty canvas pans the viewport without moving tables", async ({
+	page,
+}) => {
+	// contentW/contentH × zoom only overflow once tables stack past the
+	// viewport, so add tables the PNG-overflow test's way (no /api/tables
+	// endpoint exists). Precondition pins the scrollbar: without it the test
+	// would prove nothing.
+	await page.goto("/");
+	for (let i = 0; i < 11; i++) {
+		await page.getByRole("button", { name: "+ Table" }).click();
+	}
+	await expect(page.locator("section.table")).toHaveCount(12);
+	const scrollable = await page
+		.locator(".canvas")
+		.evaluate(
+			(el) =>
+				el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight,
+		);
+	expect(scrollable).toBe(true);
+	const t = page.locator("section.table").first();
+	const pos = () => t.evaluate((el) => `${el.style.left},${el.style.top}`);
+	const before = await pos();
+	const scroll = () =>
+		page
+			.locator(".canvas")
+			.evaluate((el) => `${el.scrollLeft},${el.scrollTop}`);
+	const s0 = await scroll();
+	const box = await page.locator(".canvas").boundingBox();
+	const sx = box.x + box.width - 40;
+	const sy = box.y + box.height - 120;
+	await page.mouse.move(sx, sy);
+	await page.mouse.down();
+	await page.mouse.move(sx - 100, sy - 50, { steps: 8 });
+	await page.mouse.up();
+	expect(await scroll()).not.toBe(s0);
+	expect(await pos()).toBe(before);
+});
+
 test("click selects a table and Del removes the selection", async ({
 	page,
 }) => {
@@ -659,6 +788,10 @@ test("click selects a table and Del removes the selection", async ({
 	await page.mouse.up();
 	await expect(second).toHaveClass(/selected/);
 	await page.locator("body").click({ position: { x: 5, y: 400 } }); // defocus
+	// The header press lands on the select button; focusing it traps keys in
+	// BUTTON focus, and body-click does not blur a focused button — blur
+	// explicitly so the onKey !editing guard receives Delete.
+	await page.evaluate(() => /** @type {HTMLElement|null} */ (document.activeElement)?.blur?.());
 	await page.keyboard.press("Delete");
 	await expect(page.locator("section.table")).toHaveCount(1);
 });
@@ -762,6 +895,7 @@ test("Copy SQL succeeds via execCommand fallback without clipboard permission", 
 	await page.goto("/");
 	// Playwright's default context grants no clipboard permissions, so the
 	// Clipboard API rejects and the textarea/execCommand fallback must run.
+	await openShare(page);
 	await page.getByRole("button", { name: "Copy SQL" }).click();
 	await expect(page.getByText("copied SQL")).toBeVisible();
 	await expect(page.getByText("copy failed")).toHaveCount(0);
@@ -993,6 +1127,7 @@ test("Copy INSERTs copies seed-row templates for the current schema", async ({
 	await page.goto("/");
 	// Playwright grants no clipboard permission, so this exercises the same
 	// textarea/execCommand fallback path as Copy SQL.
+	await openShare(page);
 	await page.getByRole("button", { name: "Copy INSERTs" }).click();
 	await expect(page.getByText("copied INSERT templates")).toBeVisible();
 	await expect(page.getByText(/INSERTs failed/)).toHaveCount(0);
@@ -1007,6 +1142,7 @@ test("Export downloads the selected dialect's DDL as a .sql file", async ({
 	page,
 }) => {
 	await page.goto("/");
+	await openShare(page);
 	const download = page.waitForEvent("download");
 	await page.getByRole("button", { name: "Export", exact: true }).click();
 	const dl = await download;
@@ -1041,6 +1177,7 @@ test("Export downloads the selected dialect's DDL as a .sql file", async ({
 test("Export of a saved file uses the file's own name", async ({ page }) => {
 	await page.goto("/");
 	await newFile(page, "mydb");
+	await openShare(page);
 	const download = page.waitForEvent("download");
 	await page.getByRole("button", { name: "Export", exact: true }).click();
 	expect((await download).suggestedFilename()).toBe("mydb.sql");
@@ -1061,6 +1198,7 @@ test("Export on an empty schema surfaces the server error", async ({
 	page.on("download", () => {
 		downloaded = true;
 	});
+	await openShare(page);
 	await page.getByRole("button", { name: "Export", exact: true }).click();
 	await expect(page.getByTestId("toast")).toBeVisible();
 	await expect(page.getByText(/downloaded /)).toHaveCount(0);
@@ -1082,9 +1220,53 @@ test("Export PNG downloads diagram as .png with PNG signature", async ({
 test("Export PNG of saved file uses .png name", async ({ page }) => {
 	await page.goto("/");
 	await newFile(page, "shot");
+	await openShare(page);
 	const dl = page.waitForEvent("download");
 	await page.getByRole("button", { name: "Export PNG" }).click();
 	expect((await dl).suggestedFilename()).toBe("shot.png");
+});
+
+// Export must be zoom-independent: the clone keeps the live `.zoom`
+// scale(z), so at 50% the diagram shrank into padding and at 200% it
+// cropped — while captureSize() is zoom-blind model px. Assert identical
+// bytes across zoom levels for both PNG and SVG.
+test("PNG and SVG exports are identical at 50%, 100%, 200% zoom", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await addTableWithFk(page);
+	const zoomOut = page.getByRole("button", { name: "Zoom out" });
+	const zoomIn = page.getByRole("button", { name: "Zoom in" });
+
+	async function snapSvg() {
+		const { buf } = await downloadBytes(page, "Export SVG");
+		return buf.toString("utf8");
+	}
+	const svg100 = await snapSvg();
+	for (let i = 0; i < 2; i++) await zoomOut.click();
+	await expect(page.getByText("50%")).toBeVisible();
+	const svg50 = await snapSvg();
+	for (let i = 0; i < 6; i++) await zoomIn.click();
+	await expect(page.getByText("200%")).toBeVisible();
+	const svg200 = await snapSvg();
+	// foreignObject embeds generated class names that vary per capture;
+	// compare the vector geometry (shapes + label positions), not the bytes
+	const geom = (s) =>
+		s.replace(/svelte-[a-z0-9]+/g, "").replace(/class="[^"]*"/g, "");
+	expect(geom(svg50)).toBe(geom(svg100));
+	expect(geom(svg200)).toBe(geom(svg100));
+
+	for (let i = 0; i < 4; i++) await zoomOut.click();
+	await expect(page.getByText("100%")).toBeVisible();
+	const { buf: png100 } = await downloadBytes(page, "Export PNG");
+	for (let i = 0; i < 2; i++) await zoomOut.click();
+	await expect(page.getByText("50%")).toBeVisible();
+	const { buf: png50 } = await downloadBytes(page, "Export PNG");
+	for (let i = 0; i < 6; i++) await zoomIn.click();
+	await expect(page.getByText("200%")).toBeVisible();
+	const { buf: png200 } = await downloadBytes(page, "Export PNG");
+	expect(png50.equals(png100)).toBe(true);
+	expect(png200.equals(png100)).toBe(true);
 });
 
 test("Export SVG downloads the diagram as real SVG source", async ({
@@ -1177,6 +1359,7 @@ test("exported PNG actually paints the edge line and its labels", async ({
 test("Export SVG of a saved file uses the .svg name", async ({ page }) => {
 	await page.goto("/");
 	await newFile(page, "vector");
+	await openShare(page);
 	const dl = page.waitForEvent("download");
 	await page.getByRole("button", { name: "Export SVG" }).click();
 	expect((await dl).suggestedFilename()).toBe("vector.svg");
@@ -1192,6 +1375,7 @@ test("Export SVG on empty schema shows error, no download", async ({
 		.getByTitle("delete table (Del)")
 		.click();
 	await expect(page.locator("section.table")).toHaveCount(0);
+	await openShare(page);
 	await page.getByRole("button", { name: "Export SVG" }).click();
 	await expect(page.getByTestId("toast")).toContainText("nothing to export");
 	await expect(page.getByText(/downloaded/)).toHaveCount(0);
@@ -1216,6 +1400,7 @@ test("Export PNG on empty schema shows error, no download", async ({
 	page.on("download", () => {
 		downloaded = true;
 	});
+	await openShare(page);
 	await page.getByRole("button", { name: "Export PNG" }).click();
 	await expect(page.getByTestId("toast")).toContainText("nothing to export");
 	expect(downloaded).toBe(false);
@@ -1259,6 +1444,7 @@ test("Export PNG captures the whole diagram, not just the viewport", async ({
 	expect(contentBottom).toBeGreaterThan(canvasHeight);
 
 	const download = page.waitForEvent("download");
+	await openShare(page);
 	await page.getByRole("button", { name: "Export PNG" }).click();
 	const stream = await (await download).createReadStream();
 	const chunks = [];
@@ -1430,4 +1616,17 @@ test("new N:N relationship builds a junction table with a derived badge", async 
 	}).toPass({ timeout: 5000 });
 	await page.reload();
 	await expect(page.locator("[data-testid=junction-chip]")).toHaveText("N:N");
+});
+test("toolbar zoom controls step the readout and clamp at the limits", async ({
+	page,
+}) => {
+	await page.goto("/");
+	const view = page.getByRole("group", { name: "View" });
+	const level = view.getByLabel("Zoom level");
+	await expect(level).toHaveText("100%");
+	await view.getByRole("button", { name: "Zoom in" }).click();
+	await expect(level).toHaveText("125%");
+	await view.getByRole("button", { name: "Zoom out" }).click();
+	await view.getByRole("button", { name: "Zoom out" }).click();
+	await expect(level).toHaveText("75%");
 });
