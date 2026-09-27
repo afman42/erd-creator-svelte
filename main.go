@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 //go:embed frontend/dist
@@ -48,9 +49,18 @@ func main() {
 	mux.Handle("/api/files/", fileAPI)
 	fileServer := http.FileServer(http.FS(sub))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// SPA fallback: unknown paths serve index.html.
-		if _, err := fs.Stat(sub, r.URL.Path[1:]); err != nil {
-			r.URL.Path = "/"
+		// SPA fallback: unknown paths serve index.html. Guard the empty path
+		// before slicing (r.URL.Path[1:] panics on ""), and mutate a copy so
+		// middleware logging below still sees the original request path.
+		p := r.URL.Path
+		if p == "" {
+			p = "/"
+		}
+		if _, err := fs.Stat(sub, strings.TrimPrefix(p, "/")); err != nil {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/"
+			fileServer.ServeHTTP(w, r2)
+			return
 		}
 		fileServer.ServeHTTP(w, r)
 	})
@@ -118,8 +128,13 @@ var schemaAPI = map[string]func(http.ResponseWriter, *Schema){
 		writeJSON(w, l)
 	},
 	"/api/inserts": func(w http.ResponseWriter, s *Schema) {
+		out, err := s.GenInserts()
+		if err != nil {
+			failValidation(w, err)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		writeText(w, s.GenInserts())
+		writeText(w, out)
 	},
 }
 
@@ -132,7 +147,7 @@ func handleSchemaAPI(w http.ResponseWriter, r *http.Request) {
 	// boundary just like /export. /api/lint only reads, but validating both
 	// keeps one rule for every schema-accepting endpoint.
 	if err := s.Validate(); err != nil {
-		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		failValidation(w, err)
 		return
 	}
 	render, ok := schemaAPI[r.URL.Path]
@@ -143,15 +158,12 @@ func handleSchemaAPI(w http.ResponseWriter, r *http.Request) {
 	render(w, s)
 }
 
-const MaxBody = 1 << 20 // 1 MiB request cap, shared by decodeBody and saveFile
+const MaxBody = 1 << 20 // 1 MiB request cap, shared by readCappedBody callers
 
-// decodeBody enforces POST-only + 1 MiB cap and returns the raw body.
-// Shared by every JSON-accepting endpoint.
-func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return nil, false
-	}
+// readCappedBody enforces the 1 MiB cap and returns the raw body. It checks no
+// method: decodeBody (POST endpoints) wraps it with a POST-only guard, while
+// saveFile serves PUT (routed by handleFiles) and must NOT inherit that guard.
+func readCappedBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -159,6 +171,16 @@ func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 		return nil, false
 	}
 	return b, true
+}
+
+// decodeBody enforces POST-only + 1 MiB cap and returns the raw body.
+// Shared by every JSON-accepting POST endpoint.
+func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return nil, false
+	}
+	return readCappedBody(w, r)
 }
 
 // writeJSON encodes v as the response body. The encode error is reported rather
@@ -228,8 +250,21 @@ func decodeSchema(w http.ResponseWriter, r *http.Request) (*Schema, bool) {
 	}
 	s, err := decodeSchemaJSON(b)
 	if err != nil {
-		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		failBadJSON(w, err)
 		return nil, false
 	}
 	return s, true
+}
+
+// failValidation rejects a schema that cannot be represented safely.
+// The error is user-safe by construction (validated type/action/comment
+// excerpts), so it is echoed; internal filesystem faults use internalFail.
+func failValidation(w http.ResponseWriter, err error) {
+	http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+}
+
+// failBadJSON rejects a body that is not JSON. The message is the decoder's,
+// which names syntax, never paths.
+func failBadJSON(w http.ResponseWriter, err error) {
+	http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 }

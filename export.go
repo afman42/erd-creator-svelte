@@ -24,7 +24,7 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 		schemaEnvelope
 	}
 	if err := json.Unmarshal(b, &req); err != nil {
-		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		failBadJSON(w, err)
 		return
 	}
 	// Untrusted input becomes SQL text here, so it is validated before any
@@ -36,7 +36,7 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 	// be exported as mysql, and a postgres-only construct (an array type) must
 	// be refused for that target rather than emitted as invalid MySQL.
 	if err := req.schema().ValidateFor(req.Dialect); err != nil {
-		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		failValidation(w, err)
 		return
 	}
 	sql, err := schemaExportSQL(req.schema(), req.Dialect)
@@ -45,7 +45,7 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateOutput(sql); err != nil {
-		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		failValidation(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

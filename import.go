@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -30,10 +31,15 @@ var (
 	reImpFK      = regexp.MustCompile(`(?i)^(?:CONSTRAINT \S+ )?FOREIGN KEY\s*\((.+)\)\s*REFERENCES\s*(\S+)\s*\((.+)\)(.*)$`)
 	reImpInline  = regexp.MustCompile(`(?i)\bREFERENCES\s*(\S+)\s*\((.+?)\)(.*)$`)
 	reImpAction  = regexp.MustCompile(`(?i)\bON (DELETE|UPDATE) (SET NULL|SET DEFAULT|NO ACTION|RESTRICT|CASCADE)`)
-	reImpComment = regexp.MustCompile(`(?i)\bCOMMENT\s+'((?:[^']|'')*)'`)
-	reImpPK      = regexp.MustCompile(`(?i)PRIMARY KEY\s*\((.+)\)`)
-	reImpUKey    = regexp.MustCompile(`(?i)UNIQUE\b.*\((.+)\)`)
-	reImpKey     = regexp.MustCompile(`(?i)^(?:KEY|INDEX)\s+\S+\s*\((.+)\)`)
+	// reImpActionLike matches the same ON DELETE/UPDATE shape WITHOUT the
+	// allowlist: whatever it catches that reImpAction did not is unrecognized.
+	// (RE2 has no lookahead, so this is just the keyword; callers strip the
+	// recognized actions first and anything left matching this is unknown.)
+	reImpActionLike = regexp.MustCompile(`(?i)\bON\s+(DELETE|UPDATE)\b`)
+	reImpComment    = regexp.MustCompile(`(?i)\bCOMMENT\s+'((?:[^']|'')*)'`)
+	reImpPK         = regexp.MustCompile(`(?i)PRIMARY KEY\s*\((.+)\)`)
+	reImpUKey       = regexp.MustCompile(`(?i)UNIQUE\b.*\((.+)\)`)
+	reImpKey        = regexp.MustCompile(`(?i)^(?:KEY|INDEX)\s+\S+\s*\((.+)\)`)
 )
 
 // importLoss caps and sanitizes the skip list: excerpts never carry control
@@ -167,22 +173,23 @@ func impColName(body string) (string, string) {
 		}
 		return "", body
 	default:
-		if i := strings.IndexAny(body, " \t("); i >= 0 {
-			if body[i] == '(' {
-				return body[:i], strings.TrimSpace(body[i:])
-			}
-			return body[:i], strings.TrimSpace(body[i:])
+		i := strings.IndexAny(body, " \t(")
+		if i < 0 {
+			return body, ""
 		}
-		return body, ""
+		return body[:i], strings.TrimSpace(body[i:])
 	}
 }
 
 // ParseImport parses foreign DDL best-effort: (schema, warnings, error).
 // Strict ParseDDL runs first so own files never take the lossy path; zero
 // tables or an unsafe result is still an error and the caller keeps prior state.
+// The strict path reports through ParseDDLWithWarnings, so a dropped FK or a
+// Lint diagnostic (dangling ref, composite-PK target) rides the open response
+// instead of vanishing; the lenient path appends its own losses plus Lint.
 func ParseImport(sql string) (*Schema, []string, error) {
-	if s, err := ParseDDL(sql); err == nil {
-		return s, nil, nil
+	if s, warnings, err := ParseDDLWithWarnings(sql); err == nil {
+		return s, warnings, nil
 	}
 	s, warnings, err := impParse(sql)
 	if err != nil {
@@ -194,15 +201,46 @@ func ParseImport(sql string) (*Schema, []string, error) {
 	if err := s.Validate(); err != nil {
 		return nil, nil, fmt.Errorf("file contains an unsafe value: %w", err)
 	}
+	warnings = append(warnings, s.Lint()...)
 	return s, warnings, nil
 }
 
-// impNoise are dump directives with no model meaning: SET/USE/LOCK, DROP,
-// grants. INSERT/SELECT rows are data, skipped the same way.
+// impNoisePrefixes are dump directives with no model meaning: SET/USE/LOCK,
+// DROP, grants. INSERT/SELECT rows are data, skipped the same way. Package-
+// level so the slice is not reallocated on every line.
+var impNoisePrefixes = []string{"SET ", "USE ", "LOCK ", "UNLOCK ", "START ", "BEGIN", "COMMIT",
+	"DROP TABLE", "DROP INDEX", "TABLESPACE", "OWNER TO", "GRANT ", "REVOKE ",
+	"INSERT ", "SELECT ", "VACUUM", "ANALYZE ", "PRAGMA "}
+
+// impNoiseWordPrefixes need a word boundary after the keyword: a bare prefix
+// match would also swallow BEGINNER / COMMITTED table names. Entries here
+// match the keyword alone or followed by a non-letter (space, semicolon, ...).
+var impNoiseWordPrefixes = []string{"BEGIN", "COMMIT"}
+
+// impNoisePrefix reports whether upper starts with p as a whole directive:
+// the keyword alone, or followed by a non-letter (space, semicolon, ...).
+func impNoisePrefix(upper, p string) bool {
+	if !strings.HasPrefix(upper, p) {
+		return false
+	}
+	if len(upper) == len(p) {
+		return true
+	}
+	next := upper[len(p)]
+	return next < 'A' || next > 'Z'
+}
+
 func impNoise(upper string) bool {
-	for _, p := range []string{"SET ", "USE ", "LOCK ", "UNLOCK ", "START ", "BEGIN", "COMMIT",
-		"DROP TABLE", "DROP INDEX", "TABLESPACE", "OWNER TO", "GRANT ", "REVOKE ",
-		"INSERT ", "SELECT ", "VACUUM", "ANALYZE ", "PRAGMA "} {
+	for _, p := range impNoisePrefixes {
+		// Word-boundary keywords (BEGIN/COMMIT) must not swallow BEGINNER or
+		// COMMITTED table names; every other prefix already ends in a space
+		// and cannot misfire.
+		if slices.Contains(impNoiseWordPrefixes, p) {
+			if impNoisePrefix(upper, p) {
+				return true
+			}
+			continue
+		}
 		if strings.HasPrefix(upper, p) {
 			return true
 		}
@@ -288,7 +326,7 @@ func impParse(sql string) (*Schema, []string, error) {
 				loss.add("line %d: composite ALTER FK skipped", n)
 				continue
 			}
-			del, upd := impActions(m[5])
+			del, upd := impActions(m[5], &loss)
 			pending = append(pending, pendingFK{s.Tables[si].ID, cols[0], impName(m[3]), del, upd})
 			continue
 		}
@@ -330,7 +368,7 @@ func impParse(sql string) (*Schema, []string, error) {
 				loss.add("line %d: composite FK skipped", n)
 				continue
 			}
-			del, upd := impActions(m[4])
+			del, upd := impActions(m[4], &loss)
 			pending = append(pending, pendingFK{tbl.ID, cols[0], impName(m[2]), del, upd})
 			continue
 		}
@@ -411,7 +449,7 @@ func impParse(sql string) (*Schema, []string, error) {
 			col.Comment = unescapeStr(m[1])
 		}
 		if m := reImpInline.FindStringSubmatch(after); m != nil {
-			del, upd := impActions(m[3])
+			del, upd := impActions(m[3], &loss)
 			pending = append(pending, pendingFK{tbl.ID, name, impName(m[1]), del, upd})
 		}
 		tbl.Columns = append(tbl.Columns, col)
@@ -419,30 +457,37 @@ func impParse(sql string) (*Schema, []string, error) {
 	// Attach FKs with losses (the shared helper drops silently — right for
 	// strict parse, wrong for an import report — so the callback reports).
 	attachPendingFKs(s, byName, byID, pending, func(p pendingFK, reason string) {
-		switch reason {
-		case "unknown table":
-			loss.add("FK %q: unknown table, dropped", importExcerpt(p.col+"→"+p.table))
-		case "unknown column":
-			loss.add("FK on unknown column %q dropped", importExcerpt(p.col))
-		}
+		loss.add("%s", fkDropWarning(p, reason))
 	})
 	if len(s.Tables) == 0 {
 		return nil, nil, fmt.Errorf("no CREATE TABLE found")
 	}
-	// Header wins; otherwise the content votes (pg SERIAL/identity cues).
-	if detectDialect(sql) != DialectMysql || (!sawPg && !sawLite) {
-		s.Dialect = detectDialect(sql)
-	} else if sawPg {
-		s.Dialect = DialectPostgres
-	} else {
-		s.Dialect = DialectSqlite
-	}
+	s.Dialect = impDialect(sql, sawPg, sawLite)
 	return s, loss.result(), nil
+}
+
+// impDialect picks the import dialect: the header wins; otherwise the content
+// votes (pg SERIAL/identity cues).
+func impDialect(sql string, sawPg, sawLite bool) string {
+	if h := detectDialect(sql); h != DialectMysql {
+		return h
+	}
+	if sawPg {
+		return DialectPostgres
+	}
+	if sawLite {
+		return DialectSqlite
+	}
+	return DialectMysql
 }
 
 // impActions reads ON DELETE/UPDATE trailing a REFERENCES clause.
 // DELETE keeps the model's historical CASCADE default; UPDATE omits when absent.
-func impActions(tail string) (string, string) {
+// An ON DELETE/UPDATE naming an action outside the grammar's allowlist is NOT
+// defaulted: it is reported as a loss so a misspelled action ("ON DELETE CASCDE")
+// does not silently become CASCADE. Callers pass their importLoss; nil keeps the
+// old default-only behaviour for tests that call impActions directly.
+func impActions(tail string, loss *importLoss) (string, string) {
 	del, upd := "CASCADE", ""
 	for _, m := range reImpAction.FindAllStringSubmatch(tail, -1) {
 		a := normalizeFKAction(m[2])
@@ -450,6 +495,15 @@ func impActions(tail string) (string, string) {
 			del = a
 		} else {
 			upd = a
+		}
+	}
+	// Anything shaped like an ON DELETE/UPDATE clause that the allowlist
+	// regexp did NOT match names an unrecognized action (typo, exotic
+	// dialect): report it rather than silently defaulting to CASCADE.
+	if loss != nil {
+		rest := reImpAction.ReplaceAllString(tail, " ")
+		if loc := reImpActionLike.FindStringIndex(rest); loc != nil {
+			loss.add("unrecognized referential action %q, kept as CASCADE/omitted", importExcerpt(strings.TrimSpace(rest[loc[0]:])))
 		}
 	}
 	return del, upd

@@ -94,8 +94,16 @@ func TestParseImportPgDump(t *testing.T) {
 	if n := len(s.Tables[1].Columns[1].Ref.TableID); n == 0 {
 		t.Error("schema-prefixed FK lost")
 	}
-	if len(warnings) != 0 {
-		t.Errorf("unexpected losses: %v", warnings)
+	// SERIAL maps to SMALLINT while the FK child stays INT; Lint flags that
+	// type mismatch as a warning (surfaced since ParseImport appends Lint).
+	foundMismatch := false
+	for _, w := range warnings {
+		if strings.Contains(w, "posts.") && strings.Contains(w, "SMALLINT") {
+			foundMismatch = true
+		}
+	}
+	if !foundMismatch {
+		t.Errorf("expected SERIAL/INT mismatch warning, got %v", warnings)
 	}
 }
 

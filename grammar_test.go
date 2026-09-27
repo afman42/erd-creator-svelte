@@ -155,7 +155,10 @@ func TestLintArraySuffixIsNotAMismatch(t *testing.T) {
 }
 
 func TestGenInserts(t *testing.T) {
-	out := sampleSchema().GenInserts()
+	out, err := sampleSchema().GenInserts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(out, "INSERT INTO `users` (`id`, `email`, `status`) VALUES (NULL, '', '');") {
 		t.Errorf("users insert wrong:\n%s", out)
 	}

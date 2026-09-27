@@ -82,84 +82,68 @@ func pgToModelType(ty string) string {
 }
 
 // parsePostgres reads the grammar buildPostgres emits.
-func parsePostgres(sql string) (*Schema, error) {
-	s := &Schema{Dialect: DialectPostgres}
-	byName := map[string]int{} // name → index in s.Tables
-	byID := map[string]int{}   // id → index, O(1) for pending FK attachment
+func parsePostgres(sql string) (*Schema, []string, error) {
+	p := newParserState(DialectPostgres)
 	var pending []pendingFK
-	cur := -1
-	tableID := 0
+	var warnings []string
 
 	lines := strings.Split(sql, "\n")
 	for i, raw := range lines {
 		n := i + 1
 		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "--") || reInsert.MatchString(line) {
+		if isSkippableLine(line) {
 			continue
 		}
 
 		if m := rePgCreate.FindStringSubmatch(line); m != nil {
-			name := unquoteDQ(m[1])
-			if _, dup := byName[name]; dup {
-				return nil, fmt.Errorf("line %d: duplicate table %q", n, name)
+			if err := p.addTable(unquoteDQ(m[1]), n); err != nil {
+				return nil, nil, err
 			}
-			tableID++
-			id := fmt.Sprintf("t%d", tableID)
-			s.Tables = append(s.Tables, Table{ID: id, Name: name})
-			byName[name] = len(s.Tables) - 1
-			byID[id] = len(s.Tables) - 1
-			cur = len(s.Tables) - 1
 			continue
 		}
 		if rePgEndTable.MatchString(line) {
-			cur = -1
+			p.cur = -1
 			continue
 		}
 
 		// COMMENT ON / CREATE INDEX stand alone and may follow any table, so
 		// they are matched before the inside-a-table check.
 		if m := rePgTableComment.FindStringSubmatch(line); m != nil {
-			if idx, ok := byName[unquoteDQ(m[1])]; ok {
-				s.Tables[idx].Comment = unescapeStr(m[2])
+			if idx, ok := p.byName[unquoteDQ(m[1])]; ok {
+				p.s.Tables[idx].Comment = unescapeStr(m[2])
 			}
 			continue
 		}
 		if m := rePgComment.FindStringSubmatch(line); m != nil {
-			idx, ok := byName[unquoteDQ(m[1])]
+			idx, ok := p.byName[unquoteDQ(m[1])]
 			if !ok {
 				continue // comment for an unknown table → dropped, not fatal
 			}
-			markCol(&s.Tables[idx], unquoteDQ(m[2]), func(c *Col) {
+			markCol(&p.s.Tables[idx], unquoteDQ(m[2]), func(c *Col) {
 				c.Comment = unescapeStr(m[3])
 			})
 			continue
 		}
 		if m := rePgIndex.FindStringSubmatch(line); m != nil {
-			idx, ok := byName[unquoteDQ(m[1])]
+			idx, ok := p.byName[unquoteDQ(m[1])]
 			if !ok {
 				continue
 			}
-			// Same arity routing as the mysql parser: one column → Col.Ix,
-			// several → a composite Index. The index NAME is deliberately not
-			// captured: it is emitted as idx_<table>_<cols> when derived, and
-			// the model only needs to store a name when it differs. Reading it
-			// back as an explicit name would freeze a derived name into the
-			// model, so renaming a column would leave the index misnamed.
-			cols := splitIndexCols(m[2], unquoteDQ)
-			switch {
-			case len(cols) == 1:
-				markCol(&s.Tables[idx], cols[0], func(c *Col) { c.Ix = true })
-			case len(cols) > 1:
-				s.Tables[idx].Indexes = append(s.Tables[idx].Indexes, Index{Cols: cols})
+			// The index NAME is deliberately not captured: it is emitted as
+			// idx_<table>_<cols> when derived, and reading it back as an
+			// explicit name would freeze a derived name into the model, so
+			// renaming a column would leave the index misnamed.
+			if name, ok := routeIndex(&p.s.Tables[idx], splitIndexCols(m[2], unquoteDQ), ""); !ok {
+				return nil, nil, fmt.Errorf("line %d: unknown column %q", n, name)
 			}
 			continue
 		}
 
-		if cur < 0 {
-			return nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, lineExcerpt(line))
+		if p.cur < 0 {
+			return nil, nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, lineExcerpt(line))
 		}
 		body := strings.TrimSuffix(line, ",")
-		tbl := &s.Tables[cur]
+		tbl := &p.s.Tables[p.cur]
 
 		// Clause dispatch first: the old chain ran rePgPK + rePgFK on every
 		// column line before reaching rePgColumn. Column lines start with a
@@ -168,8 +152,8 @@ func parsePostgres(sql string) (*Schema, error) {
 			if m := rePgPK.FindStringSubmatch(body); m != nil {
 				// Same quote-aware split as the index paths: a column named "a, b"
 				// is one PK element, not two.
-				for _, name := range splitIndexCols(m[1], unquoteDQ) {
-					markCol(tbl, name, func(c *Col) { c.Pk = true })
+				if err := markPKColumns(tbl, splitIndexCols(m[1], unquoteDQ), n); err != nil {
+					return nil, nil, err
 				}
 				continue
 			}
@@ -184,13 +168,13 @@ func parsePostgres(sql string) (*Schema, error) {
 				continue
 			}
 			if rePgKeyword.MatchString(body) {
-				return nil, fmt.Errorf("line %d: unsupported clause: %s", n, lineExcerpt(line))
+				return nil, nil, fmt.Errorf("line %d: unsupported clause: %s", n, lineExcerpt(line))
 			}
 		}
 
 		m := rePgColumn.FindStringSubmatch(body)
 		if m == nil {
-			return nil, fmt.Errorf("line %d: cannot parse: %s", n, lineExcerpt(line))
+			return nil, nil, fmt.Errorf("line %d: cannot parse: %s", n, lineExcerpt(line))
 		}
 		ty := m[2]
 		// An ENUM round-trips as TEXT + CHECK, so recover the original ENUM
@@ -224,9 +208,11 @@ func parsePostgres(sql string) (*Schema, error) {
 	// exact drift that made the ON UPDATE round-trip test fail for postgres and
 	// sqlite only. One implementation, so a field added to Ref cannot reach one
 	// dialect's parser and miss another's.
-	attachPendingFKs(s, byName, byID, pending, nil)
-	if len(s.Tables) == 0 {
-		return nil, fmt.Errorf("no CREATE TABLE found")
+	attachPendingFKs(p.s, p.byName, p.byID, pending, func(p pendingFK, reason string) {
+		warnings = append(warnings, fkDropWarning(p, reason))
+	})
+	if len(p.s.Tables) == 0 {
+		return nil, nil, fmt.Errorf("no CREATE TABLE found")
 	}
-	return s, nil
+	return p.s, warnings, nil
 }

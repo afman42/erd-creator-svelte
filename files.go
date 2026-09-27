@@ -3,6 +3,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,22 @@ import (
 	"strings"
 	"time"
 )
+
+// maxOpenFile caps a .sql file open/copy: the store holds small DDL texts, so
+// a huge file is either corruption or abuse. Checked via stat before reading,
+// refused with 413 rather than loaded into memory.
+const maxOpenFile = 8 << 20 // 8 MiB
+
+// statCapped stats full and reports whether it exceeds maxOpenFile. A stat
+// error is returned for the caller to map (missing → 404, other → 500);
+// oversize is a plain bool so every site answers 413 identically.
+func statCapped(full string) (tooLarge bool, err error) {
+	fi, err := os.Stat(full)
+	if err != nil {
+		return false, err
+	}
+	return fi.Size() > maxOpenFile, nil
+}
 
 var validName = regexp.MustCompile(`^[\w.-]{1,64}\.sql$`)
 
@@ -161,7 +179,7 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 		To   string `json:"to"`
 	}
 	if err := json.Unmarshal(b, &req); err != nil {
-		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		failBadJSON(w, err)
 		return
 	}
 	if err := safeName(req.From); err != nil {
@@ -181,13 +199,15 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, err := os.Stat(fromFull); err != nil {
+	if tooLarge, err := statCapped(fromFull); err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found: "+req.From, http.StatusNotFound)
 		} else {
-			log.Printf("stat %s: %v", fromFull, err)
-			http.Error(w, "rename failed", http.StatusInternalServerError)
+			internalFail(w, "rename failed", "stat %s: %v", fromFull, err)
 		}
+		return
+	} else if tooLarge {
+		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	// Resolving the target refuses a symlink escaping the store either way
@@ -203,46 +223,68 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 		return
 	}
 	if copy {
-		// Read the source and write the copy through the same atomic
-		// temp+rename path saves use, so a planted symlink cannot redirect
-		// the write (O_EXCL on a fresh random name).
-		b, err := os.ReadFile(fromFull)
-		if err != nil {
-			log.Printf("copy read %s: %v", fromFull, err)
-			http.Error(w, "copy failed", http.StatusInternalServerError)
-			return
-		}
-		tmp, err := createTemp(dir)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if _, err := tmp.Write(b); err != nil {
-			discardTemp(tmp)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := tmp.Close(); err != nil {
-			removeTemp(tmp.Name())
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := os.Rename(tmp.Name(), toFull); err != nil {
-			removeTemp(tmp.Name())
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// os.Rename is atomic and same-filesystem by construction (both paths
-		// are inside the store). Unlike DELETE this is a move, not a recycle:
-		// the file keeps its name, so nothing lands in the trash.
-		if err := os.Rename(fromFull, toFull); err != nil {
-			log.Printf("rename %s → %s: %v", fromFull, toFull, err)
-			http.Error(w, "rename failed", http.StatusInternalServerError)
-			return
-		}
+		copyFile(w, dir, fromFull, toFull)
+		return
+	}
+	// os.Rename is atomic and same-filesystem by construction (both paths
+	// are inside the store). Unlike DELETE this is a move, not a recycle:
+	// the file keeps its name, so nothing lands in the trash.
+	if err := os.Rename(fromFull, toFull); err != nil {
+		internalFail(w, "rename failed", "rename %s → %s: %v", fromFull, toFull, err)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// copyFile streams the source into the copy through the same atomic temp+rename
+// path saves use, so a planted symlink cannot redirect the write (O_EXCL on a
+// fresh random name). Size is stat-checked by the caller and re-capped here
+// (LimitReader) so a concurrent grow cannot OOM the read.
+func copyFile(w http.ResponseWriter, dir, fromFull, toFull string) {
+	src, err := os.Open(fromFull)
+	if err != nil {
+		internalFail(w, "copy failed", "copy open %s: %v", fromFull, err)
+		return
+	}
+	defer func() { _ = src.Close() }()
+	tmp, err := createTemp(dir)
+	if err != nil {
+		internalFail(w, "copy failed", "copy temp %s: %v", dir, err)
+		return
+	}
+	if _, err := io.Copy(tmp, io.LimitReader(src, maxOpenFile+1)); err != nil {
+		discardTemp(tmp)
+		internalFail(w, "copy failed", "copy write %s: %v", tmp.Name(), err)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		removeTemp(tmp.Name())
+		internalFail(w, "copy failed", "copy close %s: %v", tmp.Name(), err)
+		return
+	}
+	if tooLarge, err := statCapped(tmp.Name()); err != nil || tooLarge {
+		removeTemp(tmp.Name())
+		if err != nil {
+			log.Printf("copy stat %s: %v", tmp.Name(), err)
+		}
+		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if err := os.Rename(tmp.Name(), toFull); err != nil {
+		removeTemp(tmp.Name())
+		internalFail(w, "copy failed", "copy rename %s → %s: %v", tmp.Name(), toFull, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// internalFail logs an internal filesystem error and replies with a generic
+// 500, so paths and OS details never reach the client. msg is the user-safe
+// client body ("open failed", "save failed", ...); format/args go to the log
+// only. It generalizes the old copy-only copyFail to every store op.
+func internalFail(w http.ResponseWriter, msg string, format string, args ...any) {
+	log.Printf(format, args...)
+	http.Error(w, msg, http.StatusInternalServerError)
 }
 
 func listFiles(w http.ResponseWriter, dir string) {
@@ -275,19 +317,49 @@ func listFiles(w http.ResponseWriter, dir string) {
 	writeJSON(w, out)
 }
 
+func openReadResult(f *os.File, full string, w http.ResponseWriter) ([]byte, bool) {
+	b, err := io.ReadAll(io.LimitReader(f, maxOpenFile+1))
+	if err != nil {
+		internalFail(w, "open failed", "open %s: %v", full, err)
+		return nil, false
+	}
+	if len(b) > maxOpenFile {
+		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+		return nil, false
+	}
+	return b, true
+}
+
 // openFile serves GET /api/files/:name: schema fields at the root (legacy
 // clients read .tables directly), import warnings alongside when the fallback
 // had to skip anything. The schema itself never carries the loss list, so a
 // later save cannot persist warnings into the file.
 func openFile(w http.ResponseWriter, full, name string) {
-	b, err := os.ReadFile(full)
+	// Stat first: the store holds small DDL texts, so an oversized file is
+	// refused with 413 before it is read into memory.
+	if tooLarge, err := statCapped(full); err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "file not found: "+name, http.StatusNotFound)
+		} else {
+			internalFail(w, "open failed", "open %s: %v", full, err)
+		}
+		return
+	} else if tooLarge {
+		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	f, err := os.Open(full)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found: "+name, http.StatusNotFound)
 		} else {
-			log.Printf("open %s: %v", full, err)
-			http.Error(w, "open failed", http.StatusInternalServerError)
+			internalFail(w, "open failed", "open %s: %v", full, err)
 		}
+		return
+	}
+	defer func() { _ = f.Close() }()
+	b, ok := openReadResult(f, full, w)
+	if !ok {
 		return
 	}
 	// Strict first (own files: zero-loss path), then the best-effort import
@@ -317,10 +389,11 @@ func openFile(w http.ResponseWriter, full, name string) {
 // retried with a random suffix rather than reused, so a legitimate leftover
 // temp file does not block saving.
 func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+	// PUT body: same 1 MiB cap as the POST endpoints, without their POST-only
+	// guard (this handler is routed on PUT by handleFiles). readCappedBody is
+	// the shared cap so the two cannot drift.
+	b, ok := readCappedBody(w, r)
+	if !ok {
 		return
 	}
 	// Same envelope decode as every POST endpoint: a full Schema JSON (what the
@@ -328,7 +401,7 @@ func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
 	// sqliteTypes carried at the top level either way.
 	s, err := decodeSchemaJSON(b)
 	if err != nil {
-		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		failBadJSON(w, err)
 		return
 	}
 	if len(s.Tables) == 0 {
@@ -339,14 +412,14 @@ func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
 	// would otherwise silently treat it as mysql while the UI shows the
 	// unknown name. Empty (unset) is accepted as mysql.
 	if err := validateDialectForSave(s.Dialect); err != nil {
-		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		failValidation(w, err)
 		return
 	}
 	// The saved file is DDL this program will later parse back, so refuse to
 	// write anything that cannot be represented safely. Validating here means a
 	// malicious value never reaches disk in the first place.
 	if err := s.Validate(); err != nil {
-		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		failValidation(w, err)
 		return
 	}
 	// Refuse to write a dialect we cannot read back: saving one would produce a
@@ -360,27 +433,27 @@ func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
 	// here is a bug, but it is handled rather than ignored.
 	ddl, err := s.GenSQL()
 	if err != nil {
-		http.Error(w, "invalid schema: "+err.Error(), http.StatusBadRequest)
+		failValidation(w, err)
 		return
 	}
 	tmp, err := createTemp(dir)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalFail(w, "save failed", "save temp %s: %v", dir, err)
 		return
 	}
 	if _, err := tmp.WriteString(ddl); err != nil {
 		discardTemp(tmp)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalFail(w, "save failed", "save write %s: %v", tmp.Name(), err)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		removeTemp(tmp.Name())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalFail(w, "save failed", "save close %s: %v", tmp.Name(), err)
 		return
 	}
 	if err := os.Rename(tmp.Name(), full); err != nil {
 		removeTemp(tmp.Name())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalFail(w, "save failed", "save rename %s → %s: %v", tmp.Name(), full, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -464,33 +537,86 @@ func trashPath(dir string) (string, error) {
 }
 
 // trashFile moves a resolved store file into the trash. The destination keeps
-// the original name so a recovery is a plain `mv`. A collision with a
-// previous recycle retries with millisecond suffixes (up to 1000 attempts)
-// rather than overwriting: Rename silently replaces the target on POSIX, so a
-// single stat-then-rename would let a pre-planted .trash/<name>.<millis> eat
-// the recycled file.
+// the original name so a recovery is a plain `mv`. On collision the recycle
+// claims a crypto-rand suffixed path with O_EXCL (up to 100 attempts) instead
+// of the old UnixMilli suffix: millisecond names collided under fast deletes
+// and were guessable, so a pre-planted .trash/<name>.<millis> could eat the
+// recycled file or block the recycle. O_EXCL fails on an existing path
+// (including a dangling symlink), and the claim is removed on any failure
+// below so it cannot accumulate.
+// trashSuffix claims a free name with a crypto-rand suffix (O_EXCL semantics via
+// the caller): up to 100 attempts, then a collision error.
+func trashSuffix(name string) (string, error) {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return name + "." + hex.EncodeToString(suffix[:]), nil
+}
+
 func trashFile(dir, full, name string) error {
 	td, err := trashPath(dir)
 	if err != nil {
 		return err
 	}
-	dst := filepath.Join(td, name)
-	if _, err := os.Stat(dst); err != nil {
-		if err := os.Rename(full, dst); err != nil {
-			// Returned unwrapped: the caller classifies it (os.IsNotExist for a
-			// missing source → 404). Wrapping in fmt.Errorf would hide the errno.
+	// os.Link is atomic and fails with EEXIST when the target exists (unlike
+	// Rename, which silently replaces it): no stat-then-rename TOCTOU where a
+	// link planted between the check and the rename eats the recycled file.
+	if err := os.Link(full, filepath.Join(td, name)); err == nil {
+		return os.Remove(full)
+	} else if !os.IsExist(err) {
+		// Missing source → 404; anything else is a real failure. Both are
+		// returned unwrapped so the caller can classify with os.IsNotExist.
+		return plainRenameFallback(dir, full, name, td, err)
+	}
+	for i := 0; i < 100; i++ {
+		suffixed, err := trashSuffix(name)
+		if err != nil {
 			return err
 		}
-		return nil
+		dst := filepath.Join(td, suffixed)
+		if err := os.Link(full, dst); err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return plainRenameFallback(dir, full, name, td, err)
+		}
+		return os.Remove(full)
 	}
-	for i := 0; i < 1000; i++ {
-		dst = filepath.Join(td, fmt.Sprintf("%s.%d", name, time.Now().UnixMilli()))
-		if _, err := os.Stat(dst); err != nil {
-			if err := os.Rename(full, dst); err != nil {
+	return fmt.Errorf("trash collision for %q", name)
+}
+
+// plainRenameFallback handles filesystems where os.Link cannot work
+// (cross-device, permissions): plain Rename onto the free name. Kept on the
+// link-failure path only, so the common case stays TOCTOU-free.
+func plainRenameFallback(dir, full, name, td string, linkErr error) error {
+	if err := os.Rename(full, filepath.Join(td, name)); err == nil {
+		return nil
+	} else if !os.IsExist(err) {
+		return err
+	}
+	for i := 0; i < 100; i++ {
+		suffixed, err := trashSuffix(name)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(td, suffixed)
+		claim, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return err
+		}
+		_ = claim.Close()
+		if err := os.Rename(full, dst); err != nil {
+			_ = os.Remove(dst)
+			if os.IsNotExist(err) {
 				return err
 			}
-			return nil
+			continue
 		}
+		return nil
 	}
 	return fmt.Errorf("trash collision for %q", name)
 }

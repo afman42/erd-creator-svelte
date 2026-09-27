@@ -92,45 +92,75 @@ func isTypeArgChar(c byte) bool {
 // here renders, so accepting it would mean emitting something that does not
 // mean what the model says.
 func isValidTypeExpr(v string) bool {
-	if len(v) == 0 {
+	if len(v) == 0 || !isTypeStart(v[0]) {
 		return false
 	}
 	if strings.HasSuffix(v, "[]") {
 		v = strings.TrimSuffix(v, "[]")
 		// a second suffix (INT[][]) leaves another one behind
-		if strings.HasSuffix(v, "[]") || v == "" {
+		if strings.HasSuffix(v, "[]") || v == "" || !isTypeStart(v[0]) {
 			return false
 		}
-	}
-	if !isTypeStart(v[0]) {
-		return false
 	}
 	parenIdx := strings.IndexByte(v, '(')
-	isBareName := parenIdx == -1
-	if isBareName {
-		for i := 1; i < len(v); i++ {
-			if !isTypeNameChar(v[i]) {
-				return false
-			}
-		}
-		return true
+	if parenIdx == -1 {
+		return isTypeNameChars(v[1:])
 	}
-	for i := 1; i < parenIdx; i++ {
-		if !isTypeNameChar(v[i]) {
-			return false
-		}
-	}
-	hasClosingParen := v[len(v)-1] == ')'
-	if !hasClosingParen {
+	if !isTypeNameChars(v[1:parenIdx]) || v[len(v)-1] != ')' {
 		return false
 	}
-	argsContent := v[parenIdx+1 : len(v)-1]
-	for i := 0; i < len(argsContent); i++ {
-		if !isTypeArgChar(argsContent[i]) {
+	return scanTypeArgs(v[parenIdx+1 : len(v)-1])
+}
+
+// isTypeNameChars reports whether s is all type-name characters.
+func isTypeNameChars(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !isTypeNameChar(s[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+// scanTypeArgs validates the parenthesised argument list of a type expression.
+// Strings are opaque (” escapes), parens must balance back to the one opened
+// by the caller, and comment markers are refused outright.
+func scanTypeArgs(argsContent string) bool {
+	depth := 1 // opened by the caller; must close exactly at end
+	inStr := byte(0)
+	for i := 0; i < len(argsContent); i++ {
+		c := argsContent[i]
+		if inStr != 0 {
+			if c == inStr {
+				if inStr == '\'' && i+1 < len(argsContent) && argsContent[i+1] == '\'' {
+					i++ // '' escape
+					continue
+				}
+				inStr = 0
+			}
+			continue
+		}
+		switch {
+		case c == '\'' || c == '"':
+			inStr = c
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
+		case c == '-' && i+1 < len(argsContent) && argsContent[i+1] == '-':
+			return false
+		case c == '/' && i+1 < len(argsContent) && argsContent[i+1] == '*':
+			return false
+		default:
+			if !isTypeArgChar(c) {
+				return false
+			}
+		}
+	}
+	return inStr == 0 && depth == 1
 }
 
 // validTypeRunes is the same character set isValidTypeExpr allows, kept beside
@@ -197,7 +227,8 @@ func (s *Schema) ValidateFor(dialect string) error {
 
 // validateIndexes checks one table's index list. Extracted so validateShape
 // stays a thin per-construct driver (the index checks alone were ~30 lines).
-func validateIndexes(t Table) error {
+// cols is the table's column set; every indexed column must exist in it.
+func validateIndexes(t Table, cols map[string]bool) error {
 	if len(t.Indexes) > maxIndexes {
 		return fmt.Errorf("table %q: too many indexes: %d (max %d)", t.Name, len(t.Indexes), maxIndexes)
 	}
@@ -235,6 +266,9 @@ func validateIndexes(t Table) error {
 			if err := validateIdent("index column", col); err != nil {
 				return fmt.Errorf("table %q index %d column %d: %w", t.Name, ii+1, ci+1, err)
 			}
+			if !cols[col] {
+				return fmt.Errorf("table %q index %d column %d (%q): no such column", t.Name, ii+1, ci+1, col)
+			}
 		}
 	}
 	return nil
@@ -264,7 +298,11 @@ func (s *Schema) validateShape() error {
 		// Index names and column lists are emitted as identifiers, so they go
 		// through the same allowlist as table/column names — an index name is
 		// the same injection surface as any other identifier.
-		if err := validateIndexes(t); err != nil {
+		colSet := make(map[string]bool, len(t.Columns))
+		for _, c := range t.Columns {
+			colSet[c.Name] = true
+		}
+		if err := validateIndexes(t, colSet); err != nil {
 			return err
 		}
 		// Table comments are emitted as quoted string literals (MySQL table
@@ -275,14 +313,7 @@ func (s *Schema) validateShape() error {
 			return fmt.Errorf("table %d (%q): %w", ti+1, t.Name, err)
 		}
 		seenCols := map[string]bool{}
-		colErr := func(ci int, c Col, err error) error {
-			return fmt.Errorf("table %q column %d (%q): %w", t.Name, ci+1, c.Name, err)
-		}
 		for ci, c := range t.Columns {
-			// `where` is built lazily (only on an error path): the old
-			// eager fmt.Sprintf ran on every column of every table — measured
-			// ~1.1ms of the ~2.2ms Validate on a 200×10 schema — while only
-			// being used when validation FAILS.
 			if err := validateIdent("column name", c.Name); err != nil {
 				return fmt.Errorf("table %q column %d: %w", t.Name, ci+1, err)
 			}
@@ -292,60 +323,79 @@ func (s *Schema) validateShape() error {
 				return fmt.Errorf("table %q: duplicate column name %q", t.Name, c.Name)
 			}
 			seenCols[c.Name] = true
-			if err := validateType(c.Type); err != nil {
-				return colErr(ci, c, err)
-			}
-			// Array types are PostgreSQL-only (enforced in ValidateFor), but
-			// these three combinations are invalid in PostgreSQL too, so they
-			// are rejected here — independently of the target dialect — rather
-			// than emitted as DDL the database refuses.
-			if isArrayType(c.Type) {
-				base, _ := splitType(strings.TrimSuffix(strings.TrimSpace(c.Type), "[]"))
-				switch {
-				case base == "ENUM":
-					// The ENUM rendering is `TEXT + CHECK (col IN (...))`, which
-					// describes one value, not an array of them; there is no
-					// correct CHECK for ENUM[] here, so it is refused rather
-					// than emitted as a constraint that means something else.
-					return fmt.Errorf("table %q column %d (%q): ENUM arrays are not supported", t.Name, ci+1, c.Name)
-				case c.Ai:
-					return fmt.Errorf("table %q column %d (%q): an array column cannot be AUTO_INCREMENT/IDENTITY", t.Name, ci+1, c.Name)
-				case c.Pk:
-					return fmt.Errorf("table %q column %d (%q): an array column cannot be a PRIMARY KEY", t.Name, ci+1, c.Name)
-				}
-			}
-			if err := validateText("comment", c.Comment, maxCommentLen); err != nil {
-				return colErr(ci, c, err)
-			}
-			if c.Default != "" {
-				if err := validateDefault(c.Default); err != nil {
-					return colErr(ci, c, err)
-				}
-				// AI + DEFAULT is invalid in every dialect: MySQL refuses a
-				// DEFAULT on an AUTO_INCREMENT column, Postgres refuses one on
-				// an identity column, and SQLite writes the rowid alias
-				// (INTEGER PRIMARY KEY) without room for a DEFAULT. Rather
-				// than emit DDL the database rejects, refuse the pair here —
-				// the same rule the array type uses for PK/AI.
-				if c.Ai {
-					return fmt.Errorf("table %q column %d (%q): an AUTO_INCREMENT/IDENTITY column cannot also have a DEFAULT", t.Name, ci+1, c.Name)
-				}
-			}
-			if c.Ref != nil {
-				if err := validateText("FK action", c.Ref.Action, maxNameLen); err != nil {
-					return colErr(ci, c, err)
-				}
-				if err := validateFKAction("FK action", c.Ref.Action); err != nil {
-					return colErr(ci, c, err)
-				}
-				if err := validateFKAction("FK on-update action", c.Ref.OnUpdate); err != nil {
-					return colErr(ci, c, err)
-				}
-				if err := validateIdent("FK target id", c.Ref.TableID); err != nil {
-					return colErr(ci, c, err)
-				}
+			if err := validateColumn(t.Name, ci, c); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+// validateColumn checks one column: type, array rules, comment, default and FK.
+func validateColumn(table string, ci int, c Col) error {
+	colErr := func(err error) error {
+		return fmt.Errorf("table %q column %d (%q): %w", table, ci+1, c.Name, err)
+	}
+	if err := validateType(c.Type); err != nil {
+		return colErr(err)
+	}
+	// Array types are PostgreSQL-only (enforced in ValidateFor), but these
+	// three combinations are invalid in PostgreSQL too, so they are rejected
+	// here — independently of the target dialect — rather than emitted as DDL
+	// the database refuses.
+	if err := validateArrayRules(table, ci, c); err != nil {
+		return err
+	}
+	if err := validateText("comment", c.Comment, maxCommentLen); err != nil {
+		return colErr(err)
+	}
+	if c.Default != "" {
+		if err := validateDefault(c.Default); err != nil {
+			return colErr(err)
+		}
+		// AI + DEFAULT is invalid in every dialect: MySQL refuses a DEFAULT
+		// on an AUTO_INCREMENT column, Postgres refuses one on an identity
+		// column, and SQLite writes the rowid alias (INTEGER PRIMARY KEY)
+		// without room for a DEFAULT.
+		if c.Ai {
+			return fmt.Errorf("table %q column %d (%q): an AUTO_INCREMENT/IDENTITY column cannot also have a DEFAULT", table, ci+1, c.Name)
+		}
+	}
+	if c.Ref == nil {
+		return nil
+	}
+	if err := validateText("FK action", c.Ref.Action, maxNameLen); err != nil {
+		return colErr(err)
+	}
+	if err := validateFKAction("FK action", c.Ref.Action); err != nil {
+		return colErr(err)
+	}
+	if err := validateFKAction("FK on-update action", c.Ref.OnUpdate); err != nil {
+		return colErr(err)
+	}
+	if err := validateIdent("FK target id", c.Ref.TableID); err != nil {
+		return colErr(err)
+	}
+	return nil
+}
+
+// validateArrayRules rejects array combinations invalid even in PostgreSQL.
+func validateArrayRules(table string, ci int, c Col) error {
+	if !isArrayType(c.Type) {
+		return nil
+	}
+	base, _ := splitType(strings.TrimSuffix(strings.TrimSpace(c.Type), "[]"))
+	switch {
+	case base == "ENUM":
+		// The ENUM rendering is `TEXT + CHECK (col IN (...))`, which
+		// describes one value, not an array of them; there is no correct
+		// CHECK for ENUM[] here, so it is refused rather than emitted as a
+		// constraint that means something else.
+		return fmt.Errorf("table %q column %d (%q): ENUM arrays are not supported", table, ci+1, c.Name)
+	case c.Ai:
+		return fmt.Errorf("table %q column %d (%q): an array column cannot be AUTO_INCREMENT/IDENTITY", table, ci+1, c.Name)
+	case c.Pk:
+		return fmt.Errorf("table %q column %d (%q): an array column cannot be a PRIMARY KEY", table, ci+1, c.Name)
 	}
 	return nil
 }
@@ -369,17 +419,16 @@ func validateIdent(what, v string) error {
 	}
 	// A semicolon is refused here rather than left to validateOutput's last
 	// gate: inside a quoted identifier it is technically safe, but the emitted
-	// line ends up looking like an injection ("ok; DROP TABLE ...") and the
-	// old last-gate rejection was a confusing 400 far from the cause. No file
-	// on disk has such a name — the old gate blocked every save — so refusing
-	// early cannot strand an existing schema.
+	// line ends up looking like an injection and the old last-gate rejection
+	// was a confusing 400 far from the cause. No file on disk has such a name
+	// — the old gate blocked every save — so refusing early strands nothing.
 	if strings.ContainsRune(v, ';') {
 		return fmt.Errorf("%s contains a semicolon", what)
 	}
 	if err := checkBasicString(what, v, maxNameLen); err != nil {
-		// checkBasicString reports "contains a control character" without quoting;
-		// for identifiers we include the value (quoted) so the user sees which
-		// name failed, with the newline-risk comment preserved here.
+		// checkBasicString reports "contains a control character" without
+		// quoting; identifiers include the value (quoted) so the user sees
+		// which name failed.
 		if hasControlChar(v) {
 			return fmt.Errorf("%s %q contains a control character", what, v)
 		}
@@ -461,13 +510,14 @@ func validateDefault(v string) error {
 	for i := 0; i < len(v); i++ {
 		c := v[i]
 		if inStr {
-			if c == '\'' {
-				if i+1 < len(v) && v[i+1] == '\'' {
-					i++ // '' escape
-					continue
-				}
-				inStr = false
+			if c != '\'' {
+				continue
 			}
+			if i+1 < len(v) && v[i+1] == '\'' {
+				i++ // '' escape
+				continue
+			}
+			inStr = false
 			continue
 		}
 		switch {

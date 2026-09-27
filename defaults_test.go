@@ -320,7 +320,10 @@ func TestGenInsertsDialects(t *testing.T) {
 		{Name: "created_at", Type: "DATETIME"},
 		{Name: "note", Type: "VARCHAR(255)"},
 	}}}}
-	ins := s.GenInserts()
+	ins, err := s.GenInserts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	mysqlIns := ins // the mysql bytes, the equality baseline for mariadb
 	if !strings.Contains(ins, "-- Seed row templates (edit values, remove per table as needed)") {
 		t.Errorf("mysql header changed:\n%s", ins)
@@ -330,7 +333,10 @@ func TestGenInsertsDialects(t *testing.T) {
 	}
 
 	s.Dialect = DialectPostgres
-	ins = s.GenInserts()
+	ins, err = s.GenInserts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(ins, `INSERT INTO "events"`) {
 		t.Errorf("postgres inserts are not double-quoted:\n%s", ins)
 	}
@@ -342,7 +348,10 @@ func TestGenInsertsDialects(t *testing.T) {
 	}
 
 	s.Dialect = DialectSqlite
-	ins = s.GenInserts()
+	ins, err = s.GenInserts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(ins, "INSERT INTO `events`") || !strings.Contains(ins, "CURRENT_TIMESTAMP") {
 		t.Errorf("sqlite inserts missing backticks/CURRENT_TIMESTAMP:\n%s", ins)
 	}
@@ -353,7 +362,11 @@ func TestGenInsertsDialects(t *testing.T) {
 	// mariadb shares the mysql grammar, so its templates are byte-identical
 	// to mysql's (same backticks, same NOW(), same header).
 	s.Dialect = DialectMariaDB
-	if got, want := s.GenInserts(), mysqlIns; got != want {
+	got, err := s.GenInserts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := mysqlIns; got != want {
 		t.Errorf("mariadb inserts differ from mysql's:\n--- got ---\n%s--- want ---\n%s", got, want)
 	}
 }

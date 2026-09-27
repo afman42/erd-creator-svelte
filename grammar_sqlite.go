@@ -94,13 +94,11 @@ func sqliteTypesFromHeader(sql string) string {
 }
 
 // parseSqlite reads the grammar buildSqlite emits.
-func parseSqlite(sql string) (*Schema, error) {
-	s := &Schema{Dialect: DialectSqlite, SqliteTypes: sqliteTypesFromHeader(sql)}
-	byName := map[string]int{} // name → index in s.Tables
-	byID := map[string]int{}   // id → index, O(1) for pending FK attachment
+func parseSqlite(sql string) (*Schema, []string, error) {
+	p := newParserState(DialectSqlite)
+	p.s.SqliteTypes = sqliteTypesFromHeader(sql)
 	var pending []pendingFK
-	cur := -1
-	tableID := 0
+	var warnings []string
 	commentLine := "" // "-- ..." text awaiting the column it documents
 
 	lines := strings.Split(sql, "\n")
@@ -111,35 +109,24 @@ func parseSqlite(sql string) (*Schema, error) {
 			continue
 		}
 		if m := reSqliteCreate.FindStringSubmatch(line); m != nil {
-			name := unquoteTick(m[1])
-			if _, dup := byName[name]; dup {
-				return nil, fmt.Errorf("line %d: duplicate table %q", n, name)
+			if err := p.addTable(unquoteTick(m[1]), n); err != nil {
+				return nil, nil, err
 			}
-			tableID++
-			id := fmt.Sprintf("t%d", tableID)
-			s.Tables = append(s.Tables, Table{ID: id, Name: name})
-			byName[name] = len(s.Tables) - 1
-			byID[id] = len(s.Tables) - 1
-			cur = len(s.Tables) - 1
 			commentLine = ""
 			continue
 		}
 		if reSqliteEnd.MatchString(line) {
-			cur = -1
+			p.cur = -1
 			commentLine = ""
 			continue
 		}
 		// index statements are emitted after the table body, so they are read
 		// while cur is -1 and must be handled before the inside-a-table guard
 		if m := reSqliteIndex.FindStringSubmatch(line); m != nil {
-			if idx, ok := byName[unquoteTick(m[1])]; ok {
+			if idx, ok := p.byName[unquoteTick(m[1])]; ok {
 				// Same arity routing as the other two parsers.
-				cols := splitIndexCols(m[2], unquoteTick)
-				switch {
-				case len(cols) == 1:
-					markCol(&s.Tables[idx], cols[0], func(c *Col) { c.Ix = true })
-				case len(cols) > 1:
-					s.Tables[idx].Indexes = append(s.Tables[idx].Indexes, Index{Cols: cols})
+				if name, ok := routeIndex(&p.s.Tables[idx], splitIndexCols(m[2], unquoteTick), ""); !ok {
+					return nil, nil, fmt.Errorf("line %d: unknown column %q", n, name)
 				}
 			}
 			continue
@@ -147,18 +134,18 @@ func parseSqlite(sql string) (*Schema, error) {
 		// comments: the header before the first table is skipped; inside a body
 		// the text is held until the column definition it documents arrives
 		if strings.HasPrefix(line, "--") {
-			if cur >= 0 {
+			if p.cur >= 0 {
 				if m := reSqliteCommentLine.FindStringSubmatch(line); m != nil {
 					commentLine = m[1]
 				}
 			}
 			continue
 		}
-		if cur < 0 {
-			return nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, lineExcerpt(line))
+		if p.cur < 0 {
+			return nil, nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, lineExcerpt(line))
 		}
 		body := strings.TrimSuffix(line, ",")
-		tbl := &s.Tables[cur]
+		tbl := &p.s.Tables[p.cur]
 
 		// Clause dispatch first, same as the mysql parser: column lines start
 		// with a quoted/bare identifier, clauses with a keyword.
@@ -166,8 +153,8 @@ func parseSqlite(sql string) (*Schema, error) {
 			if m := reSqlitePK.FindStringSubmatch(body); m != nil {
 				// Same quote-aware split as the index paths: a column named `a, b`
 				// is one PK element, not two.
-				for _, name := range splitIndexCols(m[1], unquoteTick) {
-					markCol(tbl, name, func(c *Col) { c.Pk = true })
+				if err := markPKColumns(tbl, splitIndexCols(m[1], unquoteTick), n); err != nil {
+					return nil, nil, err
 				}
 				commentLine = ""
 				continue
@@ -199,7 +186,7 @@ func parseSqlite(sql string) (*Schema, error) {
 		}
 		m := reSqliteCol.FindStringSubmatch(body)
 		if m == nil {
-			return nil, fmt.Errorf("line %d: cannot parse: %s", n, lineExcerpt(line))
+			return nil, nil, fmt.Errorf("line %d: cannot parse: %s", n, lineExcerpt(line))
 		}
 		name := unquoteTick(m[1])
 		ty := m[2]
@@ -224,9 +211,11 @@ func parseSqlite(sql string) (*Schema, error) {
 	// exact drift that made the ON UPDATE round-trip test fail for sqlite and
 	// postgres only. One implementation, so a field added to Ref cannot reach
 	// one dialect's parser and miss another's.
-	attachPendingFKs(s, byName, byID, pending, nil)
-	if len(s.Tables) == 0 {
-		return nil, fmt.Errorf("no CREATE TABLE found")
+	attachPendingFKs(p.s, p.byName, p.byID, pending, func(p pendingFK, reason string) {
+		warnings = append(warnings, fkDropWarning(p, reason))
+	})
+	if len(p.s.Tables) == 0 {
+		return nil, nil, fmt.Errorf("no CREATE TABLE found")
 	}
-	return s, nil
+	return p.s, warnings, nil
 }

@@ -180,7 +180,10 @@ func TestGenInsertsBranches(t *testing.T) {
 			{Name: "j", Type: "TEXT"},
 		}},
 	}}
-	out := s.GenInserts()
+	out, err := s.GenInserts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	// one row, all ten branches in position; two values swapping would fail here
 	want := "INSERT INTO `t` (`a`, `b`, `c`, `d`, `e`, `f`, `g`, `h`, `i`, `j`) VALUES (NULL, 0, 0.00, FALSE, '2026-01-01', NOW(), NOW(), '{}', '', '');"
 	if !strings.Contains(out, want) {
@@ -188,11 +191,19 @@ func TestGenInsertsBranches(t *testing.T) {
 	}
 	// empty table skipped
 	s2 := &Schema{Tables: []Table{{ID: "t1", Name: "empty"}}}
-	if out2 := s2.GenInserts(); !strings.Contains(out2, "Seed row") {
+	out2, err := s2.GenInserts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out2, "Seed row") {
 		t.Errorf("empty table should still have header")
 	}
 	// empty schema header only
-	if out3 := (&Schema{}).GenInserts(); !strings.HasPrefix(out3, "-- Seed") {
+	out3, err := (&Schema{}).GenInserts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out3, "-- Seed") {
 		t.Error("empty schema")
 	}
 }
