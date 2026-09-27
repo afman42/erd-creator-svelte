@@ -10,3 +10,35 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Commands (narrowest wins)
+
+| Change | Run |
+| --- | --- |
+| Go grammar/export/validate/security/files (`*.go`) | `go test ./...` |
+| Frontend unit (`frontend/src/**`) | `cd frontend && pnpm test` |
+| Canvas/export/e2e (`frontend/src/**`, `e2e/**`) | `cd frontend && pnpm run e2e` |
+| Full gate before PR | `make test` |
+| SQLite executable check | `go test -run TestSqliteEmitsExecutableDDL` (skips without sqlite3 CLI) |
+
+## Generated output — do not hand-edit
+
+- Editable: `frontend/src/**`, `*.go`, `schemas/*.sql`
+- Generated: `frontend/dist/**`, `erd-creator` binary, `dist-bin/**`
+- Rebuild: `make build` (dist + binary), `make dist` (cross-compile)
+- `dist/` is committed; stale binary serves old UI. Rebuild after pull.
+
+## Prohibitions
+
+- NEVER echo rejected payload in errors/logs/reports.
+- NEVER emit invalid SQL; return error via `Validate`/`GenSQL`.
+- NEVER bind beyond loopback (`-host ""`/`0.0.0.0`) except trusted network; no auth exists.
+- NEVER bypass `storePath` containment; NEVER hand-edit `frontend/dist`.
+
+## Router
+
+- Codebase question → `graphify query/path/explain` first; `graphify-out/wiki/index.md` for navigation; `GRAPH_REPORT.md` only for broad review.
+- Perf regression/optimization ask → `svelte-performance-investigation` global skill.
+- Frontend unit test ask → `svelte-frontend-unit-testing` global skill.
+- After code change → `graphify update .`.
+- Source of truth: README for architecture/threat model; Makefile for targets. Do not copy values here.
