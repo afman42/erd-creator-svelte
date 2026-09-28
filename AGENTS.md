@@ -5,6 +5,7 @@ This project has a knowledge graph at graphify-out/ with god nodes, community st
 When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
 
 Rules:
+
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
 - Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
@@ -39,6 +40,8 @@ Rules:
 
 - Codebase question → `graphify query/path/explain` first; `graphify-out/wiki/index.md` for navigation; `GRAPH_REPORT.md` only for broad review.
 - Perf regression/optimization ask → `svelte-performance-investigation` global skill.
-- Frontend unit test ask → `svelte-frontend-unit-testing` global skill.
+- Frontend unit test ask → `.agents/skills/frontend-unit-testing/SKILL.md` (behaviour, frozen literals, VISUAL todos); `svelte-frontend-unit-testing` global skill if present.
+- E2E / browser validation ask → `.agents/skills/playwright-cli/SKILL.md` (serial suite, probe, wipeStore); never point at real `schemas/`.
+- Grammar/Validate/GenSQL/export/import/store ask → `.agents/skills/safe-sql-execution/SKILL.md` first, not only at review.
 - After code change → `graphify update .`.
 - Source of truth: README for architecture/threat model; Makefile for targets. Do not copy values here.

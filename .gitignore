@@ -9,3 +9,5 @@ frontend/test-results/
 *.html
 .opencode/
 test-results/
+# Bughunters: local data and screenshots of the real app
+.bughunters/runs/

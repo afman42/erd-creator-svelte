@@ -173,11 +173,12 @@ string.
   to the control points, so it reaches the labels *attenuated* by 0.5625 (a label
   sits at t=0.25/0.75, where the cubic's control-point contribution is
   3(1−t)²t + 3(1−t)t² = 0.5625). The lane is therefore sized as
-  `LABEL_W / 0.5625`: a cardinality label measures 21.6px, so ≥38.4px is needed
-  to stop the boxes touching, and the constant is 44px — a measured 3.1px of
-  clear space between the two labels, which is the whole margin, since a
-  four-character label is a fixed width in the monospace face. Edges that are
-  already distinct — two FKs into one parent, on different rows — are left
+  `LABEL_W / 0.5625`: a cardinality label at the 10px floor measures ~24px
+  (letterspaced 0.04em, tabular numerals), so ≥42.7px is needed to stop the
+  boxes touching, and the constant is 88px — ~49.5px centre-to-centre, ~25px
+  clear. The extra margin covers the reciprocal-FK case, where two edges'
+  *opposite* ends land mid-curve and labels sit ~25px apart at 44px. Edges that
+  are already distinct — two FKs into one parent, on different rows — are left
   untouched.
 
   The crow's-foot arrowhead is sized and stroked to survive an export: a marker
@@ -275,14 +276,20 @@ string.
   `refreshLint` debounces after every edit, so a toast would fire on every
   keystroke; the panel is the durable record. Same `store.lint`, same
   debounced refresh — the panel is a view, not a second source.
-- **Themes** — dark is the default; the toolbar's `Light`/`Dark` toggle flips
-  `[data-theme]` on `<html>`, persisted in localStorage and applied before
-  mount (main.js, since the CSP forbids an inline script). Components consume
-  tokens, so one `[data-theme="light"]` block in `tokens.css` themes the whole
-  UI. The SVG paint (edges, labels, marker) is presentation attributes that
-  cannot read custom properties, so each theme's four colours are duplicated
-  in `geometry.js` and the two CSS blocks, with a test asserting all eight
-  stay equal.
+- **Themes** — dark is the default: a green-black drafting film (`#0d141b`),
+  not neutral grey. One structural hue (signal green `#5e9b7a`) owns
+  relationships + primary actions; self-loops read as special via warm amber
+  (`#c4904a`), not pink. Radii are two — 2px diagram nodes, 8px dialogs — and
+  hover states use border/outline, never a fill wash. The toolbar's
+  `Light`/`Dark` toggle flips `[data-theme]` on `<html>`, persisted in
+  localStorage and applied before mount (main.js, since the CSP forbids an
+  inline script). Components consume tokens, so one `[data-theme="light"]`
+  block in `tokens.css` themes the whole UI. The SVG paint (edges, labels,
+  marker) is presentation attributes that cannot read custom properties, so
+  each theme's four colours are duplicated in `geometry.js` and the two CSS
+  blocks, with a test asserting all eight stay equal. Cardinality labels sit
+  at a 10px floor with 0.04em letterspacing and tabular numerals, as
+  presentation attributes so the export matches the screen.
 - **Dialects** — one dropdown selects the DDL flavor, and it drives everything:
   what Save writes, the SQL panel, Copy SQL, Export (downloads a `.sql`
   file named after the current file, or `<dialect>-schema.sql` for unsaved

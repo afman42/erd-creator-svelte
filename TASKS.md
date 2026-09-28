@@ -18,21 +18,8 @@ git history, not here.
       if CI was in fact red, add a required status check so a red lint cannot
       merge again.
 
-- [ ] Drive CSS from the JS constants instead of mirroring them. The numbers
-      still live in both places (`geometry.js` and `TableCard.svelte`'s
-      `<style>`), but a unit test now parses the CSS and asserts it matches, so
-      drift fails at test time. **Half the trigger has fired:** `capture.js`'s
-      `captureSize()` is now a third consumer of `BOX_W`/`boxHeight()`, so the
-      metrics have three readers (`TableCard.svelte` CSS, `layout()`/`addTable()`
-      stacking, and PNG bounds). The other half — "a visual bug the test did not
-      catch" — has not: the CSS-drift test covers every metric `captureSize()`
-      reads (`BOX_W` via `section.table width`, `boxHeight()` via
-      `HDR_H`/`ROW_H`/`ADDCOL_H`/`BORDER_H`), so a drift there still fails at
-      test time rather than silently cropping the PNG. Not yet worth the
-      refactor on one of two conditions; the real fix is CSS custom properties
-      set from `geometry.js`, which removes the duplication rather than
-      guarding it. Trigger: a visual bug the test did not catch, or a *fourth*
-      consumer.
+- [x] Drive CSS from the JS constants instead of mirroring them (done 2026-09-28). Trigger fired: the perf split (`canvasView.js contentSize()`, `fcd7339`) made a FOURTH metric reader alongside stacking, edge anchors, and PNG bounds. `geometry.js` now owns the numbers: `cardMetrics()` + `applyCardMetrics(el)` write `--card-*` custom properties (CSSOM, CSP-safe like TableCard left/top) onto each card element, `TableCard.svelte`/`ColumnRow.svelte` read `var(--card-...)` with zero literals, and `diagramBounds()` owns the extent arithmetic for `contentSize()`/`captureSize()`. The drift test asserts var() wiring + written values + `row+cmt===ROW_H`. Unit 185 · e2e 103 · Go 240 · lint/build clean.
+- [x] Film palette token pass (done 2026-09-28). Green-black drafting film (`--color-bg #0d141b`), one structural hue (signal green primary/flag/edges), warm-amber self-loops (`--color-accent #c4904a`), radii collapsed 4→2 (2px nodes, 8px dialogs), hover fills replaced with border/outline (`surface-hover` deleted), primary-button text via `--color-on-primary` (ink-on-green dark, white-on-deep-green light), cardinality labels at 10px floor + 0.04em letterspacing + tabular numerals, `EDGE_LANE` 44→88px (10px type widened labels past the 44px margin; reciprocal-FK opposite ends touched). `geometry.js` constants + `capture.js BG` mirrored, token-equality tests + e2e hex/luminance pins updated. Unit 185 · e2e 103 · Go 240 · biome/vet/golangci-lint/staticcheck/govulncheck clean.
 
 - [ ] **Authentication.** There is none — reaching the port is the whole
       authorization model. That is correct for a single local user and is why
