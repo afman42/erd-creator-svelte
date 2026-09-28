@@ -223,9 +223,9 @@ function jumpToTable() {
 	}
 	header button {
 		background: var(--color-primary);
-		color: #fff;
+		color: var(--color-on-primary);
 		border: 0;
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 6px 12px;
 		cursor: pointer;
 		font: inherit;
@@ -258,7 +258,7 @@ function jumpToTable() {
 		background: var(--color-bg);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 5px 6px;
 		font: inherit;
 		flex: 0 0 auto;
@@ -306,7 +306,7 @@ function jumpToTable() {
 		background: var(--color-bg);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 5px 8px;
 		font: inherit;
 		flex: 0 0 auto;
@@ -329,7 +329,7 @@ function jumpToTable() {
 		cursor: pointer;
 		background: var(--color-bg);
 		border: 1px solid var(--color-border);
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 5px 10px;
 		min-height: 44px;
 		box-sizing: border-box;

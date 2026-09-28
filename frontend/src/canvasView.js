@@ -11,7 +11,7 @@
 // replacing the schema object, so a key on the tables array alone would go
 // stale. The snap()→bumpStruct() hook invalidates on every structural edit
 // (same object, in-place rename/flags/FK), while drag frames reuse the cache.
-import { BOX_W, boxHeight, cardinality } from "./geometry.js";
+import { cardinality, diagramBounds } from "./geometry.js";
 import { junctionSet } from "./relationships.js";
 
 export const ZMIN = 0.25;
@@ -25,14 +25,8 @@ export function clampZoom(z) {
 
 /** @param {{ tables: import("./erd.js").Table[] }} schema */
 export function contentSize(schema) {
-	let w = 0;
-	let h = 0;
-	for (const t of schema.tables) {
-		if (t.x + BOX_W > w) w = t.x + BOX_W;
-		if (t.y + boxHeight(t.columns.length) > h)
-			h = t.y + boxHeight(t.columns.length);
-	}
-	return { w, h };
+	const { maxX, maxY } = diagramBounds(schema.tables);
+	return { w: maxX, h: maxY };
 }
 
 /** @type {WeakMap<object, { structRev: number, nameById: Map<string, string> | null, referenced: Set<string> | null, relList: string[] | null }>} */

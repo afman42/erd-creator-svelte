@@ -14,6 +14,7 @@
 // dropping it would move every row below it.
 import ColumnEditModal from "./ColumnEditModal.svelte";
 import ColumnRow from "./ColumnRow.svelte";
+import { applyCardMetrics } from "./geometry.js";
 import { isJunctionTable } from "./relationships.js";
 import {
 	addColumn,
@@ -52,11 +53,20 @@ const colIndex = $derived(new Map(table.columns.map((c, i) => [c.id, i])));
 const parentName = (c) => nameById.get(c.ref?.tableId);
 // Column ordinal for the edit modal (replaces indexOf per keystroke).
 const editingIndex = $derived(editing ? (colIndex.get(editing.id) ?? -1) : -1);
+
+// Card metrics as an attachment: runs on mount, no reactive deps, no
+// element-state round-trip through bind:this. Replaces the $effect +
+// cardEl $state pair.
+/** @param {HTMLElement} el */
+function cardMetricsAttachment(el) {
+	applyCardMetrics(el);
+}
 </script>
 
 <section
 	class="table"
 	class:selected={store.selected === table.id}
+	{@attach cardMetricsAttachment}
 	style="left:{table.x}px; top:{table.y}px"
 	title={table.comment || undefined}
 	aria-label="Table {table.name}"
@@ -151,14 +161,15 @@ const editingIndex = $derived(editing ? (colIndex.get(editing.id) ?? -1) : -1);
 <style>
 	section.table {
 		position: absolute;
-		width: 280px;
+		width: var(--card-boxW);
 		/* border-box so the declared width IS the box width (BOX_W in
-		   geometry.js). With content-box the 1px borders pushed the real box to
-		   282px and every child width was understated by its own padding. */
+		   geometry.js, via --card-boxW). With content-box the 1px borders
+		   pushed the real box to 282px and every child width was understated
+		   by its own padding. */
 		box-sizing: border-box;
 		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border: var(--card-bw) solid var(--color-border);
+		border-radius: var(--radius-lg);
 		box-shadow: 0 2px 8px #0008;
 	}
 	section.selected {
@@ -171,11 +182,11 @@ const editingIndex = $derived(editing ? (colIndex.get(editing.id) ?? -1) : -1);
 	.hdr {
 		display: flex;
 		align-items: center;
-		/* explicit height pins HDR_H in geometry.js */
-		height: 28px;
+		/* explicit height pins HDR_H in geometry.js (via --card-hdr) */
+		height: var(--card-hdr);
 		box-sizing: border-box;
 		background: var(--color-primary);
-		border-radius: 5px 5px 0 0;
+		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 		cursor: grab;
 	}
 	.tname {
@@ -183,7 +194,7 @@ const editingIndex = $derived(editing ? (colIndex.get(editing.id) ?? -1) : -1);
 		min-width: 0;
 		background: transparent;
 		border: 0;
-		color: #fff;
+		color: var(--color-on-primary);
 		font-weight: 600;
 		font-size: 13px;
 		padding: 5px 8px;
@@ -195,7 +206,7 @@ const editingIndex = $derived(editing ? (colIndex.get(editing.id) ?? -1) : -1);
 		flex: 0 0 auto;
 		margin-right: 4px;
 		padding: 1px 5px;
-		border-radius: 8px;
+		border-radius: var(--radius-xl);
 		background: var(--color-accent);
 		color: var(--color-bg);
 		font: 10px var(--font-mono);
@@ -225,11 +236,11 @@ const editingIndex = $derived(editing ? (colIndex.get(editing.id) ?? -1) : -1);
 		width: 10px;
 		height: 10px;
 		border-radius: 50%;
-		border: 2px solid #fff;
+		border: 2px solid var(--color-on-primary);
 		box-sizing: border-box;
 	}
 	section.selected .hdr button.selectbtn .sel-dot {
-		background: #fff;
+		background: var(--color-on-primary);
 	}
 	.hdr button:hover {
 		color: var(--color-danger);
@@ -244,10 +255,10 @@ const editingIndex = $derived(editing ? (colIndex.get(editing.id) ?? -1) : -1);
 	}
 	.addcol {
 		width: 100%;
-		/* height (not min-height) pins ADDCOL_H: the CSS-drift test reads it.
-		   44px touch lives on the row-✎/header overflow + modal controls —
-		   the footer stays model-exact. */
-		height: 25px;
+		/* height (not min-height) pins ADDCOL_H (via --card-addcol): the
+		   CSS-drift test reads it. 44px touch lives on the row-✎/header
+		   overflow + modal controls — the footer stays model-exact. */
+		height: var(--card-addcol);
 		box-sizing: border-box;
 		background: transparent;
 		color: var(--color-flag);

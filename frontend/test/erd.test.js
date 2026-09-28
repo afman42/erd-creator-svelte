@@ -25,12 +25,14 @@ import {
 } from "../src/erd.js";
 import {
 	ADDCOL_H,
+	applyCardMetrics,
 	BORDER_H,
 	BOX_W,
 	boxHeight,
 	CARDINALITY_STATES,
 	cardinality,
 	cardinalityState,
+	cardMetrics,
 	EDGE_SELF_STROKE,
 	EDGE_SELF_STROKE_LIGHT,
 	EDGE_STROKE,
@@ -470,13 +472,14 @@ test("adoptIds handles missing column ids and empty schema", () => {
 	assert.notEqual(wire.tables[0].columns[0].id, wire.tables[0].columns[1].id);
 });
 
-// TableCard.svelte's <style> block is the source of truth for the box metrics
-// geometry.js mirrors, and those numbers are hand-copied — so they drift.
-// The previous version of this test only re-asserted the constants against
-// themselves, which is why it passed while the CSS said something else
-// entirely: ROW_H claimed 42 (row 26 + comment 16) but the real row+comment was
-// 47, so FK edges attached progressively lower down the table — 14px off by the
-// fourth column. These tests read the actual CSS instead.
+// TableCard.svelte / ColumnRow.svelte size the real box from geometry.js via
+// --card-* custom properties written by applyCardMetrics(), so the numbers
+// cannot be hand-copied and drift. The old version of this test re-asserted
+// px literals in the CSS, which is why it passed while the CSS said something
+// else entirely: ROW_H claimed 42 (row 26 + comment 16) but the real
+// row+comment was 47, so FK edges attached progressively lower down the table
+// — 14px off by the fourth column. These tests assert the var() wiring plus
+// the written values instead.
 const CARD_SRC = readSrc("../src/TableCard.svelte");
 let STYLE = CARD_SRC.slice(
 	CARD_SRC.indexOf("<style>"),
@@ -514,53 +517,53 @@ const px = (v, what) => {
 	return n;
 };
 
-test("TableCard CSS matches the geometry.js box metrics", () => {
-	// width: the FK edge starts at x + BOX_W, so a mismatch detaches every edge
+test("TableCard CSS reads the geometry.js box metrics via --card-* vars", () => {
+	// geometry.js owns the numbers; the stylesheets only reference them via
+	// var(), and applyCardMetrics() writes the values onto each card element
+	// (var() inherits into ColumnRow, so no per-row call). A literal here
+	// means the single-source wiring was bypassed and the two can drift again.
+	assert.equal(decl("section.table", "width"), "var(--card-boxW)");
+	assert.equal(decl(".hdr", "height"), "var(--card-hdr)");
+	assert.equal(decl(".row", "height"), "var(--card-row)");
+	assert.equal(decl(".cmt", "height"), "var(--card-cmt)");
+	assert.equal(decl(".cmt", "line-height"), "var(--card-cmt)");
+	assert.equal(decl(".addcol", "height"), "var(--card-addcol)");
 	assert.equal(
-		px(decl("section.table", "width"), "section.table width"),
-		BOX_W,
-		"section.table width must equal BOX_W or FK edges start at the wrong x",
+		decl("section.table", "border"),
+		"var(--card-bw) solid var(--color-border)",
 	);
-	// without border-box the 1px borders push the real box past the declared
+	// without border-box the borders push the real box past the declared
 	// width, and every child's own padding understates its rendered width
 	assert.equal(
 		decl("section.table", "box-sizing"),
 		"border-box",
 		"section.table needs box-sizing:border-box so the declared width is the real width",
 	);
-	// header height: rows are positioned from HDR_H, so this shifts every row
-	assert.equal(
-		px(decl(".hdr", "height"), ".hdr height"),
-		HDR_H,
-		"header height must equal HDR_H or every column row sits at the wrong y",
-	);
+	// the row is the unit ROW_H counts, so it must not be content-sized
+	assert.equal(decl(".row", "box-sizing"), "border-box");
+	// the written values must equal the JS constants the model computes with
+	const stub = {
+		style: {
+			setProperty(k, v) {
+				this[k] = v;
+			},
+		},
+	};
+	applyCardMetrics(stub);
+	assert.equal(stub.style["--card-boxW"], `${BOX_W}px`);
+	assert.equal(stub.style["--card-hdr"], `${HDR_H}px`);
+	assert.equal(stub.style["--card-addcol"], `${ADDCOL_H}px`);
+	assert.equal(stub.style["--card-bw"], `${BORDER_H / 2}px`);
 	// row + comment line: the per-column step used to walk down the table
 	assert.equal(
-		px(decl(".row", "height"), ".row height") +
-			px(decl(".cmt", "height"), ".cmt height"),
+		Number.parseFloat(stub.style["--card-row"]) +
+			Number.parseFloat(stub.style["--card-cmt"]),
 		ROW_H,
 		"row + comment height must equal ROW_H or FK edges drift down the table",
 	);
-	// the row is the unit ROW_H counts, so it must not be content-sized
-	assert.equal(decl(".row", "box-sizing"), "border-box");
-	// the footer and border complete the height model: boxHeight() is what
-	// layout() and addTable() stack cards by, so these must match too. Both
-	// callers used to open-code this, assuming a 24px footer where the real one
-	// plus borders is 27px, so cards were stacked 3px tighter than intended.
-	assert.equal(
-		px(decl(".addcol", "height"), ".addcol height"),
-		ADDCOL_H,
-		".addcol footer height must equal ADDCOL_H or boxHeight() is wrong",
-	);
-	assert.equal(
-		// declared as the shorthand `border: 1px solid …`, so take its width
-		px(
-			(decl("section.table", "border") ?? "").split(/\s+/)[0],
-			"section.table border width",
-		) * 2,
-		BORDER_H,
-		"section.table borders must equal BORDER_H or boxHeight() understates the card",
-	);
+	// cardMetrics() itself composes ROW_H from its two parts
+	const m = cardMetrics();
+	assert.equal(m.row + m.cmt, ROW_H);
 });
 
 test("boxHeight / stackStep match the real rendered card", () => {
@@ -763,7 +766,7 @@ test("edge and label paint is applied as SVG attributes, not class-only", () => 
 		/fill=\{dark \? LABEL_FILL : LABEL_FILL_LIGHT\}/,
 		"labels have no fill attribute",
 	);
-	assert.match(APP_SRC, /font-size="9"/, "labels have no font-size attribute");
+	assert.match(APP_SRC, /font-size="10"/, "labels have no font-size attribute");
 	assert.match(
 		APP_SRC,
 		/text-anchor=\{LABEL_ANCHOR\}/,

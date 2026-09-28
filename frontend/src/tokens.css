@@ -1,25 +1,25 @@
+/* Film palette: green-black drafting film, not neutral grey. One structural
+   hue owns relationships + primary actions (Signal green) — no default blue.
+   Self-loops read as special via warm amber, not pink. Radii are two, not
+   four: 2px for diagram nodes, 8px for dialogs. surface-hover is gone —
+   hover states use border + outline, never a fill wash. */
 :root {
-	--color-bg: #101418;
-	--color-surface: #1a2028;
-	--color-surface-hover: #232b35;
-	--color-border: #3b4654;
-	--color-border-strong: #2a3340;
-	--color-primary: #2b6cb0;
-	--color-primary-hover: #357ac4;
-	--color-text: #d8dee6;
-	--color-text-muted: #9fb0c0;
-	--color-text-faint: #7fa3c0;
+	--color-bg: #0d141b;
+	--color-surface: #161e27;
+	--color-border: #31404f;
+	--color-border-strong: #232e3a;
+	--color-primary: #5e9b7a;
+	--color-primary-hover: #6cab89;
+	--color-text: #dce4ec;
+	--color-text-muted: #9db4c6;
+	--color-text-faint: #7e96ab;
 	--color-success: #4ade80;
 	--color-warning: #fbbf24;
 	--color-danger: #f87171;
-	--color-accent: #bb5588;
-	--color-flag: #66bb88;
-	/* Selected pills (.relkind.on / .type.on): dark-navy literal, moved here so
-	   the light palette below can override it instead of inheriting dark. */
+	--color-accent: #c4904a;
+	--color-flag: #5e9b7a;
 	--color-on-bg: #233448;
 	--color-on-text: #ffffff;
-	/* Destructive / constructive actions (.rmix/.rmcol/.rmrel, .mkix): were
-	   #7f1d1d/#fecaca + #2f6f4f/#d1fae5 literals with no light variants. */
 	--color-danger-bg: #7f1d1d;
 	--color-danger-text: #fecaca;
 	--color-danger-hover: #2a1a1d;
@@ -28,16 +28,19 @@
 	/* Relationship edges: the line, its crow's-foot arrowhead, and nothing
 	   else. Brighter than the old #888, which was the same grey as the marker
 	   and made a 6x7px hairline arrow effectively invisible in an exported PNG.
-	   Distinct from --color-accent, which stays the SELF-edge colour, and from
-	   --color-text-muted (#9fb0c0, the cardinality labels), so a label does not
+	   Distinct from --color-accent (amber, SELF edges only), and from
+	   --color-text-muted (#9db4c6, the cardinality labels), so a label does not
 	   merge into the line it sits on. */
-	--color-edge: #7fa3c0;
+	--color-edge: #7fa8c4;
 	--color-sql: #a5d6ff;
-	/* Focus/selection ring: was a #63b3ed literal in 8 components. */
-	--color-focus: #63b3ed;
-	--radius-sm: 4px;
-	--radius-md: 5px;
-	--radius-lg: 6px;
+	/* Canvas dot grid: one step above film, quiet enough that edges stay the texture. */
+	--color-dot: #1e2a36;
+	/* Text on primary fills: film-ink on signal green (dark) so the 13px UI
+	   label clears 4.5:1; white on deep green in light. */
+	--color-on-primary: #0d141b;
+	--radius-sm: 2px;
+	--radius-md: 2px;
+	--radius-lg: 2px;
 	--radius-xl: 8px;
 	--space-1: 4px;
 	--space-2: 8px;
@@ -70,19 +73,18 @@
 [data-theme="light"] {
 	--color-bg: #ffffff;
 	--color-surface: #f4f6f9;
-	--color-surface-hover: #e2e8f0;
 	--color-border: #c4cfdd;
 	--color-border-strong: #d4dce6;
-	--color-primary: #2563a8;
-	--color-primary-hover: #2f74bd;
+	--color-primary: #3f7d5c;
+	--color-primary-hover: #4a8f6a;
 	--color-text: #1d2835;
 	--color-text-muted: #4a5a6a;
 	--color-text-faint: #3f6d96;
 	--color-success: #15803d;
 	--color-warning: #b45309;
 	--color-danger: #b91c1c;
-	--color-accent: #a94d7a;
-	--color-flag: #2f8f5f;
+	--color-accent: #a06a28;
+	--color-flag: #3f7d5c;
 	--color-on-bg: #d6e4f0;
 	--color-on-text: #1d2835;
 	--color-danger-bg: #fde2e2;
@@ -92,4 +94,6 @@
 	--color-ok-text: #14532d;
 	--color-edge: #5b83a5;
 	--color-sql: #3f6d96;
+	--color-dot: #dbe3ec;
+	--color-on-primary: #ffffff;
 }

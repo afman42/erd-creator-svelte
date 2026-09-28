@@ -211,7 +211,7 @@ function create() {
 					y="16"
 					fill={LABEL_FILL}
 					font-family="ui-monospace, monospace"
-					font-size="9"
+					font-size="10" letter-spacing="0.04em"
 					text-anchor="middle"
 					paint-order="stroke"
 					stroke={LABEL_HALO}
@@ -222,7 +222,7 @@ function create() {
 					y="16"
 					fill={LABEL_FILL}
 					font-family="ui-monospace, monospace"
-					font-size="9"
+					font-size="10" letter-spacing="0.04em"
 					text-anchor="middle"
 					paint-order="stroke"
 					stroke={LABEL_HALO}
@@ -428,7 +428,7 @@ function create() {
 	}
 	.create {
 		background: var(--color-primary);
-		color: #fff;
+		color: var(--color-on-primary);
 	}
 	.create:hover {
 		background: var(--color-primary-hover);
@@ -436,10 +436,11 @@ function create() {
 	.cancel {
 		background: transparent;
 		color: var(--color-text-muted);
+		border: 1px solid var(--color-border);
 	}
 	.cancel:hover {
 		color: var(--color-text);
-		background: var(--color-surface-hover);
+		border-color: var(--color-text-faint);
 	}
 	button:focus-visible,
 	select:focus-visible,

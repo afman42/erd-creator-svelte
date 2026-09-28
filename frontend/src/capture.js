@@ -14,10 +14,10 @@
 //
 // The html-to-image import stays dynamic so the SQL path pays 0 bytes for it.
 
-import { BOX_W, boxHeight } from "./geometry.js";
+import { diagramBounds } from "./geometry.js";
 
 const PAD = 40;
-const BG = "#101418";
+const BG = "#0d141b"; // = --color-bg (film ink); export canvas must match the theme
 
 // Shared stem rule for raster/vector export filenames. Exported (not private):
 // export.js's exportFilename() builds the .sql name off the same stem, so the
@@ -168,12 +168,7 @@ export function captureOptions(size) {
 export function captureSize(schema) {
 	const tables = schema?.tables;
 	if (!tables?.length) return null;
-	let maxX = -Infinity;
-	let maxY = -Infinity;
-	for (const t of tables) {
-		maxX = Math.max(maxX, t.x + BOX_W);
-		maxY = Math.max(maxY, t.y + boxHeight(t.columns.length));
-	}
+	const { maxX, maxY } = diagramBounds(tables);
 	return { width: maxX + PAD, height: maxY + PAD };
 }
 

@@ -34,7 +34,7 @@ import { addTable } from "./schema.svelte.js";
 	}
 	.empty-cta {
 		background: var(--color-primary);
-		color: #fff;
+		color: var(--color-on-primary);
 		border: 0;
 		border-radius: var(--radius-md);
 		padding: 6px 14px;

@@ -37,7 +37,7 @@ import { store } from "./schema.svelte.js";
 	span {
 		background: var(--color-surface);
 		border: 1px solid var(--color-border-strong);
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		padding: 8px 12px;
 		white-space: nowrap;
 		overflow: hidden;

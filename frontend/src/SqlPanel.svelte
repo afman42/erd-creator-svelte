@@ -53,7 +53,7 @@ const sqlLoading = $derived(store.sqlLoading && !store.sqlText);
 	.sqlhead button {
 		margin-left: auto;
 		background: var(--color-primary);
-		color: #fff;
+		color: var(--color-on-primary);
 		border: 0;
 		border-radius: var(--radius-sm);
 		padding: 4px 8px;

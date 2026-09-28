@@ -138,7 +138,7 @@ test("light-theme SVG export carries the light paint constants", async ({
 	const svg = buf.toString("utf8");
 	// the crow marker always carries the theme edge stroke
 	expect(svg).toContain("#5b83a5"); // EDGE_STROKE_LIGHT
-	expect(svg).not.toContain("#7fa3c0"); // dark EDGE_STROKE must not leak
+	expect(svg).not.toContain("#7fa8c4"); // dark EDGE_STROKE must not leak
 });
 
 test("lint panel shows a clean state when there are no findings", async ({

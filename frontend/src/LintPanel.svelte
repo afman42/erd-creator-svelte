@@ -105,7 +105,8 @@ function longestTablePrefix(msg) {
 		min-height: 44px;
 	}
 	li button:hover {
-		background: var(--color-surface-hover);
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
 	}
 	li button:focus-visible {
 		outline: 1px solid var(--color-focus);

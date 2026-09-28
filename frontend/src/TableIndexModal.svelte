@@ -86,7 +86,7 @@ function shownName(ix) {
 		<p class="none">No composite indexes. Pick two or more columns below.</p>
 	{/if}
 
-	{#each indexes as ix (ix)}
+	{#each indexes as ix (ix.name ?? ix.cols.join(","))}
 		<div class="ix" data-testid="index-row">
 			<label class="fld">
 				<span>Name</span>
@@ -202,7 +202,7 @@ function shownName(ix) {
 	}
 	.done {
 		background: var(--color-primary);
-		color: #fff;
+		color: var(--color-on-primary);
 		border: 0;
 		border-radius: var(--radius-md);
 		padding: 6px 12px;

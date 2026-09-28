@@ -28,11 +28,12 @@ let { column, parentName, onEdit } = $props();
 		   only free variable: widths are data-driven, heights pin geometry. */
 		gap: 2px;
 		padding: 1px 2px;
-		height: 26px;
+		height: var(--card-row);
 		box-sizing: border-box;
 	}
 	.row:hover {
-		background: var(--color-surface-hover);
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
 	}
 	.row .cname {
 		flex: 1 1 auto;
@@ -98,12 +99,12 @@ let { column, parentName, onEdit } = $props();
 		outline-offset: 1px;
 	}
 	.cmt {
-		height: 16px;
+		height: var(--card-cmt);
 		box-sizing: border-box;
 		padding: 0 4px;
 		font: italic 10px system-ui, sans-serif;
 		color: var(--color-text-faint);
-		line-height: 16px;
+		line-height: var(--card-cmt);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

@@ -426,7 +426,7 @@ function onKey(ev) {
 									/>
 				</marker>
 			</defs>
-			{#each edges as e}
+			{#each edges as e (e.key)}
 				<!-- Presentation ATTRIBUTES, not just classes: html-to-image does
 				     not carry the stylesheet into the export, so class-only paint
 				     is lost and the line renders invisible in PNG/SVG. See the
@@ -451,7 +451,7 @@ function onKey(ev) {
 								y={e.from.y + e.from.dy}
 								fill={dark ? LABEL_FILL : LABEL_FILL_LIGHT}
 								font-family="ui-monospace, monospace"
-								font-size="9"
+								font-size="10" letter-spacing="0.04em"
 								text-anchor={LABEL_ANCHOR}
 								paint-order="stroke"
 								stroke={dark ? LABEL_HALO : LABEL_HALO_LIGHT}
@@ -463,7 +463,7 @@ function onKey(ev) {
 								y={e.to.y + e.to.dy}
 								fill={dark ? LABEL_FILL : LABEL_FILL_LIGHT}
 								font-family="ui-monospace, monospace"
-								font-size="9"
+								font-size="10" letter-spacing="0.04em"
 								text-anchor={LABEL_ANCHOR}
 								paint-order="stroke"
 								stroke={dark ? LABEL_HALO : LABEL_HALO_LIGHT}
@@ -520,7 +520,7 @@ function onKey(ev) {
 		position: relative;
 		flex: 1;
 		overflow: auto;
-		background: radial-gradient(var(--color-surface-hover) 1px, transparent 1px);
+		background: radial-gradient(var(--color-dot) 1px, transparent 1px);
 		background-size: 20px 20px;
 		min-height: 300px;
 	}
@@ -563,6 +563,8 @@ function onKey(ev) {
 	.card {
 		fill: var(--color-text-muted);
 		font: 10px ui-monospace, monospace;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0.04em;
 		text-anchor: middle;
 		paint-order: stroke;
 		stroke: var(--color-bg);

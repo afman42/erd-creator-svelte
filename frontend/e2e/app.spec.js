@@ -1339,7 +1339,7 @@ test("exported PNG actually paints the edge line and its labels", async ({
 					lum = Math.max(lum, d[i] + d[i + 1] + d[i + 2]);
 				return lum;
 			};
-			// background is #101418 → luminance 16+20+24 = 60
+			// background is #0d141b → luminance 13+20+27 = 60
 			return {
 				bg: brightest(250, 260, 2),
 				labels: pts.map(([x, y]) => brightest(x, y, 6)),

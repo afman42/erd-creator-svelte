@@ -387,7 +387,7 @@ function remove() {
 		font-size: 11px;
 		margin-left: auto;
 		padding: 3px 6px;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 	}
 	.rmrel:hover {
 		background: var(--color-danger-hover);
@@ -425,7 +425,7 @@ function remove() {
 	}
 	.done {
 		background: var(--color-primary);
-		color: #fff;
+		color: var(--color-on-primary);
 	}
 	.rmcol {
 		background: transparent;

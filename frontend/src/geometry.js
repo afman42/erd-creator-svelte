@@ -1,16 +1,20 @@
 // geometry.js — canvas box metrics + FK edge paths (pure, testable).
 //
 // This module is the single source of truth for how big a table card is. The
-// numbers are consumed in three places that must agree, or the UI breaks in
+// numbers are consumed in four places that must agree, or the UI breaks in
 // ways that are easy to miss:
 //
-//   - TableCard.svelte's CSS sizes the real box (checked against these
-//     constants in test/erd.test.js, so the CSS cannot silently drift)
+//   - TableCard.svelte / ColumnRow.svelte size the real box from these values
+//     via --card-* custom properties written by applyCardMetrics() (checked
+//     against var() wiring in test/erd.test.js, so the CSS cannot silently
+//     drift back to literals)
 //   - erd.js's layout() and schema.svelte.js's addTable() stack cards using
 //     boxHeight()/stackStep() rather than re-deriving the arithmetic
 //   - edgePaths() anchors FK curves to the row centres
+//   - capture.js's captureSize() and canvasView.js's contentSize() measure the
+//     whole diagram via diagramBounds() rather than re-deriving card extents
 //
-// The arithmetic used to be open-coded in both callers: layout() added
+// The arithmetic used to be open-coded in both stack callers: layout() added
 // `24 + GAP` and addTable() a bare `36`, which happen to agree (24+12=36) but
 // both fall 3px short of the real card — the footer plus borders are 27px, not
 // 24. Cards were therefore stacked 3px tighter than intended, and the number
@@ -23,6 +27,9 @@
  * @typedef {import("./erd.js").Table} Table
  * @typedef {import("./erd.js").Column} Column
  * @typedef {import("./erd.js").Schema} Schema
+ * @typedef {{key: string, t: Table, p: Table, c: Column, ci: number, py: number, x1: number, x2: number, childAtStart: boolean, degenerate: boolean, child: string, parent: string}} RoutedEdge
+ * @typedef {{x: number, y: number, dy: number, text: string}} EdgeLabel
+ * @typedef {{key: string, d: string, self: boolean, arrowAtStart: boolean, from: EdgeLabel, to: EdgeLabel}} EdgePath
  */
 
 export const HDR_H = 28; // .hdr height
@@ -107,12 +114,15 @@ export const EDGE_BOW = 30;
 // therefore separates two labels by only 0.5625·L, not L — which is what made
 // a first attempt at 22px leave the labels 12.4px apart and still overlapping.
 //
-// The minimum is LABEL_W / 0.5625. LABEL_W is a measured 21.609px (the
-// cardinality labels are always four characters — "0..1", "0..N", "1..1" — in
-// the monospace face), so 38.4px is the threshold and 44px gives 24.75px
-// centre-to-centre, i.e. 3.1px of clear space between the boxes. That is the
-// whole margin and it is enough, because the label width is fixed.
-export const EDGE_LANE = 44;
+// The minimum is LABEL_W / 0.5625. LABEL_W was measured 21.609px at 9px type;
+// at the 10px floor it is ~24px, so the threshold is ~42.7px. 44px gave
+// 24.75px centre-to-centre — 3.1px of clear space, enough when labels share
+// an end but not when two edges' OPPOSITE ends land mid-curve: labels 0 and 3
+// above sit ~25px apart centre-to-centre with ~24px-wide boxes, i.e. touching.
+// 88px doubles the margin to ~49.5px centres, ~25px clear. Control points move
+// ±44px; the bow stays clear of both cards (borrowed space is horizontal, the
+// cards are 280px wide with 60px+ gaps in practice).
+export const EDGE_LANE = 88;
 
 // Total rendered height of a card with nColumns columns.
 /**
@@ -121,6 +131,54 @@ export const EDGE_LANE = 44;
  */
 export function boxHeight(nColumns) {
 	return HDR_H + nColumns * ROW_H + ADDCOL_H + BORDER_H;
+}
+// ---- single-source card metrics for the stylesheets ----
+//
+// TableCard.svelte / ColumnRow.svelte size the real box from these values via
+// --card-* custom properties written by applyCardMetrics() (a Svelte-compiled
+// CSSOM write, same class as the left/top positioning — CSP style-src 'self'
+// does not govern it). ROW_H is row + comment line (26 + 16); the two are
+// exposed separately as --card-row/--card-cmt so ColumnRow needs no per-row
+// JS call — var() inherits from the card element.
+/** @returns {{ boxW: number, hdr: number, row: number, cmt: number, addcol: number, bw: number }} */
+export function cardMetrics() {
+	return {
+		boxW: BOX_W,
+		hdr: HDR_H,
+		row: 26,
+		cmt: ROW_H - 26,
+		addcol: ADDCOL_H,
+		bw: BORDER_H / 2,
+	};
+}
+
+/**
+ * Write the --card-* custom properties onto a card element.
+ * @param {{ style: { setProperty: (k: string, v: string) => void } }} el
+ */
+export function applyCardMetrics(el) {
+	const m = cardMetrics();
+	for (const [k, v] of Object.entries(m)) {
+		const prop = k === "boxW" ? "--card-boxW" : `--card-${k}`;
+		el.style.setProperty(prop, `${v}px`);
+	}
+}
+
+// Raw card extents of a table list (no padding): captureSize() adds PAD,
+// contentSize() returns them as-is. Owns the extent arithmetic so the two
+// callers cannot drift.
+/**
+ * @param {{ x: number, y: number, columns: unknown[] }[]} tables
+ * @returns {{ maxX: number, maxY: number }}
+ */
+export function diagramBounds(tables) {
+	let maxX = 0;
+	let maxY = 0;
+	for (const t of tables) {
+		maxX = Math.max(maxX, t.x + BOX_W);
+		maxY = Math.max(maxY, t.y + boxHeight(t.columns.length));
+	}
+	return { maxX, maxY };
 }
 
 // ---- SVG presentation values for edges and their labels ----
@@ -139,11 +197,11 @@ export function boxHeight(nColumns) {
 // through var() because a CSS custom property does not resolve in the exported
 // document either — so the duplication is load-bearing, and a test asserts these
 // stay equal to the tokens so the two cannot drift apart.
-export const EDGE_STROKE = "#7fa3c0"; // = --color-edge
+export const EDGE_STROKE = "#7fa8c4"; // = --color-edge
 export const EDGE_STROKE_WIDTH = 2;
-export const EDGE_SELF_STROKE = "#bb5588"; // = --color-accent, for self-loops
-export const LABEL_FILL = "#9fb0c0"; // = --color-text-muted
-export const LABEL_HALO = "#101418"; // = --color-bg, so the line does not cut the text
+export const EDGE_SELF_STROKE = "#c4904a"; // = --color-accent, for self-loops
+export const LABEL_FILL = "#9db4c6"; // = --color-text-muted
+export const LABEL_HALO = "#0d141b"; // = --color-bg, so the line does not cut the text
 export const LABEL_HALO_WIDTH = 2.5;
 // font-family/font-size are set as separate attributes rather than a font
 // shorthand, because SVG presentation attributes have no `font` shorthand.
@@ -156,7 +214,7 @@ export const LABEL_ANCHOR = "middle";
 // store.theme; the equality test in erd.test.js asserts all eight stay
 // equal. LABEL_HALO_LIGHT is white because --color-bg is white there.
 export const EDGE_STROKE_LIGHT = "#5b83a5"; // [data-theme=light] --color-edge
-export const EDGE_SELF_STROKE_LIGHT = "#a94d7a"; // --color-accent (light)
+export const EDGE_SELF_STROKE_LIGHT = "#a06a28"; // --color-accent (light)
 export const LABEL_FILL_LIGHT = "#4a5a6a"; // --color-text-muted (light)
 export const LABEL_HALO_LIGHT = "#ffffff"; // --color-bg (light)
 
@@ -297,18 +355,32 @@ export function cardinalityState(t, c) {
 // FK always targets the parent's sole PK (every emitter drops FKs onto
 // composite/absent PKs), so the anchor is that column's row. No sole PK (or
 // parent not found) falls back to the header centre, the old behaviour.
+/**
+ * @param {import("./erd.js").Table} p
+ * @returns {number}
+ */
 export function parentRowY(p) {
 	// Sole PK only: a composite-PK member is not unique, so no single row
 	// owns the FK — fall back to the header centre (old behaviour).
-	const pkCount = p.columns.filter((c) => c.pk).length;
+	const pkCount = p.columns.filter(
+		(/** @param {import("./erd.js").Column} c */ c) => c.pk,
+	).length;
 	if (pkCount !== 1) return p.y + HDR_H / 2;
-	const pkIdx = p.columns.findIndex((c) => c.pk);
+	const pkIdx = p.columns.findIndex(
+		(/** @param {import("./erd.js").Column} c */ c) => c.pk,
+	);
 	return p.y + HDR_H + pkIdx * ROW_H + ROW_CENTER;
 }
 
 // stickyOverlap applies the hysteresis deadband to the overlap decision:
 // clearly apart (gap > HYST_PX) → side-to-side, clearly overlapping
 // (gap < -HYST_PX) → bowed, inside the band → keep the previous branch.
+/**
+ * @param {Map<string, string>} sticky
+ * @param {string} stickKey
+ * @param {number} gapR
+ * @returns {boolean}
+ */
 function stickyOverlap(sticky, stickKey, gapR) {
 	if (gapR > HYST_PX) return false;
 	if (gapR < -HYST_PX) return true;
@@ -319,7 +391,7 @@ function stickyOverlap(sticky, stickKey, gapR) {
  * @param {{ tables: import("./erd.js").Table[] }} schema
  * @param {{ sticky?: Map<string, string> }} [opts] hysteresis memory (Fix C);
  *   when provided, the overlap branch decision sticks until the deadband clears
- * @returns {Array<{d: string, self: boolean, arrowAtStart: boolean, from: {x: number, y: number, dy: number, text: string}, to: {x: number, y: number, dy: number, text: string}}>}
+ * @returns {Array<{key: string, d: string, self: boolean, arrowAtStart: boolean, from: {x: number, y: number, dy: number, text: string}, to: {x: number, y: number, dy: number, text: string}}>}
  */
 export function edgePaths(schema, opts = {}) {
 	// Edges are ROUTED first and drawn second, because the lane an edge takes
@@ -407,6 +479,7 @@ export function edgePaths(schema, opts = {}) {
 			// labels a line to sit on.
 			const degenerate = x1 === x2;
 			routed.push({
+				key: stickKey,
 				t,
 				p,
 				c,
@@ -438,9 +511,7 @@ export function edgePaths(schema, opts = {}) {
 	// Fix C companion: prune sticky keys for FKs that no longer exist, so
 	// the map cannot grow across sessions or resurrect a stale branch.
 	if (opts.sticky) {
-		const live = new Set(
-			routed.map((r) => `${r.t.id}|${r.c.id ?? ""}|${r.p.id}`),
-		);
+		const live = new Set(routed.map((r) => r.key));
 		for (const k of [...opts.sticky.keys()])
 			if (!live.has(k)) opts.sticky.delete(k);
 	}
@@ -468,6 +539,7 @@ export function edgePaths(schema, opts = {}) {
 			const tChild = r.childAtStart ? LBL_T_CHILD : LBL_T_PARENT;
 			const tParent = r.childAtStart ? LBL_T_PARENT : LBL_T_CHILD;
 			out.push({
+				key: r.key,
 				d,
 				self: r.t.id === r.p.id,
 				arrowAtStart,
