@@ -81,7 +81,7 @@ func isInsideStore(resolved, root string) bool {
 func handleMissingTarget(full, root, name string) (string, error) {
 	parent, perr := filepath.EvalSymlinks(filepath.Dir(full))
 	if perr != nil {
-		return "", fmt.Errorf("cannot resolve %q", name)
+		return "", fmt.Errorf("cannot resolve %q: %w", name, perr)
 	}
 	if parent != root {
 		return "", fmt.Errorf("invalid file name %q", name)
@@ -565,9 +565,10 @@ func trashFile(dir, full, name string) error {
 	if err := os.Link(full, filepath.Join(td, name)); err == nil {
 		return os.Remove(full)
 	} else if !os.IsExist(err) {
-		// Missing source → 404; anything else is a real failure. Both are
-		// returned unwrapped so the caller can classify with os.IsNotExist.
-		return plainRenameFallback(dir, full, name, td, err)
+		// Cross-device/permission failures fall through to the plain-rename
+		// path, which handles them; err stays unwrapped so the caller can
+		// classify with os.IsNotExist.
+		return plainRenameFallback(full, name, td)
 	}
 	for i := 0; i < 100; i++ {
 		suffixed, err := trashSuffix(name)
@@ -579,7 +580,7 @@ func trashFile(dir, full, name string) error {
 			if os.IsExist(err) {
 				continue
 			}
-			return plainRenameFallback(dir, full, name, td, err)
+			return plainRenameFallback(full, name, td)
 		}
 		return os.Remove(full)
 	}
@@ -589,12 +590,16 @@ func trashFile(dir, full, name string) error {
 // plainRenameFallback handles filesystems where os.Link cannot work
 // (cross-device, permissions): plain Rename onto the free name. Kept on the
 // link-failure path only, so the common case stays TOCTOU-free.
-func plainRenameFallback(dir, full, name, td string, linkErr error) error {
+func plainRenameFallback(full, name, td string) error {
 	if err := os.Rename(full, filepath.Join(td, name)); err == nil {
 		return nil
 	} else if !os.IsExist(err) {
 		return err
 	}
+	return renameWithSuffix(full, name, td)
+}
+
+func renameWithSuffix(full, name, td string) error {
 	for i := 0; i < 100; i++ {
 		suffixed, err := trashSuffix(name)
 		if err != nil {
@@ -663,7 +668,7 @@ func ensureDir(dir string) error {
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("store dir: %w", err)
 	}
 	return os.MkdirAll(abs, 0o755)
 }
