@@ -313,7 +313,8 @@ function remove() {
 			<button class="another" onclick={onAddAnother} aria-label="add another column" title="Keep this column and start a new one">Add another</button>
 		{/if}
 		<button class="rmcol" onclick={remove}>Remove column</button>
-	</footer>
+		<button class="done" onclick={() => dlg?.close()}>Done</button>
+ 	</footer>
 </dialog>
 
 <style>
