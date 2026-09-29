@@ -54,6 +54,14 @@ const parentName = (c) => nameById.get(c.ref?.tableId);
 // Column ordinal for the edit modal (replaces indexOf per keystroke).
 const editingIndex = $derived(editing ? (colIndex.get(editing.id) ?? -1) : -1);
 
+// "Add another": commit-and-continue. All modal edits apply live (each snaps
+// on its own), so the current column needs no flush — append a fresh column
+// and point the modal at it. The modal stays mounted (same onClose), focus
+// jumps via the column-switch effect in ColumnEditModal.
+function addAnother() {
+	addColumn(table);
+	editingColId = table.columns[table.columns.length - 1]?.id ?? null;
+}
 // Card metrics as an attachment: runs on mount, no reactive deps, no
 // element-state round-trip through bind:this. Replaces the $effect +
 // cardEl $state pair.
@@ -151,6 +159,7 @@ function cardMetricsAttachment(el) {
 		others={store.schema.tables.filter((x) => x.id !== table.id)}
 		junction={junction}
 		onClose={() => (editingColId = null)}
+		onAddAnother={addAnother}
 	/>
 {/if}
 

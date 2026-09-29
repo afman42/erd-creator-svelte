@@ -43,6 +43,7 @@ let {
 	others = [],
 	junction = false,
 	onClose,
+	onAddAnother = null,
 } = $props();
 
 const actions = ["CASCADE", "RESTRICT", "SET NULL", "SET DEFAULT", "NO ACTION"];
@@ -89,6 +90,15 @@ let dlg = $state(null);
 // showModal() is imperative, so it cannot be an attribute — see showDialog().
 $effect(() => {
 	showDialog(dlg);
+});
+
+// Focus the name field whenever the edited column changes (mount + "Add
+// another" switches). Edits never change column.id, so keystrokes do not
+// re-trigger — only a column switch does.
+$effect(() => {
+	void column.id;
+	const name = dlg?.querySelector("input.cname");
+	if (name instanceof HTMLElement) name.focus();
 });
 
 // Inline field-error text (S8): mirrors the toast for empty-name and
@@ -299,8 +309,10 @@ function remove() {
 				aria-label="move column down"
 			>↓</button>
 		</div>
+		{#if onAddAnother}
+			<button class="another" onclick={onAddAnother} aria-label="add another column" title="Keep this column and start a new one">Add another</button>
+		{/if}
 		<button class="rmcol" onclick={remove}>Remove column</button>
-		<button class="done" onclick={() => dlg?.close()}>Done</button>
 	</footer>
 </dialog>
 
