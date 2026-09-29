@@ -4,6 +4,9 @@ import { newSchema, newTable } from "../src/erd.js";
 import {
 	clearHistory,
 	depth,
+	dropLast,
+	redo,
+	redoDepth,
 	setSnapHook,
 	snap,
 	snapRaw,
@@ -120,4 +123,44 @@ test("snap hook defaults to a no-op without wiring", () => {
 	assert.equal(depth(), 1);
 	const prev = undo();
 	assert.equal(prev.tables[0].name, "a");
+});
+
+test("redo restores undone state; new snap clears redo", () => {
+	clearHistory();
+	const s = newSchema("mysql", [newTable("users")]);
+	snap(s);
+	s.tables[0].name = "v2";
+	const undone = undo(s);
+	assert.ok(undone);
+	assert.equal(undone.tables[0].name, "users");
+	assert.equal(redoDepth(), 1);
+	undone.tables[0].name = "v2-again";
+	const redone = redo(undone);
+	assert.ok(redone);
+	assert.equal(redone.tables[0].name, "v2");
+	assert.equal(redoDepth(), 0);
+	snap(redone);
+	assert.equal(redoDepth(), 0);
+	assert.equal(redo(redone), null);
+});
+
+test("undo without current keeps old call shape and leaves redo empty", () => {
+	clearHistory();
+	const s = newSchema("mysql", [newTable("users")]);
+	snap(s);
+	const prev = undo();
+	assert.ok(prev);
+	assert.equal(redoDepth(), 0);
+});
+
+test("dropLast restores redo cleared by a failed create", () => {
+	clearHistory();
+	const s = newSchema("mysql", [newTable("users")]);
+	snap(s);
+	s.tables[0].name = "v2";
+	undo(s);
+	assert.equal(redoDepth(), 1);
+	snap(s); // failed create snapped, then drops it
+	dropLast();
+	assert.equal(redoDepth(), 1);
 });
