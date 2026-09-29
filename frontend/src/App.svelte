@@ -226,13 +226,16 @@ function startPan(ev) {
 	};
 	ev.preventDefault();
 }
- // Double-click empty canvas adds a table at the point. Card/dialog/button/
- // input presses are excluded via closest(); the 4px click threshold does not
- // apply — dblclick fires only when the press did not drag.
+// Double-click empty canvas adds a table at the point. Card/dialog/button/
+// input presses are excluded via closest(); the 4px click threshold does not
+// apply — dblclick fires only when the press did not drag.
 /** @param {MouseEvent} ev */
 function onDbl(ev) {
 	if (!canvasEl) return;
-	if (ev.target.closest("section.table, dialog, button, input, select, textarea")) return;
+	if (
+		ev.target.closest("section.table, dialog, button, input, select, textarea")
+	)
+		return;
 	const r = canvasEl.getBoundingClientRect();
 	addTableAt(
 		(ev.clientX - r.left + canvasEl.scrollLeft) / zoom,
@@ -263,7 +266,16 @@ function beginConnect(childId, colId, ev) {
 	if (idx < 0) return;
 	const a = columnAnchor(t, idx);
 	const m = toModel(ev);
-	connect = { childId, colId, x0: ev.clientX, y0: ev.clientY, x1: a.x, y1: a.y, x2: m.x, y2: m.y };
+	connect = {
+		childId,
+		colId,
+		x0: ev.clientX,
+		y0: ev.clientY,
+		x1: a.x,
+		y1: a.y,
+		x2: m.x,
+		y2: m.y,
+	};
 	ev.preventDefault();
 }
 function moveConnect(ev) {
@@ -279,7 +291,9 @@ function endConnect(ev) {
 	// Press-and-release without drag must not create an edge when the pointer
 	// happens to be over another card — require the 4px click threshold.
 	if (!pastClickThreshold({ x0: c.x0, y0: c.y0 }, ev)) return;
-	const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest("section.table");
+	const el = document
+		.elementFromPoint(ev.clientX, ev.clientY)
+		?.closest("section.table");
 	const parentId = el?.dataset?.tableId ?? null;
 	if (!parentId) return; // dropped on empty canvas: abort, no snap
 	if (parentId === c.childId) {
@@ -289,7 +303,10 @@ function endConnect(ev) {
 	addRelationship(c.childId, parentId, "1:N");
 }
 function onMove(ev) {
-	if (connect) { moveConnect(ev); return; }
+	if (connect) {
+		moveConnect(ev);
+		return;
+	}
 	if (pan && canvasEl) {
 		if (!pan.moved && !pastClickThreshold(pan, ev)) return;
 		if (!pan.moved) {
@@ -343,7 +360,10 @@ function onWheel(ev) {
 	setZoom(zoom - Math.sign(ev.deltaY) * 0.1);
 }
 function onUp(ev) {
-	if (connect) { endConnect(ev); return; }
+	if (connect) {
+		endConnect(ev);
+		return;
+	}
 	if (pan) pan = null;
 	if (!drag) return;
 	// Fix A: flush the pending frame synchronously so the card and its arrow
@@ -388,17 +408,30 @@ function onKey(ev) {
 	if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {
 		const t = store.schema.tables.find((x) => x.id === store.selected);
 		if (t) rmTable(t);
-	} else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "d" && !editing) {
+	} else if (
+		(ev.ctrlKey || ev.metaKey) &&
+		ev.key.toLowerCase() === "d" &&
+		!editing
+	) {
 		// Ctrl+D duplicates the selected table. preventDefault: the browser
 		// bookmark shortcut must not fire. No selection → silent no-op.
 		ev.preventDefault();
 		dupSelected();
-	} else if ((ev.ctrlKey || ev.metaKey) && (ev.key.toLowerCase() === "y" || (ev.key.toLowerCase() === "z" && ev.shiftKey)) && !editing) {
+	} else if (
+		(ev.ctrlKey || ev.metaKey) &&
+		(ev.key.toLowerCase() === "y" ||
+			(ev.key.toLowerCase() === "z" && ev.shiftKey)) &&
+		!editing
+	) {
 		// Ctrl+Y / Ctrl+Shift+Z: redo. Checked before plain Ctrl+Z because
 		// Shift+Z reports key "Z", which toLowerCase would also match below.
 		ev.preventDefault();
 		redo();
-	} else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z" && !editing) {
+	} else if (
+		(ev.ctrlKey || ev.metaKey) &&
+		ev.key.toLowerCase() === "z" &&
+		!editing
+	) {
 		ev.preventDefault();
 		undo();
 	} else if (ev.key === "Escape") {

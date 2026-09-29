@@ -1,5 +1,12 @@
 <script>
-let { column, parentName, onEdit, tableId = null, onConnectStart = null, onOpenRelationship = null } = $props();
+let {
+	column,
+	parentName,
+	onEdit,
+	tableId = null,
+	onConnectStart = null,
+	onOpenRelationship = null,
+} = $props();
 </script>
 
 <div class="row">

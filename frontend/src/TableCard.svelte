@@ -26,7 +26,14 @@ import {
 } from "./schema.svelte.js";
 import TableIndexModal from "./TableIndexModal.svelte";
 
-let { table, onDragStart, nameById, referenced, onConnectStart = null, onOpenRelationship = null } = $props();
+let {
+	table,
+	onDragStart,
+	nameById,
+	referenced,
+	onConnectStart = null,
+	onOpenRelationship = null,
+} = $props();
 
 // FK target names + junction membership arrive as props, hoisted once per
 // schema identity in App.svelte (canvasView.js): rebuilding them per card per

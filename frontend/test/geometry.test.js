@@ -6,13 +6,13 @@ import {
 	BOX_W,
 	boxHeight,
 	cardinality,
+	columnAnchor,
 	edgePaths,
 	GAP,
 	HDR_H,
 	ROW_CENTER,
 	ROW_H,
 	stackStep,
-	columnAnchor,
 } from "../src/geometry.js";
 
 import { GT as tab } from "./fixtures.js";

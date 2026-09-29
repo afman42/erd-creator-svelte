@@ -1634,7 +1634,9 @@ test("toolbar zoom controls step the readout and clamp at the limits", async ({
 	await expect(level).toHaveText("75%");
 });
 
-test("Ctrl+D duplicates the selected table; Ctrl+Shift+Z redoes an undo", async ({ page }) => {
+test("Ctrl+D duplicates the selected table; Ctrl+Shift+Z redoes an undo", async ({
+	page,
+}) => {
 	await page.goto("/");
 	await selectTable(page, 0);
 	await page.keyboard.press("Control+d");
@@ -1649,17 +1651,27 @@ test("Ctrl+D duplicates the selected table; Ctrl+Shift+Z redoes an undo", async 
 
 test("Arrange layouts scattered tables in one undo step", async ({ page }) => {
 	await page.goto("/");
-	await page.getByRole("group", { name: "Create" }).getByRole("button", { name: "+ Table" }).click();
+	await page
+		.getByRole("group", { name: "Create" })
+		.getByRole("button", { name: "+ Table" })
+		.click();
 	await expect(page.locator(".tname")).toHaveCount(2);
 	// scatter the second card with a real drag so Arrange has something to
 	// move (fresh cards already sit on the layout grid = no-op flash)
-	const hdr = await page.locator("section.table").nth(1).locator(".hdr").boundingBox();
+	const hdr = await page
+		.locator("section.table")
+		.nth(1)
+		.locator(".hdr")
+		.boundingBox();
 	await page.mouse.move(hdr.x + 60, hdr.y + 10);
 	await page.mouse.down();
 	await page.mouse.move(hdr.x + 200, hdr.y + 100, { steps: 6 });
 	await page.mouse.up();
 	const scattered = await page.locator("section.table").nth(1).boundingBox();
-	await page.getByRole("group", { name: "Create" }).getByRole("button", { name: "Arrange" }).click();
+	await page
+		.getByRole("group", { name: "Create" })
+		.getByRole("button", { name: "Arrange" })
+		.click();
 	const arranged = await page.locator("section.table").nth(1).boundingBox();
 	expect(arranged).not.toEqual(scattered);
 	// one undo step covers Arrange (not the table add): Ctrl+Z restores
@@ -1672,16 +1684,23 @@ test("Arrange layouts scattered tables in one undo step", async ({ page }) => {
 	expect(undone).toEqual(scattered);
 });
 
-test("column dialog Add another creates two columns without reopening", async ({ page }) => {
+test("column dialog Add another creates two columns without reopening", async ({
+	page,
+}) => {
 	await page.goto("/");
 	const dlg = await openCol(page, 0, 0);
 	await dlg.getByRole("button", { name: "add another column" }).click();
-	await expect(page.locator("section.table").first().locator(".row")).toHaveCount(2);
+	await expect(
+		page.locator("section.table").first().locator(".row"),
+	).toHaveCount(2);
 	await closeCol(dlg);
 	await expect(page.locator("section.table").first()).toContainText("column");
 });
 
-test("connect-drag wires a 1:N FK between two tables", async ({ page, request }) => {
+test("connect-drag wires a 1:N FK between two tables", async ({
+	page,
+	request,
+}) => {
 	await seedTwoTables(request);
 	await page.goto("/");
 	await expect(page.locator(".tname")).toHaveCount(2);
@@ -1692,13 +1711,18 @@ test("connect-drag wires a 1:N FK between two tables", async ({ page, request })
 	const to = await target.boundingBox();
 	await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
 	await page.mouse.down();
-	await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+	await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+		steps: 8,
+	});
 	await page.mouse.up();
 	await expect(page.locator("section.table").first()).toContainText("post_id");
 	await expect(page.locator("svg path.edge")).toHaveCount(1);
 });
 
-test("connect-drag onto the same table flashes without mutating", async ({ page, request }) => {
+test("connect-drag onto the same table flashes without mutating", async ({
+	page,
+	request,
+}) => {
 	await seedTwoTables(request);
 	await page.goto("/");
 	const before = await page.locator(".row").count();
@@ -1709,9 +1733,13 @@ test("connect-drag onto the same table flashes without mutating", async ({ page,
 	const to = await target.boundingBox();
 	await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
 	await page.mouse.down();
-	await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+	await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+		steps: 8,
+	});
 	await page.mouse.up();
-	await expect(page.getByTestId("toast")).toContainText("child and parent must be distinct tables");
+	await expect(page.getByTestId("toast")).toContainText(
+		"child and parent must be distinct tables",
+	);
 	await expect(page.locator(".row")).toHaveCount(before);
 });
 

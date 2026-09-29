@@ -142,7 +142,7 @@ export function boxHeight(nColumns) {
 export function columnAnchor(t, colIndex) {
 	return { x: t.x + BOX_W, y: t.y + HDR_H + colIndex * ROW_H + ROW_CENTER };
 }
- // ---- single-source card metrics for the stylesheets ----
+// ---- single-source card metrics for the stylesheets ----
 //
 // TableCard.svelte / ColumnRow.svelte size the real box from these values via
 // --card-* custom properties written by applyCardMetrics() (a Svelte-compiled

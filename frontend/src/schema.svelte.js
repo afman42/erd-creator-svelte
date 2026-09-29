@@ -22,8 +22,8 @@ import { CANVAS_ORIGIN, DUP_OFFSET, lowestY, snapCoord } from "./geometry.js";
 import {
 	depth as depthHistory,
 	dropLast as dropHistory,
-	redo as redoHistory,
 	redoDepth as redoDepthHistory,
+	redo as redoHistory,
 	setSnapHook as setSnapHookHistory,
 	snap as snapHistory,
 	undo as undoHistory,
@@ -75,7 +75,7 @@ export const store = $state({
 	// Reactive mirror of the history.js redo stack — drives the Toolbar Redo
 	// disabled state. Synced everywhere undoDepth is.
 	redoDepth: 0,
- });
+});
 layout(store.schema);
 
 // ---- server round-trips (debounced; local-first, banner on error) ----
