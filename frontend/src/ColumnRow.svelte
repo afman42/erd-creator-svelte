@@ -1,5 +1,5 @@
 <script>
-let { column, parentName, onEdit } = $props();
+let { column, parentName, onEdit, tableId = null, onConnectStart = null, onOpenRelationship = null } = $props();
 </script>
 
 <div class="row">
@@ -15,12 +15,28 @@ let { column, parentName, onEdit } = $props();
 	{#if column.ref}
 		<span class="fkinfo" title="→ {parentName ?? '?'}">→{parentName ?? "?"}</span>
 	{/if}
+	{#if onConnectStart}
+		<button
+			class="conn"
+			title="drag to another table to wire a 1:N foreign key"
+			aria-label="connect {column.name} to another table"
+			data-testid="connect-handle"
+			onpointerdown={(e) => onConnectStart?.(tableId, column.id, e)}
+			onkeydown={(e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					onOpenRelationship?.();
+				}
+			}}
+		>⤳</button>
+	{/if}
 	<button class="edit" title="edit column" aria-label="edit {column.name}" onclick={onEdit}>✎</button>
 </div>
 <div class="cmt" title={column.comment || undefined}>{column.comment}</div>
 
 <style>
 	.row {
+		position: relative;
 		display: flex;
 		align-items: center;
 		/* gap 2px: the 44px ✎ (S4) added 28px to the row budget, pushing the
@@ -30,6 +46,32 @@ let { column, parentName, onEdit } = $props();
 		padding: 1px 2px;
 		height: var(--card-row);
 		box-sizing: border-box;
+	}
+	.row .conn {
+		position: absolute;
+		left: 0;
+		top: 50%;
+		transform: translateY(-50%);
+		display: none;
+		width: 44px;
+		height: 44px;
+		margin: -9px 0 -9px -2px;
+		background: var(--color-surface);
+		color: var(--color-flag);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		cursor: grab;
+		font-size: 14px;
+		padding: 0;
+	}
+	.row:hover .conn,
+	.row:focus-within .conn {
+		display: block;
+	}
+	.row .conn:focus-visible {
+		display: block;
+		outline: 1px solid var(--color-focus);
+		outline-offset: 1px;
 	}
 	.row:hover {
 		outline: 1px solid var(--color-border);

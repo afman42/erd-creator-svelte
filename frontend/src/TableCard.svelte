@@ -26,7 +26,7 @@ import {
 } from "./schema.svelte.js";
 import TableIndexModal from "./TableIndexModal.svelte";
 
-let { table, onDragStart, nameById, referenced } = $props();
+let { table, onDragStart, nameById, referenced, onConnectStart = null, onOpenRelationship = null } = $props();
 
 // FK target names + junction membership arrive as props, hoisted once per
 // schema identity in App.svelte (canvasView.js): rebuilding them per card per
@@ -74,6 +74,7 @@ function cardMetricsAttachment(el) {
 <section
 	class="table"
 	class:selected={store.selected === table.id}
+	data-table-id={table.id}
 	{@attach cardMetricsAttachment}
 	style="left:{table.x}px; top:{table.y}px"
 	title={table.comment || undefined}
@@ -145,6 +146,9 @@ function cardMetricsAttachment(el) {
 			column={c}
 			parentName={parentName(c)}
 			onEdit={() => (editingColId = c.id)}
+			tableId={table.id}
+			{onConnectStart}
+			{onOpenRelationship}
 		/>
 	{/each}
 	<button class="addcol" onclick={() => addColumn(table)}>+ column</button>

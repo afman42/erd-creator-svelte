@@ -132,7 +132,17 @@ export const EDGE_LANE = 88;
 export function boxHeight(nColumns) {
 	return HDR_H + nColumns * ROW_H + ADDCOL_H + BORDER_H;
 }
-// ---- single-source card metrics for the stylesheets ----
+// columnAnchor returns the FK-edge source point for a column row: right edge
+// of the card, vertical center of the row. Shared by edgePaths anchors and
+// the connect-drag ghost line so the preview starts where the edge will.
+/**
+ * @param {{ x: number, y: number }} t
+ * @param {number} colIndex
+ */
+export function columnAnchor(t, colIndex) {
+	return { x: t.x + BOX_W, y: t.y + HDR_H + colIndex * ROW_H + ROW_CENTER };
+}
+ // ---- single-source card metrics for the stylesheets ----
 //
 // TableCard.svelte / ColumnRow.svelte size the real box from these values via
 // --card-* custom properties written by applyCardMetrics() (a Svelte-compiled

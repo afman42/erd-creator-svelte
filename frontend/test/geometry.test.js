@@ -12,6 +12,7 @@ import {
 	ROW_CENTER,
 	ROW_H,
 	stackStep,
+	columnAnchor,
 } from "../src/geometry.js";
 
 import { GT as tab } from "./fixtures.js";
@@ -558,4 +559,11 @@ test("edgePaths: a lone edge keeps its exact previous geometry", () => {
 	const [e] = edgePaths({ tables: [parent, child] });
 	assert.equal(e.d, "M 280 51 C 390 51, 390 54, 500 54");
 	assert.equal(e.arrowAtStart, false);
+});
+
+test("columnAnchor sits on the card right edge at the column row center", () => {
+	const t = { x: 100, y: 50, columns: [{}, {}, {}] };
+	const a = columnAnchor(t, 1);
+	assert.equal(a.x, 100 + BOX_W);
+	assert.equal(a.y, 50 + HDR_H + 1 * ROW_H + ROW_CENTER);
 });

@@ -13,6 +13,7 @@ import {
 } from "./canvasView.js";
 import EmptyState from "./EmptyState.svelte";
 import {
+	columnAnchor,
 	EDGE_SELF_STROKE,
 	EDGE_SELF_STROKE_LIGHT,
 	EDGE_STROKE,
@@ -33,8 +34,10 @@ import LintPanel from "./LintPanel.svelte";
 import RelationshipModal from "./RelationshipModal.svelte";
 import SqlPanel from "./SqlPanel.svelte";
 import {
+	addRelationship,
 	addTableAt,
 	dupSelected,
+	flash,
 	redo,
 	refreshSql,
 	rmTable,
@@ -236,7 +239,57 @@ function onDbl(ev) {
 		(ev.clientY - r.top + canvasEl.scrollTop) / zoom,
 	);
 }
- function onMove(ev) {
+// Connect-drag: pointerdown on a column handle arms { childId, colId },
+// moves update the pointer end, pointerup on another card commits a 1:N via
+// the existing creator (type inference, naming, single snap all reused).
+// Transient view state: never enters the schema or undo. Aborted (Esc /
+// empty-canvas release / no movement) → no mutation, no snap.
+/** @type {{ childId: string, colId: string, x0: number, y0: number, x1: number, y1: number, x2: number, y2: number } | null} */
+let connect = $state(null);
+/** Canvas-relative model coords for a client pointer (zoom-aware). */
+function toModel(ev) {
+	const r = canvasEl.getBoundingClientRect();
+	return {
+		x: (ev.clientX - r.left + canvasEl.scrollLeft) / zoom,
+		y: (ev.clientY - r.top + canvasEl.scrollTop) / zoom,
+	};
+}
+/** @param {string} childId @param {string} colId @param {PointerEvent} ev */
+function beginConnect(childId, colId, ev) {
+	if (ev.button !== 0 || !canvasEl) return;
+	const t = store.schema.tables.find((x) => x.id === childId);
+	if (!t) return;
+	const idx = t.columns.findIndex((c) => c.id === colId);
+	if (idx < 0) return;
+	const a = columnAnchor(t, idx);
+	const m = toModel(ev);
+	connect = { childId, colId, x0: ev.clientX, y0: ev.clientY, x1: a.x, y1: a.y, x2: m.x, y2: m.y };
+	ev.preventDefault();
+}
+function moveConnect(ev) {
+	if (!connect || !canvasEl) return;
+	const m = toModel(ev);
+	connect.x2 = m.x;
+	connect.y2 = m.y;
+}
+function endConnect(ev) {
+	if (!connect) return;
+	const c = connect;
+	connect = null;
+	// Press-and-release without drag must not create an edge when the pointer
+	// happens to be over another card — require the 4px click threshold.
+	if (!pastClickThreshold({ x0: c.x0, y0: c.y0 }, ev)) return;
+	const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest("section.table");
+	const parentId = el?.dataset?.tableId ?? null;
+	if (!parentId) return; // dropped on empty canvas: abort, no snap
+	if (parentId === c.childId) {
+		flash("child and parent must be distinct tables", "err");
+		return;
+	}
+	addRelationship(c.childId, parentId, "1:N");
+}
+function onMove(ev) {
+	if (connect) { moveConnect(ev); return; }
 	if (pan && canvasEl) {
 		if (!pan.moved && !pastClickThreshold(pan, ev)) return;
 		if (!pan.moved) {
@@ -289,9 +342,9 @@ function onWheel(ev) {
 	ev.preventDefault();
 	setZoom(zoom - Math.sign(ev.deltaY) * 0.1);
 }
-function onUp() {
+function onUp(ev) {
+	if (connect) { endConnect(ev); return; }
 	if (pan) pan = null;
-	if (!drag) return;
 	// Fix A: flush the pending frame synchronously so the card and its arrow
 	// land together — otherwise the last pointermove's delta is dropped by the
 	// cancel and the arrow sits one step off the released card.
@@ -339,8 +392,10 @@ function onKey(ev) {
 	} else if ((ev.ctrlKey || ev.metaKey) && ev.key === "z" && !editing) {
 		ev.preventDefault();
 		undo();
-	} else if (ev.key === "Escape") setSelected(null);
-	else if (
+	} else if (ev.key === "Escape") {
+		if (connect) connect = null;
+		else setSelected(null);
+	} else if (
 		!editing &&
 		["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(ev.key)
 	) {
@@ -497,7 +552,18 @@ function onKey(ev) {
 								stroke-width={LABEL_HALO_WIDTH}
 							>{e.to.text}</text>
 			{/each}
-		</svg>
+			{#if connect}
+				<line
+					x1={connect.x1}
+					y1={connect.y1}
+					x2={connect.x2}
+					y2={connect.y2}
+					stroke={dark ? EDGE_STROKE : EDGE_STROKE_LIGHT}
+					stroke-width={EDGE_STROKE_WIDTH}
+					stroke-dasharray="6 4"
+				/>
+			{/if}
+ 		</svg>
 		<!-- Text alternative for the edge SVG above (aria-hidden): screen
 		     readers get the same relationships as a list instead of raw
 		     path/text nodes. -->
@@ -507,7 +573,7 @@ function onKey(ev) {
 			{/each}
 		</ul>
 		{#each store.schema.tables as t (t.id)}
-			<TableCard table={t} onDragStart={startDrag} {nameById} {referenced} />
+			<TableCard table={t} onDragStart={startDrag} {nameById} {referenced} onConnectStart={beginConnect} onOpenRelationship={() => (showRelationship = true)} />
 		{/each}
 		{#if store.schema.tables.length === 0}
 			<EmptyState />
