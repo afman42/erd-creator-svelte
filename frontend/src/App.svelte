@@ -345,6 +345,7 @@ function onWheel(ev) {
 function onUp(ev) {
 	if (connect) { endConnect(ev); return; }
 	if (pan) pan = null;
+	if (!drag) return;
 	// Fix A: flush the pending frame synchronously so the card and its arrow
 	// land together — otherwise the last pointermove's delta is dropped by the
 	// cancel and the arrow sits one step off the released card.
@@ -365,6 +366,14 @@ function onUp(ev) {
 		announce = `${t.name} moved to ${t.x}, ${t.y}`;
 	}
 }
+// pointercancel (touch takeover, alert, pen) must abort, never commit: clear
+// the transient gesture state with no schema write and no snap.
+function onCancel() {
+	connect = null;
+	drag = null;
+	dragPending = null;
+	pan = null;
+}
 function onKey(ev) {
 	// The column dialog owns the keyboard while it is open. Without this, a
 	// focused <button> inside it is not INPUT/SELECT/TEXTAREA, so `editing` is
@@ -384,12 +393,12 @@ function onKey(ev) {
 		// bookmark shortcut must not fire. No selection → silent no-op.
 		ev.preventDefault();
 		dupSelected();
-	} else if ((ev.ctrlKey || ev.metaKey) && (ev.key === "y" || (ev.key.toLowerCase() === "z" && ev.shiftKey)) && !editing) {
+	} else if ((ev.ctrlKey || ev.metaKey) && (ev.key.toLowerCase() === "y" || (ev.key.toLowerCase() === "z" && ev.shiftKey)) && !editing) {
 		// Ctrl+Y / Ctrl+Shift+Z: redo. Checked before plain Ctrl+Z because
 		// Shift+Z reports key "Z", which toLowerCase would also match below.
 		ev.preventDefault();
 		redo();
-	} else if ((ev.ctrlKey || ev.metaKey) && ev.key === "z" && !editing) {
+	} else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z" && !editing) {
 		ev.preventDefault();
 		undo();
 	} else if (ev.key === "Escape") {
@@ -432,7 +441,7 @@ function onKey(ev) {
 }
 </script>
 
-<svelte:window onpointermove={onMove} onpointerup={onUp} onkeydown={onKey} />
+<svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={onCancel} onkeydown={onKey} />
 
 <Toolbar
 	showSql={showSql}
@@ -561,6 +570,7 @@ function onKey(ev) {
 					stroke={dark ? EDGE_STROKE : EDGE_STROKE_LIGHT}
 					stroke-width={EDGE_STROKE_WIDTH}
 					stroke-dasharray="6 4"
+					pointer-events="none"
 				/>
 			{/if}
  		</svg>

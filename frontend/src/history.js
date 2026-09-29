@@ -65,17 +65,18 @@ export function dropLast() {
 }
 
 /**
- * @param {unknown} [current] the schema being left; pushed onto redo so
- * redo() can restore it. Optional so existing no-arg callers keep working
- * (they just record no redo).
+ * @param {unknown} [current] the schema being left; pushed onto redo only
+ * when an entry is actually restored, so an empty/corrupt stack records no
+ * phantom redo. Optional so existing no-arg callers keep working.
  */
 export function undo(current) {
-	if (current !== undefined) pushRedo(JSON.stringify(current));
 	while (stack.length) {
 		// length checked above, so pop() is defined — the ?? guards the type only.
 		const raw = stack.pop() ?? "";
 		try {
-			return adoptIds(JSON.parse(raw));
+			const schema = adoptIds(JSON.parse(raw));
+			if (current !== undefined) pushRedo(JSON.stringify(current));
+			return schema;
 		} catch (e) {
 			console.debug("undo skip corrupt snapshot", e);
 		}

@@ -74,13 +74,11 @@ string.
 ## Features
 
 - **Canvas** — add/rename/delete/duplicate tables (⧉), drag by header, `Del`
-  deletes selection, `Ctrl+Z` undo, auto-layout by FK depth on file open.
-  The layout adds a barycenter pass: each layer is ordered by its parents'
-  mean position in the previous layer, so edges hug their tables instead of
-  crossing (layer 0 and unparented tables keep input order).
-  New tables auto-name `table1`, `table2`, … and duplicates `users_copy`,
-  `users_copy2`, …; undo history is per-file, so `Ctrl+Z` never restores a
-  schema across a file switch
+  deletes selection, `Ctrl+Z` undo, `Ctrl+Shift+Z` / `Ctrl+Y` redo, `Ctrl+D`
+  duplicate, Arrange re-runs FK-depth auto-layout, double-click empty canvas
+  adds a table, auto-layout by FK depth on file open. Undo history is
+  per-file: switching files resets both stacks, so `Ctrl+Z` never restores a
+  schema across a file switch.
 - **Columns** — each column is a read-only row: name, type, active flag badges,
   the FK target, and a ✎ button that opens the edit dialog. The dialog holds
   name, type (`INT…JSON`, `ENUM` with editable values), the `PK` (composite
@@ -89,8 +87,9 @@ string.
   `'active'`, `CURRENT_TIMESTAMP` or `(uuid())`, allowlist-validated
   server-side like the type — semicolons only inside quotes, comments
   refused), the comment, ↑/↓ to reorder the column (the column list order IS
-  the DDL order, so moving one changes what every emitter writes), and
-  Remove. It is a native `<dialog>`, so
+  the DDL order, so moving one changes what every emitter writes),
+  Remove, and Add another (commits the column and starts a fresh one without
+  closing the dialog). It is a native `<dialog>`, so
   Escape closes it and focus is trapped while it is open. (The ten controls used
   to sit inline in a 280px row, where they needed ~342px and clipped; the row's
   26px height and the comment line's 16px are unchanged, so FK edge anchors are
@@ -136,7 +135,8 @@ string.
 
   The toolbar's **`+ Relationship`** button offers the three canonical types as
   a single gesture instead of hand-setting flags: pick a child (referencing)
-  table, a parent (referenced) table, and a type.
+  table, a parent (referenced) table, and a type. Dragging a column's ⤳ handle
+  onto another card is the 1:N shortcut (same-table drops are refused).
   **`1:1`** appends the FK column and writes `UQ` + `NOT NULL`, so the pair
   renders `0..1 / 1..1`; **`1:N`** writes `NOT NULL` only, rendering
   `0..N / 1..1`. **`N:N`** creates a junction table named `<A>_<B>` whose

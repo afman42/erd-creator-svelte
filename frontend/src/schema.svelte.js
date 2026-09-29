@@ -306,6 +306,7 @@ function commitCreate(fn) {
 	if (!r?.ok) {
 		dropHistory();
 		store.undoDepth = depthHistory();
+		store.redoDepth = redoDepthHistory();
 		flash(r?.error ?? "could not create relationship", "err");
 		return false;
 	}
