@@ -2,6 +2,7 @@
 import { DEFAULT_SQLITE_TYPES, DIALECTS, SQLITE_TYPES } from "./erd.js";
 import {
 	addTable,
+	arrangeSchema,
 	copyInserts,
 	copySql,
 	deleteFile,
@@ -11,6 +12,7 @@ import {
 	exportSvg,
 	newFile,
 	openFile,
+	redo,
 	renameFile,
 	saveCurrent,
 	setDialect,
@@ -76,6 +78,8 @@ function jumpToTable() {
 			title="Create a 1:1, 1:N or N:N relationship between two tables"
 		>+ Relationship</button>
 		<button onclick={undo} disabled={!store.undoDepth} aria-label="Undo" title="Undo (Ctrl+Z)">Undo</button>
+		<button onclick={redo} disabled={!store.redoDepth} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+		<button onclick={arrangeSchema} disabled={store.schema.tables.length < 1} aria-label="Arrange tables" title="Auto-layout tables by FK depth">Arrange</button>
 	</div>
 	<div class="grp" role="group" aria-label="File">
 		<label class="sr-only" for="file-select">Open schema file</label>

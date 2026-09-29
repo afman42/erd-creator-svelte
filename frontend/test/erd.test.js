@@ -1107,3 +1107,28 @@ test("captureRoot targets the zoom layer when present", () => {
 	assert.equal(captureRoot(bare), bare);
 	assert.equal(captureRoot(null), null);
 });
+
+test("layout is idempotent — second run moves nothing (arrange no-op guard premise)", () => {
+	const s = newSchema("mysql", [newTable("users"), newTable("posts")]);
+	s.tables[0].columns.push({
+		id: "c9",
+		name: "post_id",
+		type: "INT",
+		pk: false,
+		nn: true,
+		ai: false,
+		ux: false,
+		ix: false,
+		comment: "",
+		default: "",
+		ref: { tableId: s.tables[1].id, action: "CASCADE", onUpdate: "" },
+	});
+	layout(s);
+	const after1 = s.tables.map((t) => `${t.x},${t.y}`).join("|");
+	layout(s);
+	assert.equal(
+		s.tables.map((t) => `${t.x},${t.y}`).join("|"),
+		after1,
+		"layout must be a fixed point or Arrange would never report no-op",
+	);
+});

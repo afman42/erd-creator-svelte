@@ -87,6 +87,7 @@ async function flushCurrent(store, flash) {
 function resetUndo(store) {
 	clearHistory();
 	store.undoDepth = 0;
+	store.redoDepth = 0;
 }
 
 /**

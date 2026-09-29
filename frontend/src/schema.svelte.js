@@ -18,10 +18,12 @@ import {
 	shiftColumn,
 	uniqName,
 } from "./erd.js";
-import { CANVAS_ORIGIN, DUP_OFFSET, lowestY } from "./geometry.js";
+import { CANVAS_ORIGIN, DUP_OFFSET, lowestY, snapCoord } from "./geometry.js";
 import {
 	depth as depthHistory,
 	dropLast as dropHistory,
+	redo as redoHistory,
+	redoDepth as redoDepthHistory,
 	setSnapHook as setSnapHookHistory,
 	snap as snapHistory,
 	undo as undoHistory,
@@ -70,7 +72,10 @@ export const store = $state({
 	// Reactive mirror of the history.js stack depth — drives the Toolbar Undo
 	// disabled state. Synced in snap()/undo() below and on clearHistory sites.
 	undoDepth: 0,
-});
+	// Reactive mirror of the history.js redo stack — drives the Toolbar Redo
+	// disabled state. Synced everywhere undoDepth is.
+	redoDepth: 0,
+ });
 layout(store.schema);
 
 // ---- server round-trips (debounced; local-first, banner on error) ----
@@ -122,18 +127,27 @@ export function touch(showSql) {
 	touchAutosave(showSql, { store, refreshLint, refreshSql, saveCurrent });
 }
 
-// ---- undo (client-only, JSON snapshots) ----
 export function snap() {
 	snapHistory(store.schema);
 	store.undoDepth = depthHistory();
+	store.redoDepth = redoDepthHistory();
 }
 export function undo() {
-	const prev = undoHistory();
+	const prev = undoHistory(store.schema);
 	// Sync even on null: undo() drains corrupt entries, so depth can move
 	// while returning nothing.
 	store.undoDepth = depthHistory();
+	store.redoDepth = redoDepthHistory();
 	if (!prev) return;
 	store.schema = prev;
+	store.selected = null;
+}
+export function redo() {
+	const next = redoHistory(store.schema);
+	store.undoDepth = depthHistory();
+	store.redoDepth = redoDepthHistory();
+	if (!next) return;
+	store.schema = next;
 	store.selected = null;
 }
 
@@ -161,17 +175,62 @@ function dupOf(list, name, self, key = (x) => x.name) {
 	const v = name.toLowerCase();
 	return list.some((x) => x !== self && key(x).toLowerCase() === v);
 }
+/**
+ * @param {number} x model x (snapped, clamped ≥ 0)
+ * @param {number} y model y (snapped, clamped ≥ 0)
+ */
+function pushTable(x, y) {
+	store.schema.tables.push(
+		Object.assign(newTable(uniqName("table1", takenNames())), {
+			x: snapCoord(Math.max(0, x)),
+			y: snapCoord(Math.max(0, y)),
+		}),
+	);
+}
 export function addTable() {
 	snap();
 	// Place the new card one full stack step below the lowest existing card,
 	// via lowestY() — the same arithmetic layout()/createManyToMany use.
-	const y = lowestY(store.schema.tables);
-	store.schema.tables.push(
-		Object.assign(newTable(uniqName("table1", takenNames())), {
-			x: CANVAS_ORIGIN.x,
-			y,
-		}),
+	pushTable(CANVAS_ORIGIN.x, lowestY(store.schema.tables));
+}
+/**
+ * @param {number} x model x from the double-click point
+ * @param {number} y model y from the double-click point
+ */
+export function addTableAt(x, y) {
+	snap();
+	pushTable(x, y);
+}
+export function dupSelected() {
+	const t = store.schema.tables.find((x) => x.id === store.selected);
+	if (!t) return; // no-op: no snap, Ctrl+D with no selection is silent
+	dupTable(t);
+}
+/** Re-run FK-depth auto-layout as one undo step; no-op flashes, snaps nothing. */
+export function arrangeSchema() {
+	if (!store.schema.tables.length) {
+		flash("nothing to arrange", "warn");
+		return false;
+	}
+	const before = new Map(
+		store.schema.tables.map((t) => [t.id, `${t.x},${t.y}`]),
 	);
+	snap();
+	layout(store.schema);
+	const same = store.schema.tables.every(
+		(t) => before.get(t.id) === `${t.x},${t.y}`,
+	);
+	if (same) {
+		// dropLast restores the redo snap() cleared: a no-op arrange is not an edit.
+		dropHistory();
+		store.undoDepth = depthHistory();
+		store.redoDepth = redoDepthHistory();
+		flash("already arranged", "warn");
+		return false;
+	}
+	store.undoDepth = depthHistory();
+	store.redoDepth = redoDepthHistory();
+	return true;
 }
 /**
  * @param {Table} t

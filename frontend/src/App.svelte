@@ -33,6 +33,9 @@ import LintPanel from "./LintPanel.svelte";
 import RelationshipModal from "./RelationshipModal.svelte";
 import SqlPanel from "./SqlPanel.svelte";
 import {
+	addTableAt,
+	dupSelected,
+	redo,
 	refreshSql,
 	rmTable,
 	setSelected,
@@ -220,7 +223,20 @@ function startPan(ev) {
 	};
 	ev.preventDefault();
 }
-function onMove(ev) {
+ // Double-click empty canvas adds a table at the point. Card/dialog/button/
+ // input presses are excluded via closest(); the 4px click threshold does not
+ // apply — dblclick fires only when the press did not drag.
+/** @param {MouseEvent} ev */
+function onDbl(ev) {
+	if (!canvasEl) return;
+	if (ev.target.closest("section.table, dialog, button, input, select, textarea")) return;
+	const r = canvasEl.getBoundingClientRect();
+	addTableAt(
+		(ev.clientX - r.left + canvasEl.scrollLeft) / zoom,
+		(ev.clientY - r.top + canvasEl.scrollTop) / zoom,
+	);
+}
+ function onMove(ev) {
 	if (pan && canvasEl) {
 		if (!pan.moved && !pastClickThreshold(pan, ev)) return;
 		if (!pan.moved) {
@@ -310,6 +326,16 @@ function onKey(ev) {
 	if ((ev.key === "Delete" || ev.key === "Backspace") && !editing) {
 		const t = store.schema.tables.find((x) => x.id === store.selected);
 		if (t) rmTable(t);
+	} else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "d" && !editing) {
+		// Ctrl+D duplicates the selected table. preventDefault: the browser
+		// bookmark shortcut must not fire. No selection → silent no-op.
+		ev.preventDefault();
+		dupSelected();
+	} else if ((ev.ctrlKey || ev.metaKey) && (ev.key === "y" || (ev.key.toLowerCase() === "z" && ev.shiftKey)) && !editing) {
+		// Ctrl+Y / Ctrl+Shift+Z: redo. Checked before plain Ctrl+Z because
+		// Shift+Z reports key "Z", which toLowerCase would also match below.
+		ev.preventDefault();
+		redo();
 	} else if ((ev.ctrlKey || ev.metaKey) && ev.key === "z" && !editing) {
 		ev.preventDefault();
 		undo();
@@ -377,6 +403,7 @@ function onKey(ev) {
 		aria-label="ERD canvas. Drag empty space to pan; arrow keys pan when no table is selected."
 		onwheel={onWheel}
 		onpointerdown={startPan}
+		ondblclick={onDbl}
 		style="touch-action: pan-x pan-y pinch-zoom"
 	>
 		<!-- Inline style= here is a Svelte-compiled el.style.setProperty() call,
