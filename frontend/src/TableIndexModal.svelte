@@ -63,8 +63,9 @@ function shownName(ix) {
 }
 </script>
 
-<dialog bind:this={dlg} onclose={onClose} class="modal idxedit">
-	<h2>{table.name} · table</h2>
+<dialog bind:this={dlg} onclose={onClose} class="modal idxedit" aria-labelledby="idxedit-title" aria-describedby="idxedit-desc">
+	<h2 id="idxedit-title">{table.name} · table</h2>
+	<p id="idxedit-desc" class="sr-only">Edit the table comment and composite indexes. Press Escape to close.</p>
 
 	<!-- The table-level dialog hosts the table comment too: it is the one
 	     place a property of the TABLE (not a column) can be edited without
@@ -114,7 +115,7 @@ function shownName(ix) {
 					>
 				{/each}
 			</fieldset>
-			<button class="rmix" onclick={() => rmIndex(table, ix)}>Remove index</button>
+			<button class="rmix" onclick={() => rmIndex(table, ix)} title="Remove index (undo with Ctrl+Z)">Remove index</button>
 		</div>
 	{/each}
 

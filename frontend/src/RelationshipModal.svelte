@@ -112,9 +112,9 @@ function create() {
 			type="button"
 			class="swap"
 			onclick={swap}
-			title="Swap tables"
+			title="Swap child and parent tables"
 			aria-label="Swap child and parent tables"
-		>⇅</button>
+		>⇅<span class="sr-only">Swap tables</span></button>
 
 		<label class="fld">
 			<span>{type === "N:N" ? "Table B" : "Parent · one"}</span>

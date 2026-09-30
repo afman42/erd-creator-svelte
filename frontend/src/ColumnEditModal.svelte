@@ -128,8 +128,9 @@ function remove() {
 }
 </script>
 
-<dialog bind:this={dlg} onclose={onClose} class="modal coledit">
-	<h2>{table.name} · column</h2>
+<dialog bind:this={dlg} onclose={onClose} class="modal coledit" aria-labelledby="coledit-title" aria-describedby="coledit-desc">
+	<h2 id="coledit-title">{table.name} · column</h2>
+	<p id="coledit-desc" class="sr-only">Edit column properties. Press Escape to close without losing changes; edits apply live.</p>
 	<!-- Inline field errors (S8): the same failures flash() toasts now also
 	     anchor to the field — the toast stays for AT users, the <p> pins the
 	     recovery hint where the eye is. Local view state, cleared on close. -->
@@ -329,7 +330,7 @@ function remove() {
 		{#if onAddAnother}
 			<button class="another" onclick={onAddAnother} aria-label="add another column" title="Keep this column and start a new one">Add another</button>
 		{/if}
-		<button class="rmcol" onclick={remove}>Remove column</button>
+		<button class="rmcol" onclick={remove} title="Remove column (undo with Ctrl+Z)">Remove column</button>
 		<button class="done" onclick={() => dlg?.close()}>Done</button>
  	</footer>
 </dialog>
