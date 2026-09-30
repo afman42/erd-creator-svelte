@@ -82,6 +82,7 @@ func main() {
 	// Listen explicitly rather than http.ListenAndServe so the log line can
 	// report the port actually bound — with -port 0 that is the only way to
 	// learn it — and so a bind failure is reported once, with the address.
+	//nolint:noctx // startup listener, no request context exists yet
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("listen failed", "addr", addr, "error", err)

@@ -144,7 +144,8 @@ func TestFailPrefixesUnified(t *testing.T) {
 		t.Errorf("inserts invalid schema: %d %q", insRec.Code, insRec.Body.String())
 	}
 	expRec := do(t, http.HandlerFunc(handleExport), "POST", "/export", strings.NewReader(
-		`{"dialect":"mysql","schema":{"tables":[{"id":"t1","name":"t","columns":[{"name":"a","type":"VARCHAR(1;DROP)"}]}]}}`))
+		`{"dialect":"mysql","schema":{"tables":[{"id":"t1","name":"t","columns":[{"name":"a","type":"VARCHAR(1;DROP)"}]}]}}`,
+	))
 	if expRec.Code != http.StatusBadRequest || !strings.HasPrefix(expRec.Body.String(), "invalid schema: ") {
 		t.Errorf("export invalid schema: %d %q", expRec.Code, expRec.Body.String())
 	}

@@ -28,6 +28,7 @@ const maxOpenFile = 8 << 20 // 8 MiB
 // error is returned for the caller to map (missing → 404, other → 500);
 // oversize is a plain bool so every site answers 413 identically.
 func statCapped(full string) (tooLarge bool, err error) {
+	//nolint:gosec // full is storePath-resolved inside the store root, never raw user input
 	fi, err := os.Stat(full)
 	if err != nil {
 		return false, err
@@ -241,6 +242,7 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 // fresh random name). Size is stat-checked by the caller and re-capped here
 // (LimitReader) so a concurrent grow cannot OOM the read.
 func copyFile(w http.ResponseWriter, dir, fromFull, toFull string) {
+	//nolint:gosec // fromFull is storePath-resolved inside the store root, never raw user input
 	src, err := os.Open(fromFull)
 	if err != nil {
 		internalFail(w, "copy failed", "copy open failed", "path", fromFull, "error", err)
@@ -288,7 +290,7 @@ func copyFile(w http.ResponseWriter, dir, fromFull, toFull string) {
 // low-cardinality template and args are structured slog attributes (paths,
 // errors) so log aggregation groups by message, not by value.
 // It generalizes the old copy-only copyFail to every store op.
-func internalFail(w http.ResponseWriter, msg string, logMsg string, args ...any) {
+func internalFail(w http.ResponseWriter, msg, logMsg string, args ...any) {
 	slog.Error(logMsg, args...)
 	http.Error(w, msg, http.StatusInternalServerError)
 }
@@ -354,6 +356,7 @@ func openFile(w http.ResponseWriter, full, name string) {
 		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+	//nolint:gosec // full is storePath-resolved inside the store root, never raw user input
 	f, err := os.Open(full)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -461,6 +464,7 @@ func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
 		internalFail(w, "save failed", "save close failed", "path", tmp.Name(), "error", err)
 		return
 	}
+	//nolint:gosec // full is storePath-resolved inside the store root, never raw user input
 	if err := os.Rename(tmp.Name(), full); err != nil {
 		removeTemp(tmp.Name())
 		internalFail(w, "save failed", "save rename failed", "from", tmp.Name(), "to", full, "error", err)
@@ -532,6 +536,7 @@ func trashPath(dir string) (string, error) {
 		// Doesn't exist yet: create it under the already-resolved root, so the
 		// new directory cannot be a link — then re-resolve to confirm what was
 		// actually created (a concurrently planted link fails closed here).
+		//nolint:gosec // td joins the resolved store root; MkdirAll under it cannot escape
 		if err := os.MkdirAll(td, 0o755); err != nil {
 			return "", fmt.Errorf("trash: %w", err)
 		}
@@ -573,6 +578,7 @@ func trashFile(dir, full, name string) error {
 	// Rename, which silently replaces it): no stat-then-rename TOCTOU where a
 	// link planted between the check and the rename eats the recycled file.
 	if err := os.Link(full, filepath.Join(td, name)); err == nil {
+		//nolint:gosec // full is storePath-resolved; td is trashPath-resolved inside the store
 		return os.Remove(full)
 	} else if !os.IsExist(err) {
 		// Cross-device/permission failures fall through to the plain-rename
@@ -592,6 +598,7 @@ func trashFile(dir, full, name string) error {
 			}
 			return plainRenameFallback(full, name, td)
 		}
+		//nolint:gosec // full is storePath-resolved; dst is trashPath-resolved inside the store
 		return os.Remove(full)
 	}
 	return fmt.Errorf("trash collision for %q", name)
@@ -601,6 +608,7 @@ func trashFile(dir, full, name string) error {
 // (cross-device, permissions): plain Rename onto the free name. Kept on the
 // link-failure path only, so the common case stays TOCTOU-free.
 func plainRenameFallback(full, name, td string) error {
+	//nolint:gosec // full is storePath-resolved; td is trashPath-resolved inside the store
 	if err := os.Rename(full, filepath.Join(td, name)); err == nil {
 		return nil
 	} else if !os.IsExist(err) {
@@ -616,6 +624,7 @@ func renameWithSuffix(full, name, td string) error {
 			return err
 		}
 		dst := filepath.Join(td, suffixed)
+		//nolint:gosec // dst is trashPath-resolved with a crypto-rand suffix, O_EXCL-claimed
 		claim, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			if os.IsExist(err) {
@@ -624,11 +633,12 @@ func renameWithSuffix(full, name, td string) error {
 			return err
 		}
 		if err := claim.Close(); err != nil {
-			_ = os.Remove(dst)
+			_ = os.Remove(dst) //nolint:gosec // dst is the O_EXCL-claimed trash path above
 			return err
 		}
+		//nolint:gosec // full is storePath-resolved; dst is the O_EXCL-claimed trash path
 		if err := os.Rename(full, dst); err != nil {
-			_ = os.Remove(dst)
+			_ = os.Remove(dst) //nolint:gosec // dst is the just-claimed trash path above
 			if os.IsNotExist(err) {
 				return err
 			}
@@ -683,5 +693,6 @@ func ensureDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("store dir: %w", err)
 	}
+	//nolint:gosec // abs is the operator-supplied -dir flag; the store must be creatable
 	return os.MkdirAll(abs, 0o755)
 }

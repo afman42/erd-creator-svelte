@@ -639,7 +639,7 @@ func lineExcerpt(line string) string {
 // buildMariaDB both emit. dialect records which of the two the file claimed, so
 // a mariadb file stays mariadb across a reopen instead of silently becoming
 // mysql; the parse itself is identical because the grammar is.
-func parseMysql(sql string, dialect string) (*Schema, []string, error) {
+func parseMysql(sql, dialect string) (*Schema, []string, error) {
 	p := newParserState(dialect)
 
 	lines := strings.Split(sql, "\n")

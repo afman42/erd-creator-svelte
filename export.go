@@ -279,7 +279,8 @@ func quotedCols(ix Index, q func(string) string) string {
 func fkConstraintLine(q func(string) string, t Table, c Col, rt Table, rp Col) string {
 	return fmt.Sprintf(
 		"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
-		q("fk_"+t.Name+"_"+c.Name), q(c.Name), q(rt.Name), q(rp.Name), fkAction(c), fkUpdateClause(c))
+		q("fk_"+t.Name+"_"+c.Name), q(c.Name), q(rt.Name), q(rp.Name), fkAction(c), fkUpdateClause(c),
+	)
 }
 
 // singleIndexLine renders one single-column index statement: inline KEY for
@@ -614,7 +615,8 @@ func buildSqlite(tables []Table, typesMode string) string {
 			}
 			lines = append(lines, fmt.Sprintf(
 				"  FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
-				quoteTick(c.Name), quoteTick(rt.Name), quoteTick(rp.Name), fkAction(c), fkUpdateClause(c)))
+				quoteTick(c.Name), quoteTick(rt.Name), quoteTick(rp.Name), fkAction(c), fkUpdateClause(c),
+			))
 		}
 		out = append(out, "CREATE TABLE "+quoteTick(t.Name)+" (\n"+strings.Join(lines, ",\n")+"\n);")
 		out = append(out, post...)

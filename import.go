@@ -214,9 +214,11 @@ func ParseImport(sql string) (*Schema, []string, error) {
 // impNoisePrefixes are dump directives with no model meaning: SET/USE/LOCK,
 // DROP, grants. INSERT/SELECT rows are data, skipped the same way. Package-
 // level so the slice is not reallocated on every line.
-var impNoisePrefixes = []string{"SET ", "USE ", "LOCK ", "UNLOCK ", "START ", "BEGIN", "COMMIT",
+var impNoisePrefixes = []string{
+	"SET ", "USE ", "LOCK ", "UNLOCK ", "START ", "BEGIN", "COMMIT",
 	"DROP TABLE", "DROP INDEX", "TABLESPACE", "OWNER TO", "GRANT ", "REVOKE ",
-	"INSERT ", "SELECT ", "VACUUM", "ANALYZE ", "PRAGMA "}
+	"INSERT ", "SELECT ", "VACUUM", "ANALYZE ", "PRAGMA ",
+}
 
 // impNoiseWordPrefixes need a word boundary after the keyword: a bare prefix
 // match would also swallow BEGINNER / COMMITTED table names. Entries here

@@ -214,7 +214,8 @@ func (s *Schema) ValidateFor(dialect string) error {
 			if isArrayType(c.Type) {
 				return fmt.Errorf(
 					"table %d column %d (%q): array type %q is PostgreSQL-only; it cannot be emitted as %s",
-					ti+1, ci+1, c.Name, c.Type, normalizeDialect(dialect))
+					ti+1, ci+1, c.Name, c.Type, normalizeDialect(dialect),
+				)
 			}
 		}
 	}
@@ -462,7 +463,7 @@ func excerpt(v string) string {
 	const max = 32
 	for i, r := range v {
 		if r < 256 {
-			if validTypeByte[byte(r)] {
+			if validTypeByte[byte(r)] { //nolint:gosec // r < 256 guard above makes the conversion safe
 				continue
 			}
 		} else if strings.ContainsRune(validTypeRunes, r) {
@@ -579,7 +580,7 @@ func validateOutput(sql string) error {
 		if strings.HasPrefix(trimmed, "--") {
 			continue // comment line: text already validated by validateText
 		}
-		var q byte = 0 // byte(0) = outside quotes; one of ' " ` while inside
+		var q byte // byte(0) = outside quotes; one of ' " ` while inside
 		// A classic counter loop, not `for j := range`: the escape branch's
 		// j++ must skip BOTH quotes of a '' pair. With range, the increment is
 		// discarded on the next iteration, so the second quote wrongly closed

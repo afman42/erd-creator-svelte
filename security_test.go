@@ -264,7 +264,8 @@ func TestRejectsControlChars(t *testing.T) {
 // come back truncated at the newline. A value that cannot survive the format is
 // refused rather than silently mangled.
 func TestStructuralIdentifierRejected(t *testing.T) {
-	s := &Schema{Tables: []Table{{ID: "t1",
+	s := &Schema{Tables: []Table{{
+		ID:      "t1",
 		Name:    "a\n) ENGINE=InnoDB;\nCREATE TABLE evil (\n  `id` INT",
 		Columns: []Col{{Name: "x", Type: "INT"}},
 	}}}
