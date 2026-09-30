@@ -52,6 +52,7 @@ test:
 lint:
 	test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 	$(GO) vet ./...
+	golangci-lint run ./...
 	cd frontend && pnpm run lint
 
 fmt:
