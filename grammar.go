@@ -678,9 +678,7 @@ func parseMysql(sql string, dialect string) (*Schema, []string, error) {
 		}
 	}
 	var warnings []string
-	attachPendingFKs(p.s, p.byName, p.byID, p.pending, func(p pendingFK, reason string) {
-		warnings = append(warnings, fkDropWarning(p, reason))
-	})
+	warnings = finishParse(p.s, p.byName, p.byID, p.pending, warnings)
 	if len(p.s.Tables) == 0 {
 		return nil, nil, fmt.Errorf("no CREATE TABLE found")
 	}
@@ -799,6 +797,18 @@ func attachPendingFKs(s *Schema, byName, byID map[string]int, pending []pendingF
 			}
 		}
 	}
+}
+
+// finishParse attaches pending FKs now that every table exists (parents may
+// be defined later) and reports drops as sanitized warnings. Shared by the
+// three strict parsers so a Ref field added later cannot reach one dialect
+// and miss another's — the exact drift that broke ON UPDATE round-trips
+// before attachPendingFKs was extracted.
+func finishParse(s *Schema, byName, byID map[string]int, pending []pendingFK, warnings []string) []string {
+	attachPendingFKs(s, byName, byID, pending, func(p pendingFK, reason string) {
+		warnings = append(warnings, fkDropWarning(p, reason))
+	})
+	return warnings
 }
 
 // fkDropWarning renders one attachPendingFKs drop as a sanitized open warning.

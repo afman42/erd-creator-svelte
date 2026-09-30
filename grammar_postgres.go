@@ -201,15 +201,7 @@ func parsePostgres(sql string) (*Schema, []string, error) {
 		})
 	}
 
-	// Attach FKs now that every table exists (parents may be defined later).
-	// Delegates to the shared helper: this loop was a copy of it, and the copy
-	// silently dropped a new Ref field while the shared one carried it — the
-	// exact drift that made the ON UPDATE round-trip test fail for postgres and
-	// sqlite only. One implementation, so a field added to Ref cannot reach one
-	// dialect's parser and miss another's.
-	attachPendingFKs(p.s, p.byName, p.byID, pending, func(p pendingFK, reason string) {
-		warnings = append(warnings, fkDropWarning(p, reason))
-	})
+	warnings = finishParse(p.s, p.byName, p.byID, pending, warnings)
 	if len(p.s.Tables) == 0 {
 		return nil, nil, fmt.Errorf("no CREATE TABLE found")
 	}
