@@ -21,9 +21,11 @@
 package main
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -145,6 +147,56 @@ func originMatchesHost(origin, host string) bool {
 		return false
 	}
 	return strings.EqualFold(u.Host, host)
+}
+
+// requestLog emits one structured line per request: method, path, status, and
+// duration. The message template is stable ("http request") so aggregation
+// groups by attributes, not by path. Sits inside hostGuard so refused
+// rebinding probes are not logged as requests.
+func requestLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sr, r)
+		slog.Info("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", sr.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	})
+}
+
+// statusRecorder captures the status code for requestLog. WriteHeader records;
+// an implicit 200 (no explicit header) keeps the default.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// recoverPanic converts a handler panic into a 500 instead of killing the
+// process. Panics are bugs, not expected errors — this is the last line of
+// defence at the HTTP boundary, not a substitute for returning errors.
+func recoverPanic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if v := recover(); v != nil {
+				slog.Error("panic recovered",
+					"panic", v,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"stack", string(debug.Stack()),
+				)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // newServer builds the http.Server with timeouts.

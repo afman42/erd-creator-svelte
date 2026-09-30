@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -203,7 +203,7 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found: "+req.From, http.StatusNotFound)
 		} else {
-			internalFail(w, "rename failed", "stat %s: %v", fromFull, err)
+			internalFail(w, "rename failed", "rename stat failed", "path", fromFull, "error", err)
 		}
 		return
 	} else if tooLarge {
@@ -230,7 +230,7 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 	// are inside the store). Unlike DELETE this is a move, not a recycle:
 	// the file keeps its name, so nothing lands in the trash.
 	if err := os.Rename(fromFull, toFull); err != nil {
-		internalFail(w, "rename failed", "rename %s → %s: %v", fromFull, toFull, err)
+		internalFail(w, "rename failed", "rename failed", "from", fromFull, "to", toFull, "error", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -243,36 +243,40 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 func copyFile(w http.ResponseWriter, dir, fromFull, toFull string) {
 	src, err := os.Open(fromFull)
 	if err != nil {
-		internalFail(w, "copy failed", "copy open %s: %v", fromFull, err)
+		internalFail(w, "copy failed", "copy open failed", "path", fromFull, "error", err)
 		return
 	}
-	defer func() { _ = src.Close() }()
+	defer func() {
+		if err := src.Close(); err != nil {
+			slog.Error("close failed", "path", fromFull, "error", err)
+		}
+	}()
 	tmp, err := createTemp(dir)
 	if err != nil {
-		internalFail(w, "copy failed", "copy temp %s: %v", dir, err)
+		internalFail(w, "copy failed", "copy temp failed", "dir", dir, "error", err)
 		return
 	}
 	if _, err := io.Copy(tmp, io.LimitReader(src, maxOpenFile+1)); err != nil {
 		discardTemp(tmp)
-		internalFail(w, "copy failed", "copy write %s: %v", tmp.Name(), err)
+		internalFail(w, "copy failed", "copy write failed", "path", tmp.Name(), "error", err)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		removeTemp(tmp.Name())
-		internalFail(w, "copy failed", "copy close %s: %v", tmp.Name(), err)
+		internalFail(w, "copy failed", "copy close failed", "path", tmp.Name(), "error", err)
 		return
 	}
 	if tooLarge, err := statCapped(tmp.Name()); err != nil || tooLarge {
 		removeTemp(tmp.Name())
 		if err != nil {
-			log.Printf("copy stat %s: %v", tmp.Name(), err)
+			slog.Error("copy stat failed", "path", tmp.Name(), "error", err)
 		}
 		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	if err := os.Rename(tmp.Name(), toFull); err != nil {
 		removeTemp(tmp.Name())
-		internalFail(w, "copy failed", "copy rename %s → %s: %v", tmp.Name(), toFull, err)
+		internalFail(w, "copy failed", "copy rename failed", "from", tmp.Name(), "to", toFull, "error", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -280,10 +284,12 @@ func copyFile(w http.ResponseWriter, dir, fromFull, toFull string) {
 
 // internalFail logs an internal filesystem error and replies with a generic
 // 500, so paths and OS details never reach the client. msg is the user-safe
-// client body ("open failed", "save failed", ...); format/args go to the log
-// only. It generalizes the old copy-only copyFail to every store op.
-func internalFail(w http.ResponseWriter, msg string, format string, args ...any) {
-	log.Printf(format, args...)
+// client body ("open failed", "save failed", ...); logMsg is a stable
+// low-cardinality template and args are structured slog attributes (paths,
+// errors) so log aggregation groups by message, not by value.
+// It generalizes the old copy-only copyFail to every store op.
+func internalFail(w http.ResponseWriter, msg string, logMsg string, args ...any) {
+	slog.Error(logMsg, args...)
 	http.Error(w, msg, http.StatusInternalServerError)
 }
 
@@ -320,7 +326,7 @@ func listFiles(w http.ResponseWriter, dir string) {
 func openReadResult(f *os.File, full string, w http.ResponseWriter) ([]byte, bool) {
 	b, err := io.ReadAll(io.LimitReader(f, maxOpenFile+1))
 	if err != nil {
-		internalFail(w, "open failed", "open %s: %v", full, err)
+		internalFail(w, "open failed", "open read failed", "path", full, "error", err)
 		return nil, false
 	}
 	if len(b) > maxOpenFile {
@@ -341,7 +347,7 @@ func openFile(w http.ResponseWriter, full, name string) {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found: "+name, http.StatusNotFound)
 		} else {
-			internalFail(w, "open failed", "open %s: %v", full, err)
+			internalFail(w, "open failed", "open stat failed", "path", full, "error", err)
 		}
 		return
 	} else if tooLarge {
@@ -353,11 +359,15 @@ func openFile(w http.ResponseWriter, full, name string) {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found: "+name, http.StatusNotFound)
 		} else {
-			internalFail(w, "open failed", "open %s: %v", full, err)
+			internalFail(w, "open failed", "open failed", "path", full, "error", err)
 		}
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			slog.Error("close failed", "path", full, "error", err)
+		}
+	}()
 	b, ok := openReadResult(f, full, w)
 	if !ok {
 		return
@@ -438,22 +448,22 @@ func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
 	}
 	tmp, err := createTemp(dir)
 	if err != nil {
-		internalFail(w, "save failed", "save temp %s: %v", dir, err)
+		internalFail(w, "save failed", "save temp failed", "dir", dir, "error", err)
 		return
 	}
 	if _, err := tmp.WriteString(ddl); err != nil {
 		discardTemp(tmp)
-		internalFail(w, "save failed", "save write %s: %v", tmp.Name(), err)
+		internalFail(w, "save failed", "save write failed", "path", tmp.Name(), "error", err)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		removeTemp(tmp.Name())
-		internalFail(w, "save failed", "save close %s: %v", tmp.Name(), err)
+		internalFail(w, "save failed", "save close failed", "path", tmp.Name(), "error", err)
 		return
 	}
 	if err := os.Rename(tmp.Name(), full); err != nil {
 		removeTemp(tmp.Name())
-		internalFail(w, "save failed", "save rename %s → %s: %v", tmp.Name(), full, err)
+		internalFail(w, "save failed", "save rename failed", "from", tmp.Name(), "to", full, "error", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -465,7 +475,7 @@ func saveFile(w http.ResponseWriter, dir, full string, r *http.Request) {
 // is otherwise invisible and would silently accumulate in the store.
 func removeTemp(name string) {
 	if err := os.Remove(name); err != nil {
-		log.Printf("remove temp %s: %v", name, err)
+		slog.Error("temp remove failed", "path", name, "error", err)
 	}
 }
 
@@ -474,7 +484,7 @@ func removeTemp(name string) {
 // a file still open when the handler returns leaks a descriptor.
 func discardTemp(f *os.File) {
 	if err := f.Close(); err != nil {
-		log.Printf("close temp %s: %v", f.Name(), err)
+		slog.Error("temp close failed", "path", f.Name(), "error", err)
 	}
 	removeTemp(f.Name())
 }
@@ -613,7 +623,10 @@ func renameWithSuffix(full, name, td string) error {
 			}
 			return err
 		}
-		_ = claim.Close()
+		if err := claim.Close(); err != nil {
+			_ = os.Remove(dst)
+			return err
+		}
 		if err := os.Rename(full, dst); err != nil {
 			_ = os.Remove(dst)
 			if os.IsNotExist(err) {
@@ -635,12 +648,12 @@ func sweepTrash(dir string) {
 	if err != nil {
 		// Path resolution failing (e.g. the store was removed) means there is
 		// nothing to sweep; ignore it.
-		log.Printf("sweep trash %s: %v", dir, err)
+		slog.Debug("trash sweep skipped", "dir", dir, "error", err)
 		return
 	}
 	entries, err := os.ReadDir(td)
 	if err != nil {
-		log.Printf("sweep trash %s: %v", td, err)
+		slog.Error("trash sweep failed", "path", td, "error", err)
 		return
 	}
 	cutoff := time.Now().Add(-trashRetention)
@@ -650,12 +663,12 @@ func sweepTrash(dir string) {
 		}
 		info, err := e.Info()
 		if err != nil {
-			log.Printf("sweep trash %s: %v", e.Name(), err)
+			slog.Error("trash sweep failed", "name", e.Name(), "error", err)
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
 			if err := os.Remove(filepath.Join(td, e.Name())); err != nil {
-				log.Printf("sweep trash %s: %v", e.Name(), err)
+				slog.Error("trash sweep failed", "name", e.Name(), "error", err)
 			}
 		}
 	}

@@ -62,7 +62,7 @@ func TestGhostCompositePKIdenticalAcrossDialects(t *testing.T) {
 // failures reach it without an existing pin (save temp creation, copy read).
 func TestInternalFailNeverEchoesPath(t *testing.T) {
 	rec := httptest.NewRecorder()
-	internalFail(rec, "save failed", "save temp %s: %v", "/etc/secret/store", errors.New("boom"))
+	internalFail(rec, "save failed", "save temp failed", "dir", "/etc/secret/store", "error", errors.New("boom"))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("code %d, want 500", rec.Code)
 	}

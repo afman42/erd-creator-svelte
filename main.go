@@ -10,9 +10,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -26,15 +27,18 @@ func main() {
 	port := flag.Int("port", 8731, "TCP port to listen on; 0 picks a free one")
 	flag.Parse()
 	if err := ensureDir(*dir); err != nil {
-		log.Fatal(err)
+		slog.Error("store init failed", "error", err)
+		os.Exit(1)
 	}
 	addr, err := listenAddr(*host, *port)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("invalid listen address", "error", err)
+		os.Exit(1)
 	}
 	sub, err := fs.Sub(dist, "frontend/dist")
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("embedded dist missing", "error", err)
+		os.Exit(1)
 	}
 
 	// A dedicated mux rather than http.DefaultServeMux so the hardening wraps
@@ -69,6 +73,8 @@ func main() {
 	// refused before it reaches any handler, then the same-origin check, then
 	// the response headers (set on the way out, including on those refusals).
 	var h http.Handler = mux
+	h = requestLog(h)
+	h = recoverPanic(h)
 	h = securityHeaders(h)
 	h = sameOriginGuard(h)
 	h = hostGuard(*host)(h)
@@ -78,13 +84,17 @@ func main() {
 	// learn it — and so a bind failure is reported once, with the address.
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatalf("cannot listen on %s: %v", addr, err)
+		slog.Error("listen failed", "addr", addr, "error", err)
+		os.Exit(1)
 	}
-	log.Printf("erd-creator on %s (schemas: %s)", displayURL(ln.Addr()), *dir)
+	slog.Info("erd-creator started", "url", displayURL(ln.Addr()), "dir", *dir)
 	srv := newServer(h)
 	// Serve rather than ListenAndServe: the listener is already bound, so the
 	// resolved port is known and logged before the first request is accepted.
-	log.Fatal(srv.Serve(ln))
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		slog.Error("server stopped", "error", err)
+		os.Exit(1)
+	}
 }
 
 // listenAddr joins the -host and -port flags into an address net.Listen
@@ -193,7 +203,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 // would gain no checking the encoder itself does not perform.
 func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("write json: %v", err)
+		slog.Error("response encode failed", "error", err)
 	}
 }
 
@@ -202,7 +212,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // be surfaced to the client and would otherwise pass silently.
 func writeText(w http.ResponseWriter, body string) {
 	if _, err := fmt.Fprint(w, body); err != nil {
-		log.Printf("write text: %v", err)
+		slog.Error("response write failed", "error", err)
 	}
 }
 
