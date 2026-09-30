@@ -38,6 +38,22 @@ Rules:
 
 ## Agent skills
 
+### Go skills (always load)
+
+For any Go task (grammar, validate, export, store, security, refactor, lint),
+load `samber/cc-skills-golang@golang-how-to` first — it routes to the right
+secondary skills per intent. Do not work on Go code without it.
+
+### Required Go skills
+
+Beyond routing, always apply these on Go changes in this repo:
+- `.agents/skills/safe-sql-execution/SKILL.md` — grammar/Validate/GenSQL/export/import/store (first, not only at review)
+- `samber/cc-skills-golang@golang-error-handling` — creation, wrapping, single-handling, slog
+- `samber/cc-skills-golang@golang-safety` — nil traps, bounds, overflow on untrusted input
+- `samber/cc-skills-golang@golang-lint` — `.golangci.yml` is source of truth; `make lint` gate
+- `samber/cc-skills-golang@golang-security` — STRIDE/DREAD on trust-boundary crossings
+- `samber/cc-skills-golang@golang-testing` — safety net before refactor; `-race` on concurrency
+
 ### Issue tracker
 
 Issues live in GitHub Issues for afman42/erd-creator-svelte. See `docs/agents/issue-tracker.md`.
