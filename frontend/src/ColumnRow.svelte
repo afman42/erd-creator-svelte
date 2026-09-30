@@ -59,7 +59,8 @@ let {
 		left: 0;
 		top: 50%;
 		transform: translateY(-50%);
-		display: none;
+		opacity: 0;
+		pointer-events: none;
 		width: 44px;
 		height: 44px;
 		margin: -9px 0 -9px -2px;
@@ -72,11 +73,12 @@ let {
 		padding: 0;
 	}
 	.row:hover .conn,
-	.row:focus-within .conn {
-		display: block;
+	.row:focus-within .conn,
+	.row .conn:focus-visible {
+		opacity: 1;
+		pointer-events: auto;
 	}
 	.row .conn:focus-visible {
-		display: block;
 		outline: 1px solid var(--color-focus);
 		outline-offset: 1px;
 	}

@@ -75,7 +75,9 @@ function shownName(ix) {
 		<span>Comment</span>
 		<input
 			class="tcmt"
-			placeholder="table comment"
+			name="table-comment"
+			autocomplete="off"
+			placeholder="e.g. users table…"
 			value={table.comment ?? ""}
 			onchange={(e) => commitTableComment(table, e)}
 			spellcheck="false"
@@ -92,8 +94,10 @@ function shownName(ix) {
 				<span>Name</span>
 				<input
 					class="ixname"
+					name="index-name"
+					autocomplete="off"
 					value={ix.name ?? ""}
-					placeholder={shownName(ix)}
+					placeholder="{shownName(ix)}…"
 					onchange={(e) => setIndexName(ix, e.currentTarget.value)}
 					spellcheck="false"
 				/>
@@ -195,10 +199,16 @@ function shownName(ix) {
 		background: var(--color-danger-bg);
 		color: var(--color-danger-text);
 	}
+	.rmix:hover {
+		filter: brightness(1.05);
+	}
 	.mkix {
 		background: var(--color-ok-bg);
 		color: var(--color-ok-text);
 		margin-top: 6px;
+	}
+	.mkix:hover {
+		filter: brightness(1.05);
 	}
 	.done {
 		background: var(--color-primary);
@@ -209,5 +219,8 @@ function shownName(ix) {
 		cursor: pointer;
 		font: inherit;
 		min-height: 44px;
+	}
+	.done:hover {
+		background: var(--color-primary-hover);
 	}
 </style>

@@ -9,14 +9,14 @@ const sqlLoading = $derived(store.sqlLoading && !store.sqlText);
 
 <aside id="sql-panel" aria-label="SQL preview">
 	<div class="sqlhead">
-		<span>{store.currentFile || "unsaved"}</span>
+		<span>{store.currentFile || "Unsaved"}</span>
 		<!-- Names the dialect so the panel is unambiguous now that a file can be
 		     written in more than one grammar. -->
 		<span class="dialect" data-testid="sql-dialect">{store.schema.dialect}</span>
-		<button onclick={copySql} aria-label="Copy SQL to clipboard">copy</button>
+		<button onclick={copySql} aria-label="Copy SQL to clipboard">Copy</button>
 	</div>
 	{#if sqlLoading}
-		<div class="skeleton" aria-busy="true" aria-label="Loading SQL">
+		<div class="skeleton" aria-busy="true" aria-label="Loading…">
 			<div class="sk-line w70"></div>
 			<div class="sk-line w85"></div>
 			<div class="sk-line w60"></div>
@@ -25,7 +25,7 @@ const sqlLoading = $derived(store.sqlLoading && !store.sqlText);
 	{:else}
 		<!-- aria-live OFF + labelled region: the full dump re-renders on every
 		     debounced refresh, and announcing all of it would flood SR users. -->
-		<pre role="region" aria-label="SQL preview">{store.sqlText}</pre>
+		<pre role="region" aria-label="SQL preview" translate="no">{store.sqlText}</pre>
 	{/if}
 </aside>
 
@@ -61,6 +61,9 @@ const sqlLoading = $derived(store.sqlLoading && !store.sqlText);
 		font: inherit;
 		min-height: 44px;
 		min-width: 44px;
+	}
+	.sqlhead button:hover {
+		background: var(--color-primary-hover);
 	}
 	.sqlhead button:focus-visible {
 		outline: 2px solid var(--color-focus);

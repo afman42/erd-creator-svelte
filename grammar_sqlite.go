@@ -161,8 +161,11 @@ func parseSqlite(sql string) (*Schema, []string, error) {
 			}
 			if m := reSqliteFK.FindStringSubmatch(body); m != nil {
 				// m[4] is the ON DELETE action, m[6] the ON UPDATE action (absent
-				// clause → empty → no ON UPDATE in the model).
-				pending = append(pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), m[4], m[6]})
+				// clause → empty → no ON UPDATE in the model). The regexp
+				// already allowlists both; resolveActions applies the same
+				// DELETE default / UPDATE omit rule as the other two parsers.
+				del, upd := resolveActions(m[4], m[6])
+				pending = append(pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), del, upd})
 				commentLine = ""
 				continue
 			}

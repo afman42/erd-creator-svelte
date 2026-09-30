@@ -115,6 +115,12 @@ func impSplitList(list string) []string {
 // impBaseType maps common foreign spellings onto the model's portable names.
 // Unmapped names pass through uppercased; the caller validates and falls back
 // to TEXT with a loss when the result is not a valid type expression.
+// isAI reports a SERIAL-family spelling (pg sequence ⇒ AI).
+//
+// The SERIAL→SMALLINT / BIGSERIAL→BIGINT rows are the AI signal; INT4/INT8 and
+// the CHARACTER/DOUBLE/TIME normalizations are pure renames. Callers that need
+// only the mapping (pgType recovery, aiPk checks) use spec.go's isInt/baseOf;
+// this stays the import-only spelling table.
 func impBaseType(base string) (string, bool) {
 	norm := strings.Join(strings.Fields(strings.ToUpper(base)), " ")
 	switch norm {
@@ -481,7 +487,8 @@ func impDialect(sql string, sawPg, sawLite bool) string {
 	return DialectMysql
 }
 
-// impActions reads ON DELETE/UPDATE trailing a REFERENCES clause.
+// impActions reads ON DELETE/UPDATE trailing a REFERENCES clause, via the
+// shared spec.go policy (normalizeFKAction allowlist + CASCADE default).
 // DELETE keeps the model's historical CASCADE default; UPDATE omits when absent.
 // An ON DELETE/UPDATE naming an action outside the grammar's allowlist is NOT
 // defaulted: it is reported as a loss so a misspelled action ("ON DELETE CASCDE")
@@ -490,7 +497,12 @@ func impDialect(sql string, sawPg, sawLite bool) string {
 func impActions(tail string, loss *importLoss) (string, string) {
 	del, upd := "CASCADE", ""
 	for _, m := range reImpAction.FindAllStringSubmatch(tail, -1) {
+		// Normalize via the shared policy; the allowlist regexp already
+		// restricts to known actions, and the loss check below reports the rest.
 		a := normalizeFKAction(m[2])
+		if !isFKAction(a) {
+			continue
+		}
 		if strings.ToUpper(m[1]) == "DELETE" {
 			del = a
 		} else {

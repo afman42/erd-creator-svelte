@@ -36,11 +36,11 @@ function longestTablePrefix(msg) {
 	<div class="linthead">
 		<span data-testid="lint-count">Lint{store.lint.length ? ` (${store.lint.length})` : ""}</span>
 		{#if store.lint.length > 0}
-			<span class="hint">click to jump</span>
+			<span class="hint">Click to jump</span>
 		{/if}
 	</div>
 	{#if store.lint.length === 0}
-		<p class="clean" data-testid="lint-clean">no issues</p>
+		<p class="clean" data-testid="lint-clean">No issues</p>
 	{:else}
 		<ul data-testid="lint-list">
 			{#each store.lint as msg, i (i)}
@@ -103,6 +103,7 @@ function longestTablePrefix(msg) {
 		padding: 6px 10px;
 		cursor: pointer;
 		min-height: 44px;
+		overflow-wrap: anywhere;
 	}
 	li button:hover {
 		outline: 1px solid var(--color-border);

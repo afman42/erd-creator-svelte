@@ -4,7 +4,7 @@ import {
 	flushCurrent,
 	installFlush,
 	isDirty,
-	markSkipTouch,
+	load,
 	setDirty,
 	touch,
 } from "../src/autosave.js";
@@ -57,26 +57,29 @@ test("touch with showSql schedules sql", async () => {
 	resetAutosave();
 });
 
-test("markSkipTouch skips next touch", async () => {
+test("load drops the swap echo and clears timers+dirty", async () => {
 	resetAutosave();
-	markSkipTouch();
-	let lintCalled = 0;
 	const store = makeStore();
-	touch(false, {
+	let lintCalled = 0;
+	const deps = {
 		store,
 		refreshLint: () => lintCalled++,
 		refreshSql: () => {},
 		saveCurrent: () => {},
-	});
+	};
+	// pending work + dirty before the load
+	touch(false, deps);
+	load(store);
+	assert.equal(isDirty(), false);
+	assert.equal(store.dirty, false);
+	// the $effect echo from the schema swap schedules nothing
+	touch(false, deps);
 	assert.equal(isDirty(), false);
 	assert.equal(lintCalled, 0);
-	// next touch should work
-	touch(false, {
-		store,
-		refreshLint: () => lintCalled++,
-		refreshSql: () => {},
-		saveCurrent: () => {},
-	});
+	await sleep(350);
+	assert.equal(lintCalled, 0);
+	// next real edit works
+	touch(false, deps);
 	assert.equal(isDirty(), true);
 	await sleep(350);
 	assert.equal(lintCalled, 1);

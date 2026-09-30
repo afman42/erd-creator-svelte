@@ -351,7 +351,7 @@ test("table delete × removes box and clears dangling FKs", async ({ page }) => 
 	await page
 		.locator("section.table")
 		.first()
-		.getByTitle("delete table (Del)")
+		.getByTitle("Delete table (Del)")
 		.click();
 	await expect(page.locator("section.table")).toHaveCount(1);
 	// the parent is gone, so the FK must have been cleared
@@ -524,7 +524,7 @@ test("Del button deletes current file after confirm dialog", async ({
 	await page.goto("/");
 	await newFile(page, "tmpfile");
 	page.once("dialog", (d) => d.accept());
-	await page.getByRole("button", { name: "Del", exact: true }).click();
+	await page.getByRole("button", { name: "Delete file", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveCount(0);
 	const list = await (await request.get("/api/files")).json();
 	expect(list).toEqual([]);
@@ -536,7 +536,7 @@ test("duplicate table copies columns and offsets position", async ({
 	page,
 }) => {
 	await page.goto("/");
-	await page.getByTitle("duplicate").click();
+	await page.getByTitle("Duplicate").click();
 	await expect(page.locator("section.table")).toHaveCount(2);
 	expect(await tables(page)).toEqual(["users", "users_copy"]);
 	// duplicated column retains its type — the row label shows it without
@@ -806,7 +806,7 @@ test("edit switched away from within the autosave window is not lost", async ({
 	await page.goto("/");
 	let n = 0;
 	page.on("dialog", (d) => d.accept(`dl${n++}`));
-	await page.getByRole("button", { name: "New", exact: true }).click();
+	await page.getByRole("button", { name: "New file", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText("dl0.sql");
 	const dlg = await openCol(page, 0, 0);
 	const name = dlg.locator("input.cname");
@@ -814,7 +814,7 @@ test("edit switched away from within the autosave window is not lost", async ({
 	await name.blur();
 	await closeCol(dlg);
 	// switch files BEFORE the 800ms autosave fires — pending edit must flush
-	await page.getByRole("button", { name: "New", exact: true }).click();
+	await page.getByRole("button", { name: "New file", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText("dl1.sql");
 	const body = await (await request.get("/api/files/dl0.sql")).json();
 	expect(body.tables[0].columns[0].name).toBe("col_renamed");
@@ -836,7 +836,7 @@ test("rapid edits then file switch lose nothing (stale-save guard)", async ({
 	await page.goto("/");
 	let n = 0;
 	page.on("dialog", (d) => d.accept(`race${n++}`));
-	await page.getByRole("button", { name: "New", exact: true }).click();
+	await page.getByRole("button", { name: "New file", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText("race0.sql");
 
 	const tname = page.locator(".tname").first();
@@ -849,7 +849,7 @@ test("rapid edits then file switch lose nothing (stale-save guard)", async ({
 	await expect(page.locator(".tname")).toHaveValue("alpha2");
 
 	// switch files BEFORE the 800ms autosave fires — pending edit must flush
-	await page.getByRole("button", { name: "New", exact: true }).click();
+	await page.getByRole("button", { name: "New file", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText("race1.sql");
 
 	// the flushed file carries the NEWEST edit, not the first snapshot
@@ -912,7 +912,7 @@ test("Ctrl+Z after switching files must not write the old file's schema", async 
 	let n = 0;
 	page.on("dialog", (d) => d.accept(`f${n++}`));
 	// file A: a rename pushes an undo snapshot that belongs to A
-	await page.getByRole("button", { name: "New", exact: true }).click();
+	await page.getByRole("button", { name: "New file", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText("f0.sql");
 	const name = page.locator(".tname").first();
 	await name.fill("alpha");
@@ -921,7 +921,7 @@ test("Ctrl+Z after switching files must not write the old file's schema", async 
 		expect(_b.tables[0].name).toBe("alpha");
 	});
 	// file B: fresh schema, different file
-	await page.getByRole("button", { name: "New", exact: true }).click();
+	await page.getByRole("button", { name: "New file", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText("f1.sql");
 	// undo must not reach back into f0's history and restore it into f1
 	await page.locator("body").click({ position: { x: 5, y: 400 } }); // defocus
@@ -1147,7 +1147,7 @@ test("Export downloads the selected dialect's DDL as a .sql file", async ({
 	await page.goto("/");
 	await openShare(page);
 	const download = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await page.getByRole("button", { name: "Export DDL" }).click();
 	const dl = await download;
 	// unsaved scratch schema → dialect-named file
 	expect(dl.suggestedFilename()).toBe("mysql-schema.sql");
@@ -1164,7 +1164,7 @@ test("Export downloads the selected dialect's DDL as a .sql file", async ({
 	// the downloaded DDL must follow the dropdown, not be hardcoded mysql
 	await page.getByTestId("dialect").selectOption("postgres");
 	const pgDownload = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await page.getByRole("button", { name: "Export DDL" }).click();
 	const pg = await pgDownload;
 	expect(pg.suggestedFilename()).toBe("postgres-schema.sql");
 	const pgStream = await pg.createReadStream();
@@ -1182,7 +1182,7 @@ test("Export of a saved file uses the file's own name", async ({ page }) => {
 	await newFile(page, "mydb");
 	await openShare(page);
 	const download = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await page.getByRole("button", { name: "Export DDL" }).click();
 	expect((await download).suggestedFilename()).toBe("mydb.sql");
 });
 
@@ -1193,7 +1193,7 @@ test("Export on an empty schema surfaces the server error", async ({
 }) => {
 	await page.goto("/");
 	// remove the only table so the schema has no tables
-	await page.getByTitle("delete table (Del)").click();
+	await page.getByTitle("Delete table (Del)").click();
 	await expect(page.locator("section.table")).toHaveCount(0);
 
 	// no download must fire on the failure path
@@ -1202,7 +1202,7 @@ test("Export on an empty schema surfaces the server error", async ({
 		downloaded = true;
 	});
 	await openShare(page);
-	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await page.getByRole("button", { name: "Export DDL" }).click();
 	await expect(page.getByTestId("toast")).toBeVisible();
 	await expect(page.getByText(/downloaded /)).toHaveCount(0);
 	expect(downloaded).toBe(false);
@@ -1375,7 +1375,7 @@ test("Export SVG on empty schema shows error, no download", async ({
 	await page
 		.locator("section.table")
 		.first()
-		.getByTitle("delete table (Del)")
+		.getByTitle("Delete table (Del)")
 		.click();
 	await expect(page.locator("section.table")).toHaveCount(0);
 	await openShare(page);
@@ -1397,7 +1397,7 @@ test("Export PNG on empty schema shows error, no download", async ({
 	page,
 }) => {
 	await page.goto("/");
-	await page.getByTitle("delete table (Del)").click();
+	await page.getByTitle("Delete table (Del)").click();
 	await expect(page.locator("section.table")).toHaveCount(0);
 	let downloaded = false;
 	page.on("download", () => {

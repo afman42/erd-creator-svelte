@@ -179,12 +179,8 @@ var validTypeByte = func() [256]bool {
 	return t
 }()
 
-// isArrayType reports whether a model type carries a Postgres array suffix.
-// The suffix is the only structural difference between `INT` and `INT[]`, so
-// every dialect decision below keys off it rather than parsing the type again.
-func isArrayType(ty string) bool {
-	return strings.HasSuffix(strings.TrimSpace(ty), "[]")
-}
+// isArrayType, splitType, baseOf, arrayBase, validateFKAction, and the
+// fkActions allowlist live in spec.go (single capability model).
 
 // Validate reports the first reason the schema cannot be emitted safely in its
 // own dialect. See ValidateFor.
@@ -384,7 +380,7 @@ func validateArrayRules(table string, ci int, c Col) error {
 	if !isArrayType(c.Type) {
 		return nil
 	}
-	base, _ := splitType(strings.TrimSuffix(strings.TrimSpace(c.Type), "[]"))
+	base := arrayBase(c.Type)
 	switch {
 	case base == "ENUM":
 		// The ENUM rendering is `TEXT + CHECK (col IN (...))`, which

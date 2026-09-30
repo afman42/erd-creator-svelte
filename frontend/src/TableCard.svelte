@@ -91,25 +91,14 @@ function cardMetricsAttachment(el) {
 	     attribute — the CSP's style-src 'self' does not govern it. See the
 	     note on the .zoom layer in App.svelte. -->
 	<!-- Selection lives on a real <button> (selectBtn); drag lives on the
-	     header surface. Previously one role=button div held the name input +
-	     3 buttons, so Space inside the input bubbled to the header handler —
-	     benign but fragile, and the S5 Delete-key guard had to special-case
-	     inner focus. The drag handle keeps pointer+keyboard(nudge) behavior;
-	     selectTable e2e flow (press on header, defocus, arrows) is unchanged
-	     because the handle is where the press lands. -->
+	     header surface, which is a plain container — keyboard selection goes
+	     through the button, nudge through the canvas handler. The old
+	     role=button wrapper is gone, so no Space-in-input bubble path and no
+	     inner-focus special case in the Delete-key guard. -->
 	<div
 		class="hdr"
-		role="button"
-		tabindex="0"
-		aria-label="Select table {table.name}. Drag to move. Use arrow keys to nudge when selected."
 		onpointerdown={(e) => onDragStart(table, e)}
-		onclick={() => setSelected(table.id)}
-		onkeydown={(e) => {
-			if (e.key === "Enter" || e.key === " ") {
-				e.preventDefault();
-				setSelected(table.id);
-			}
-		}}
+		title="Drag to move · keyboard: select, then arrow keys"
 	>
 		<button
 			class="selectbtn"
@@ -122,6 +111,8 @@ function cardMetricsAttachment(el) {
 		</button>
 		<input
 			class="tname"
+			name="table-name"
+			autocomplete="off"
 			value={table.name}
 			onchange={(e) => commitTableName(table, e)}
 			spellcheck="false"
@@ -136,15 +127,15 @@ function cardMetricsAttachment(el) {
 			>N:N</span>
 		{/if}
 		<button
-			title="composite indexes"
+			title="Composite indexes"
 			aria-label="composite indexes for {table.name}"
 			onclick={(e) => { e.stopPropagation(); showIndexes = true; }}>⌗</button>
 		<button
-			title="duplicate"
+			title="Duplicate"
 			aria-label="duplicate table {table.name}"
 			onclick={(e) => { e.stopPropagation(); dupTable(table); }}>⧉</button>
 		<button
-			title="delete table (Del)"
+			title="Delete table (Del)"
 			aria-label="delete table {table.name}"
 			onclick={(e) => { e.stopPropagation(); rmTable(table); }}>×</button>
 	</div>
@@ -191,6 +182,14 @@ function cardMetricsAttachment(el) {
 		border: var(--card-bw) solid var(--color-border);
 		border-radius: var(--radius-lg);
 		box-shadow: 0 2px 8px #0008;
+		/* Offscreen-card skip for large schemas: the browser skips paint
+		   (and layout where provable) for cards outside the viewport, but
+		   keeps their box so absolute x/y layout, FK anchors (geometry.js)
+		   and export capture are untouched. Fixed intrinsic size (BOX_W × a
+		   3-column card) reserves the box so scrollbars don't thrash while
+		   skipped; real cards re-measure on reveal. */
+		content-visibility: auto;
+		contain-intrinsic-size: 280px 183px;
 	}
 	section.selected {
 		border-color: var(--color-focus);
@@ -288,6 +287,10 @@ function cardMetricsAttachment(el) {
 		cursor: pointer;
 		font: inherit;
 	}
+	.addcol:hover {
+		color: var(--color-primary-hover);
+	}
+
 	.addcol:focus-visible {
 		outline: 1px solid var(--color-focus);
 		outline-offset: -1px;

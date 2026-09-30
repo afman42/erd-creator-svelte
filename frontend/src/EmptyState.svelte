@@ -2,8 +2,8 @@
 import { addTable } from "./schema.svelte.js";
 </script>
 
-<div class="empty" role="status" aria-label="No tables">
-	<p class="empty-title">No tables yet</p>
+<div class="empty">
+	<h2 class="empty-title">No tables yet</h2>
 	<p class="empty-desc">Add your first table to start designing.</p>
 	<button class="empty-cta" onclick={addTable} data-testid="empty-add-table">+ Table</button>
 </div>
@@ -26,6 +26,7 @@ import { addTable } from "./schema.svelte.js";
 		font-size: 14px;
 		font-weight: 600;
 		color: var(--color-text);
+		text-wrap: balance;
 	}
 	.empty-desc {
 		margin: 0 0 14px;

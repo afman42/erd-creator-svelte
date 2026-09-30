@@ -34,9 +34,11 @@ export async function closeCol(dlg) {
 }
 
 // Open the SQL panel and return its text once loaded (skeleton first, DDL
-// after the export lands).
+// after the export lands). Idempotent: ?sql= deep links pre-open the panel,
+// so only click when it still shows "Show".
 export async function panelSql(page) {
-	await page.getByRole("button", { name: "Show SQL" }).click();
+	if (await page.getByRole("button", { name: "Show SQL" }).count())
+		await page.getByRole("button", { name: "Show SQL" }).click();
 	const pre = page.locator("#sql-panel pre");
 	await expect(pre).toBeVisible();
 	return pre.innerText();
@@ -45,7 +47,7 @@ export async function panelSql(page) {
 // Create a new file via the native prompt.
 export async function newFile(page, name) {
 	page.once("dialog", (d) => d.accept(name));
-	await page.getByRole("button", { name: "New", exact: true }).click();
+	await page.getByRole("button", { name: "New file", exact: true }).click();
 	await expect(page.getByTestId("current-file")).toHaveText(`${name}.sql`);
 }
 

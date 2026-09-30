@@ -25,8 +25,8 @@ import { store } from "./schema.svelte.js";
 <style>
 	div {
 		position: fixed;
-		right: 12px;
-		bottom: 12px;
+		right: calc(12px + env(safe-area-inset-right));
+		bottom: calc(12px + env(safe-area-inset-bottom));
 		z-index: 50;
 		display: flex;
 		flex-direction: column;

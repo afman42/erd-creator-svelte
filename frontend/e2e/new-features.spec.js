@@ -7,6 +7,7 @@ import {
 	newFile,
 	openCol,
 	panelSql,
+	selectTable,
 	wipeStore,
 } from "./helpers.js";
 
@@ -68,6 +69,7 @@ test("table comment: set through the table dialog, emitted, round-trips", async 
 	await page.getByRole("button", { name: /composite indexes for/ }).click();
 	const dlg = page.locator("dialog.idxedit");
 	await dlg.locator("input.tcmt").fill("the users table");
+	await dlg.locator("input.tcmt").blur();
 	await dlg.getByRole("button", { name: "Done" }).click();
 	await expect(dlg).toHaveCount(0);
 
@@ -147,7 +149,7 @@ test("lint panel shows a clean state when there are no findings", async ({
 	await page.goto("/");
 	await page.getByTestId("lint-toggle").click();
 	const aside = page.locator("aside[aria-label='lint findings']");
-	await expect(aside.getByTestId("lint-clean")).toHaveText("no issues");
+	await expect(aside.getByTestId("lint-clean")).toHaveText("No issues");
 	await expect(aside.getByTestId("lint-list")).toHaveCount(0);
 });
 
@@ -202,4 +204,40 @@ test("rename + duplicate file round-trip through the store", async ({
 	await expect(
 		page.getByLabel("Open schema file").locator("option"),
 	).toContainText(["renamed.sql", "renamed_copy.sql"]);
+});
+
+// URL reflects state: panels, zoom, find text, file and selection land in
+// the query string via replaceState, and a reload restores them.
+test("view state syncs to the URL and restores on reload", async ({ page }) => {
+	await page.goto("/");
+	await newFile(page, "deeplink");
+	await page.getByRole("button", { name: "Show SQL" }).click();
+	await page.getByTestId("lint-toggle").click();
+	await page.getByRole("button", { name: "Zoom in" }).click();
+	await page.getByLabel("Find table on canvas").fill("users");
+	await selectTable(page, 0);
+
+	await expect.poll(() => page.url()).toContain("file=deeplink");
+	const url = new URL(page.url());
+	expect(url.searchParams.has("sql")).toBe(true);
+	expect(url.searchParams.has("lint")).toBe(true);
+	expect(url.searchParams.get("zoom")).toBe("125");
+	expect(url.searchParams.get("q")).toBe("users");
+	expect(url.searchParams.get("sel")).toBe("users");
+
+	await page.reload();
+	await expect(page.locator("#sql-panel")).toBeVisible();
+	await expect(page.locator("aside[aria-label='lint findings']")).toBeVisible();
+	await expect(page.getByLabel("Zoom level")).toHaveText("125%");
+	await expect(page.getByLabel("Find table on canvas")).toHaveValue("users");
+});
+
+test("shared ?file= link opens the linked file", async ({ page, request }) => {
+	await page.goto("/");
+	await newFile(page, "linktarget");
+	await expect
+		.poll(async () => (await request.get("/api/files/linktarget.sql")).ok())
+		.toBe(true);
+	await page.goto("/?file=linktarget");
+	await expect(page.getByTestId("current-file")).toHaveText("linktarget.sql");
 });

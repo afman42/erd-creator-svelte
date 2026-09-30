@@ -56,7 +56,16 @@ export function setDirty(v) {
 export function editGeneration() {
 	return editGen;
 }
-export function markSkipTouch() {
+/**
+ * Mark a load event: clears pending timers + dirty, arms skipNextTouch so the
+ * $effect echo from the schema swap is dropped. Call BEFORE swapping
+ * store.schema (openFile/newFile). Explicit event, not a bare flag write:
+ * every load path funnels here, so a new path cannot forget the arm.
+ * @param {AutosaveStore} store
+ */
+export function load(store) {
+	clearTimers();
+	setDirtyBoth(store, false);
 	skipNextTouch = true;
 }
 

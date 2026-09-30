@@ -36,6 +36,16 @@ Rules:
 - NEVER bind beyond loopback (`-host ""`/`0.0.0.0`) except trusted network; no auth exists.
 - NEVER bypass `storePath` containment; NEVER hand-edit `frontend/dist`.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for afman42/erd-creator-svelte. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context layout (root `GLOSSARY.md` + `docs/adr/`). See `docs/agents/domain.md`.
+
 ## Router
 
 - Codebase question → `graphify query/path/explain` first; `graphify-out/wiki/index.md` for navigation; `GRAPH_REPORT.md` only for broad review.

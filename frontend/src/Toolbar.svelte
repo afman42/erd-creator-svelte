@@ -48,9 +48,9 @@ const LABELS = {
 };
 
 // tableQuery jumps to the first matching card on Enter. Local view state —
-// never enters the schema or undo.
-
-let tableQuery = $state("");
+// never enters the schema or undo. Seeded from ?q=, mirrored back on input
+// so find text is deep-linkable; App owns the other params.
+let tableQuery = $state(new URLSearchParams(location.search).get("q") ?? "");
 
 function jumpToTable() {
 	const q = tableQuery.trim().toLowerCase();
@@ -59,13 +59,24 @@ function jumpToTable() {
 	if (!t) return;
 	scrollToTable(t.id, t.name, setSelected);
 }
+
+/** Mirror find text into ?q= via replaceState (no history entry per keystroke). */
+function syncQueryParam() {
+	const url = new URL(location.href);
+	if (tableQuery) url.searchParams.set("q", tableQuery);
+	else url.searchParams.delete("q");
+	const next =
+		url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : "");
+	if (next !== location.pathname + location.search)
+		history.replaceState(null, "", next);
+}
 // Live-jump while typing would yank scroll on every keystroke; jump on Enter
 // only (jumpToTable above), filter is Enter-free.
 </script>
 
 <header aria-label="ERD toolbar">
 	<h1 class="sr-only">ERD Creator</h1>
-	<!-- Groups: create | file | schema | view. Del sits last in its group,
+	<!-- Groups: create | file | schema | view. Delete sits last in its group,
 	     never adjacent to Save. Rename/duplicate/copy/export collapse into
 	     the ⋯ overflow <details> which stays in the DOM so role queries keep
 	     working; CSS moves .more inline on wide screens. -->
@@ -94,11 +105,11 @@ function jumpToTable() {
 			<option value="">Open file…</option>
 			{#each store.files as f (f.name)}<option value={f.name}>{f.name}</option>{/each}
 		</select>
-		<button onclick={newFile} aria-label="New" title="Create a new schema file">New</button>
+		<button onclick={newFile} aria-label="New file" title="Create a new schema file">New</button>
 		<button onclick={() => saveCurrent()} disabled={!store.currentFile} aria-label="Save" title="Save the current file">Save</button>
 		<button onclick={renameFile} disabled={!store.currentFile} aria-label="Rename file" title="Rename the current schema file">Rename</button>
 		<button onclick={duplicateFile} disabled={!store.currentFile} aria-label="Duplicate file" title="Copy the current schema file">Duplicate</button>
-		<button onclick={deleteFile} disabled={!store.currentFile} aria-label="Del" title="Delete the current schema file">Del</button>
+		<button onclick={deleteFile} disabled={!store.currentFile} aria-label="Delete file" title="Delete the current schema file">Delete</button>
 	</div>
 	<div class="grp" role="group" aria-label="Schema">
 		<label class="sr-only" for="dialect-select">DDL dialect</label>
@@ -134,10 +145,12 @@ function jumpToTable() {
 		<input
 			class="search"
 			type="search"
+			name="find-table"
+			autocomplete="off"
 			placeholder="Find table…"
 			aria-label="Find table on canvas"
 			value={tableQuery}
-			oninput={(e) => (tableQuery = e.currentTarget.value)}
+			oninput={(e) => { tableQuery = e.currentTarget.value; syncQueryParam(); }}
 			onkeydown={(e) => {
 				if (e.key === "Enter") jumpToTable();
 			}}
@@ -151,14 +164,14 @@ function jumpToTable() {
 		<button
 			onclick={exportDdl}
 			disabled={store.exporting}
-			aria-label="Export"
+			aria-label="Export DDL"
 			aria-busy={store.exporting}
 			title="Download the current DDL as a .sql file"
 		>
 			{store.exporting ? "Exporting…" : "Export"}
 		</button>
-			<button onclick={exportPng} disabled={store.exporting} aria-label={store.exporting ? "Exporting PNG" : "Export PNG"} aria-busy={store.exporting}>Export PNG</button>
-			<button onclick={exportSvg} disabled={store.exporting} aria-label={store.exporting ? "Exporting SVG" : "Export SVG"} aria-busy={store.exporting}>Export SVG</button>
+			<button onclick={exportPng} disabled={store.exporting} aria-label={store.exporting ? "Exporting PNG…" : "Export PNG"} aria-busy={store.exporting}>Export PNG</button>
+			<button onclick={exportSvg} disabled={store.exporting} aria-label={store.exporting ? "Exporting SVG…" : "Export SVG"} aria-busy={store.exporting}>Export SVG</button>
 		</div>
 	</details>
 	<div class="grp" role="group" aria-label="View">
@@ -187,7 +200,7 @@ function jumpToTable() {
 		<span class="ok" data-testid="current-file" role="status" aria-live="polite">{store.currentFile}</span>
 	{/if}
 	{#if store.dirty && store.currentFile}
-		<span class="warn" data-testid="dirty" role="status" aria-live="polite">unsaved</span>
+		<span class="warn" data-testid="dirty" role="status" aria-live="polite">Unsaved</span>
 	{/if}
 </header>
 
@@ -236,10 +249,10 @@ function jumpToTable() {
 		flex: 0 0 auto;
 		white-space: nowrap;
 		min-height: 44px;
-		transition: background-color 0.15s ease, transform 0.15s ease, filter 0.15s ease;
+		transition: transform 0.15s ease, opacity 0.15s ease;
 	}
 	header button:not(:disabled):hover {
-		filter: brightness(1.08);
+		opacity: 0.92;
 	}
 	header button:not(:disabled):active {
 		transform: translateY(1px);
@@ -259,7 +272,7 @@ function jumpToTable() {
 		outline-offset: -2px;
 	}
 	header select.dialect {
-		background: var(--color-bg);
+		background-color: var(--color-bg);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
@@ -268,6 +281,9 @@ function jumpToTable() {
 		flex: 0 0 auto;
 		max-width: 160px;
 		min-height: 44px;
+	}
+	header select.dialect:hover {
+		border-color: var(--color-border-strong);
 	}
 	/* Tab pills: each group reads as one tab; the ::after bar slides in on
 	   hover or keyboard focus-within. Separators are gone — the pill border
@@ -283,7 +299,7 @@ function jumpToTable() {
 		border-radius: var(--radius-md);
 		padding: 6px 8px;
 		scroll-snap-align: start;
-		transition: border-color 0.18s ease, background-color 0.18s ease;
+		transition: opacity 0.18s ease;
 	}
 	.grp::after {
 		content: "";
@@ -296,18 +312,11 @@ function jumpToTable() {
 		background: var(--color-primary);
 		transform: scaleX(0);
 		transform-origin: left;
-		transition: transform 0.22s ease;
+		transition: transform 0.22s ease, opacity 0.22s ease;
 		pointer-events: none;
 	}
-	.grp:hover {
-		border-color: var(--color-border-strong);
-	}
-	.grp:hover::after,
-	.grp:focus-within::after {
-		transform: scaleX(1);
-	}
 	header input.search {
-		background: var(--color-bg);
+		background-color: var(--color-bg);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
@@ -317,6 +326,9 @@ function jumpToTable() {
 		width: 110px;
 		min-height: 44px;
 		box-sizing: border-box;
+	}
+	header input.search:hover {
+		border-color: var(--color-border-strong);
 	}
 	/* ⋯ overflow popover on narrow screens; inline row on wide ones. Open
 	   animates via keyframes (close snaps shut — <details> close is not
@@ -339,7 +351,7 @@ function jumpToTable() {
 		box-sizing: border-box;
 		display: inline-flex;
 		align-items: center;
-		transition: border-color 0.18s ease, background-color 0.18s ease;
+		transition: opacity 0.18s ease;
 	}
 	.more > summary:hover {
 		border-color: var(--color-border-strong);

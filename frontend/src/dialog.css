@@ -11,6 +11,8 @@ dialog.modal {
 	padding: 14px 16px;
 	box-shadow: 0 8px 32px #000a;
 	max-width: min(460px, calc(100vw - 32px));
+	overscroll-behavior: contain;
+	touch-action: manipulation;
 }
 
 dialog.modal::backdrop {
@@ -22,6 +24,7 @@ dialog.modal h2 {
 	font-size: 14px;
 	font-weight: 600;
 	color: var(--color-text);
+	text-wrap: balance;
 }
 
 dialog.modal .fld {
@@ -38,7 +41,7 @@ dialog.modal .fld > span {
 
 dialog.modal .fld input,
 dialog.modal .fld select {
-	background: var(--color-bg);
+	background-color: var(--color-bg);
 	color: var(--color-text);
 	border: 1px solid var(--color-border);
 	border-radius: var(--radius-sm);
@@ -46,6 +49,10 @@ dialog.modal .fld select {
 	font: 12px var(--font-mono);
 	width: 100%;
 	box-sizing: border-box;
+}
+dialog.modal .fld input:hover,
+dialog.modal .fld select:hover {
+	border-color: var(--color-border-strong);
 }
 
 dialog.modal fieldset {
@@ -67,6 +74,9 @@ dialog.modal footer {
 	justify-content: flex-end;
 	align-items: center;
 	margin-top: 12px;
+}
+dialog.modal button:not(:disabled):hover {
+	filter: brightness(1.08);
 }
 
 dialog.modal button:focus-visible,

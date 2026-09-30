@@ -14,6 +14,7 @@
 // style-src forbids inline styles on the dialog; corrected: style-src governs
 // static style attributes, not the Svelte runtime's CSSOM writes — and this
 // modal uses neither. See the note on the .zoom layer in App.svelte.)
+import { tick } from "svelte";
 import { showDialog } from "./dialog.js";
 import { baseType, isInt, TYPES } from "./erd.js";
 import { cardinalityState } from "./geometry.js";
@@ -94,9 +95,11 @@ $effect(() => {
 
 // Focus the name field whenever the edited column changes (mount + "Add
 // another" switches). Edits never change column.id, so keystrokes do not
-// re-trigger — only a column switch does.
+// re-trigger — only a column switch does. Desktop fine pointers only: on
+// touch the focus would pop the keyboard over the dialog just opened.
 $effect(() => {
 	void column.id;
+	if (!window.matchMedia("(pointer: fine)").matches) return;
 	const name = dlg?.querySelector("input.cname");
 	if (name instanceof HTMLElement) name.focus();
 });
@@ -104,6 +107,17 @@ $effect(() => {
 // Inline field-error text (S8): mirrors the toast for empty-name and
 // AI+default refusals so the recovery hint sits at the field.
 let fieldError = $state("");
+/** @param {string} msg */
+function setFieldError(msg) {
+	fieldError = msg;
+	// Keyboard/SR users land on the recovery hint; role=alert alone
+	// announces without moving them to the field that needs fixing.
+	if (msg)
+		tick().then(() => {
+			const el = dlg?.querySelector(".ferr");
+			if (el instanceof HTMLElement) el.focus();
+		});
+}
 function remove() {
 	const id = column.id;
 	rmColumn(table, column);
@@ -120,17 +134,19 @@ function remove() {
 	     anchor to the field — the toast stays for AT users, the <p> pins the
 	     recovery hint where the eye is. Local view state, cleared on close. -->
 	{#if fieldError}
-		<p class="ferr" role="alert">{fieldError}</p>
+		<p class="ferr" role="alert" tabindex="-1">{fieldError}</p>
 	{/if}
 
 	<label class="fld">
 		<span>Name</span>
 		<input
 			class="cname"
+			name="column-name"
+			autocomplete="off"
 			value={column.name}
 			onchange={(e) => {
 				const v = e.currentTarget.value.trim();
-				fieldError = v ? "" : "Name can't be empty — the old name was kept.";
+				setFieldError(v ? "" : "Name can’t be empty — the old name was kept.");
 				commitColName(table, column, e);
 			}}
 			spellcheck="false"
@@ -197,14 +213,13 @@ function remove() {
 			<span>Default</span>
 			<input
 				class="dflt"
-				placeholder="0 · 'x' · CURRENT_TIMESTAMP"
+				name="column-default"
+				autocomplete="off"
+				placeholder="0 · 'x' · CURRENT_TIMESTAMP…"
 				value={column.default ?? ""}
-				onchange={(e) => {
-					const v = e.currentTarget.value.trim();
-					fieldError =
-						v && column.ai
-							? "An auto-increment column can't have a default — clear AI first."
-							: "";
+			onchange={(e) => {
+				const v = e.currentTarget.value.trim();
+				setFieldError(v && column.ai ? "An auto-increment column can’t have a default — clear AI first." : "");
 					commitDefault(column, e);
 				}}
 				spellcheck="false"
@@ -285,7 +300,9 @@ function remove() {
 		<span>Comment</span>
 		<input
 			class="cmt"
-			placeholder="comment"
+			name="column-comment"
+			autocomplete="off"
+			placeholder="e.g. owner id…"
 			value={column.comment}
 			onchange={(e) => commitComment(column, e)}
 			spellcheck="false"
@@ -440,12 +457,12 @@ function remove() {
 		background: var(--color-primary);
 		color: var(--color-on-primary);
 	}
+	.done:hover {
+		background: var(--color-primary-hover);
+	}
 	.rmcol {
 		background: transparent;
 		color: var(--color-danger);
 		margin-right: auto;
-	}
-	.rmcol:hover {
-		background: var(--color-danger-hover);
 	}
 </style>

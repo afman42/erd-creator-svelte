@@ -103,12 +103,8 @@ func quoteTick(n string) string { return "`" + strings.ReplaceAll(n, "`", "``") 
 func quoteDQ(n string) string   { return `"` + strings.ReplaceAll(n, `"`, `""`) + `"` }
 func sqlStr(s string) string    { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-func splitType(ty string) (string, string) {
-	if i := strings.Index(ty, "("); i >= 0 && strings.HasSuffix(ty, ")") {
-		return strings.ToUpper(ty[:i]), ty[i+1 : len(ty)-1]
-	}
-	return strings.ToUpper(ty), ""
-}
+// splitType, baseOf, isInt, isArrayType live in spec.go (single type model).
+// fkAction / fkUpdateClause live there too (single referential-action policy).
 
 // splitTop splits on top-level commas, respecting parens and quoted strings.
 // All three quote characters the emitters use are honoured: single quotes
@@ -181,19 +177,6 @@ func enumCheck(colName, ty string, q func(string) string) (string, bool) {
 	return fmt.Sprintf("CHECK (%s IN (%s))", q(colName), strings.Join(quoted, ", ")), true
 }
 
-func baseOf(ty string) string {
-	base, _ := splitType(ty)
-	return base
-}
-
-func isInt(base string) bool {
-	switch base {
-	case "INT", "BIGINT", "SMALLINT", "TINYINT":
-		return true
-	}
-	return false
-}
-
 func tableMap(tables []Table) map[string]*Table {
 	m := make(map[string]*Table, len(tables))
 	for i := range tables {
@@ -255,25 +238,7 @@ func refCols(t Table) []Col {
 	return out
 }
 
-func fkAction(c Col) string {
-	if c.Ref.Action == "" {
-		return "CASCADE"
-	}
-	return c.Ref.Action
-}
-
-// fkUpdateClause renders the ON UPDATE clause, or "" when no action is set.
-//
-// Empty means omit — see the Ref comment for why ON UPDATE and ON DELETE use
-// opposite conventions. Returning "" rather than a default is what keeps a
-// schema without an ON UPDATE action byte-identical to the files this tool
-// wrote before the field existed.
-func fkUpdateClause(c Col) string {
-	if c.Ref.OnUpdate == "" {
-		return ""
-	}
-	return " ON UPDATE " + c.Ref.OnUpdate
-}
+// fkAction / fkUpdateClause live in spec.go.
 
 func pkLine(t Table, q func(string) string) string {
 	var pks []string

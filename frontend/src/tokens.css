@@ -4,12 +4,15 @@
    four: 2px for diagram nodes, 8px for dialogs. surface-hover is gone —
    hover states use border + outline, never a fill wash. */
 :root {
+	color-scheme: dark;
 	--color-bg: #0d141b;
 	--color-surface: #161e27;
+	-webkit-tap-highlight-color: transparent;
 	--color-border: #31404f;
 	--color-border-strong: #232e3a;
 	--color-primary: #5e9b7a;
 	--color-primary-hover: #6cab89;
+	--color-focus: #6cab89;
 	--color-text: #dce4ec;
 	--color-text-muted: #9db4c6;
 	--color-text-faint: #7e96ab;
@@ -71,6 +74,7 @@
    presentation attributes cannot read custom properties; the test in
    erd.test.js asserts all eight stay equal. */
 [data-theme="light"] {
+	color-scheme: light;
 	--color-bg: #ffffff;
 	--color-surface: #f4f6f9;
 	--color-border: #c4cfdd;
@@ -78,6 +82,7 @@
 	--color-primary: #3f7d5c;
 	--color-primary-hover: #4a8f6a;
 	--color-text: #1d2835;
+	--color-focus: #4a8f6a;
 	--color-text-muted: #4a5a6a;
 	--color-text-faint: #3f6d96;
 	--color-success: #15803d;

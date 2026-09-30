@@ -113,9 +113,9 @@ export async function refreshSql() {
 // Wired from App's $effect (which tracks schema deep state + the local
 // showSql flag): debounce fan-out — lint, autosave and SQL-panel refresh each
 // wait for their own quiet window before firing (see LINT/SAVE/SQL_DEBOUNCE_MS
-// in autosave.js). skipTouch: set right before openFile/newFile swap
-// store.schema; the App $effect fires once on the swap — that is a load, not a
-// user edit, so it must not mark the file dirty or schedule a needless save.
+// load() arms the echo-drop + clears timers/dirty BEFORE the schema swap;
+// the App $effect fires once on the swap — that is a load, not a user edit,
+// so it must not mark the file dirty or schedule a needless save.
 import {
 	flushCurrent as flushAutosave,
 	installFlush,
@@ -818,7 +818,20 @@ async function refreshFiles() {
 }
 refreshFiles().then(() => {
 	if (!store.files.length) return;
-	const newest = store.files.reduce((a, b) => (b.mtime > a.mtime ? b : a));
+	// ?file= wins over the newest-file default: a shared link must open the
+	// linked file, not whatever was touched last. Suffix-tolerant — the URL
+	// stores the bare stem (?file=blog), the store keeps "blog.sql".
+	const linked = new URLSearchParams(location.search).get("file");
+	const linkedName = linked
+		? linked.endsWith(".sql")
+			? linked
+			: `${linked}.sql`
+		: null;
+	if (linkedName && store.files.some((f) => f.name === linkedName))
+		return openFile(linkedName);
+	const newest = store.files.reduce((a, b) =>
+		(b.mtime ?? "") > (a.mtime ?? "") ? b : a,
+	);
 	openFile(newest.name);
 });
 

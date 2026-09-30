@@ -102,7 +102,7 @@ function create() {
 	<div class="endpoints">
 		<label class="fld">
 			<span>{type === "N:N" ? "Table A" : "Child · many"}</span>
-			<select data-testid="rel-child" value={childId} onchange={(e) => (childId = e.currentTarget.value)}>
+			<select data-testid="rel-child" name="rel-child" value={childId} onchange={(e) => (childId = e.currentTarget.value)}>
 				{#each tables as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
 			</select>
 			{#if type !== "N:N"}<small>referencing side, gets the FK</small>{/if}
@@ -118,7 +118,7 @@ function create() {
 
 		<label class="fld">
 			<span>{type === "N:N" ? "Table B" : "Parent · one"}</span>
-			<select data-testid="rel-parent" value={parentId} onchange={(e) => (parentId = e.currentTarget.value)}>
+			<select data-testid="rel-parent" name="rel-parent" value={parentId} onchange={(e) => (parentId = e.currentTarget.value)}>
 				{#each tables as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
 			</select>
 			{#if type !== "N:N"}<small>referenced side</small>{/if}
@@ -126,7 +126,7 @@ function create() {
 	</div>
 
 	{#if childId === parentId}
-		<p class="warnhint" role="alert">Pick two different tables — a table can't reference itself here.</p>
+		<p class="warnhint" role="alert">Pick two different tables — a table can’t reference itself here.</p>
 	{/if}
 
 	<fieldset class="types">
@@ -248,7 +248,7 @@ function create() {
 			data-testid="rel-create"
 			onclick={create}
 			title={invalid ? "Pick two different tables" : "Create relationship"}
-		>Create</button>
+		>Create Relationship</button>
 	</footer>
 </dialog>
 
@@ -284,7 +284,7 @@ function create() {
 		color: var(--color-text-faint);
 	}
 	.fld select {
-		background: var(--color-bg);
+		background-color: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
@@ -293,6 +293,9 @@ function create() {
 		width: 100%;
 		box-sizing: border-box;
 		min-height: 44px;
+	}
+	.fld select:hover {
+		border-color: var(--color-text-faint);
 	}
 	.swap {
 		margin-top: 20px;
@@ -413,6 +416,7 @@ function create() {
 		color: var(--color-text-muted);
 		font-size: 11px;
 		margin: 2px 0 0;
+		overflow-wrap: anywhere;
 	}
 	.preview .cap code {
 		font: 11px var(--font-mono);

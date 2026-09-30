@@ -94,7 +94,7 @@ string.
   to sit inline in a 280px row, where they needed ~342px and clipped; the row's
   26px height and the comment line's 16px are unchanged, so FK edge anchors are
   unaffected.)
- - **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
+- **Relationships** — per-column `FK→` select + `ON DELETE` / `ON UPDATE`
   actions; bezier edge renders automatically; type-mismatch lint (server-side)
   shows in the lint panel. Once an FK is set, the column dialog's
   **Relationship** block shows the derived state (`0..N / 0..1`, `0..N / 1..1`, `0..1 / 0..1`,
@@ -196,6 +196,7 @@ string.
   attributes) and once in `tokens.css` (for the on-screen view), with a test
   asserting the two stay equal, because a CSS custom property does not resolve
   in the exported document either.
+
 - **Export PNG / SVG** — `Export PNG` rasterizes the canvas (tables + FK edges)
   to a `.png` via `html-to-image` (dynamic import, no extra weight on SQL path).
   The image covers the **whole diagram**, not just the visible area: the
@@ -297,7 +298,12 @@ string.
   `.sql`→`.png`, or `<dialect>-schema.png`). All four dialects are saveable:
   each has a parser, so a saved file reopens and keeps its own dialect rather
   than silently becoming MySQL.
-
+- **Deep links** — panels, zoom, find text, file and selection sync to the
+  query string (`?file=&sql&lint&zoom=&q=&sel=`, via `replaceState`, no
+  history spam): a copied URL reopens the same file with the same panels,
+  zoom, find text and selected table. Selection links by table NAME (ids are
+  session-local); zoom is an integer percent (25–200, clamped); `?file=`
+  wins over the newest-file default on startup.
   `mariadb` shares the MySQL grammar: every construct we emit is valid in both,
   so the two files differ only in the header comment. It is nonetheless its own
   dialect, because a schema saved as MariaDB should reopen as MariaDB rather
@@ -333,8 +339,9 @@ frontend/src/relationships.js  (pure creators createRelationship/createManyToMan
 frontend/src/capture.js      (PNG/SVG capture via html-to-image, bounds via geometry)
 frontend/src/download.js     (download + clipboard helpers)         (pure)
 frontend/src/history.js      (undo stack, JSON snapshots)           (pure)
-frontend/src/autosave.js     (debounced lint/save/sql, dirty flag) (pure)
-frontend/src/schema.svelte.js(store: model state, mutations, fetch glue)
+frontend/src/autosave.js     (debounced lint/save/sql, dirty flag, load event) (pure)
+frontend/src/fileStore.js      (working-dir .sql client: open/save/rename/copy) (fetch glue)
+frontend/src/urlState.js      (URL encode/decode for deep links) (pure, testable)
 frontend/src/Toast.svelte     (flash notices, bottom-right toast)
 frontend/src/TableCard.svelte(table card, column rows, dialog hosts)
 frontend/src/ColumnRow.svelte(column row: badges, FK target, edit button)
@@ -349,10 +356,11 @@ frontend/src/App.svelte      (canvas rendering, drag/keys, SQL panel toggle)
 grammar.go              model + mysql/mariadb parse/lint + inserts
 import.go               best-effort import: strict ParseDDL first, then one lenient pass + warnings
 grammar_postgres.go     postgres parse (reads buildPostgres output)
-validate.go             trust boundary: schema + output validation (+ type helpers)
+spec.go                 capability model: type helpers + referential-action policy (queried by all)
+validate.go             trust boundary: schema + output validation (type helpers in spec.go)
 security.go             HTTP hardening: headers, Host/Origin guards, timeouts
 files.go                working-dir .sql store (GET/PUT/DELETE) (+ path helpers)
-export.go               dialect emitters: mysql|mariadb|postgres|sqlite (+ col helpers, registry)
+export.go               dialect emitters: mysql|mariadb|postgres|sqlite (+ col helpers, registry; type/action policy in spec.go)
 main.go                 embed.FS server + API route wiring
 ```
 

@@ -50,13 +50,28 @@ import {
 import TableCard from "./TableCard.svelte";
 import Toast from "./Toast.svelte";
 import Toolbar from "./Toolbar.svelte";
+import { scrollToTable } from "./ui.js";
+import {
+	decodeViewState,
+	encodeViewState,
+	resolveSelectedId,
+} from "./urlState.js";
+
+// Deep-link seed: panels, zoom, find text and selection restore from the
+// query string on load (?file=&sql&lint&zoom=&q=&sel=). File open happens
+// once the file list arrives (schema.svelte owns that fetch); selection by
+// NAME resolves then too — ids are session-local, names survive reload.
+const initialView = decodeViewState(new URLSearchParams(location.search));
+// One-shot guard: the apply effect below must run once when the file list
+// lands, not on every files refresh afterwards.
+let appliedDeepLink = false;
 
 let showSql = $state(false);
 let showRelationship = $state(false);
-let showLint = $state(false);
+let showLint = $state(initialView.showLint);
 // Canvas zoom (S7): CSS-transform scale on .zoom, clamped 0.25–2. Pinch
 // (ctrl+wheel) + buttons + Fit. Local view state — never enters schema/undo.
-let zoom = $state(1);
+let zoom = $state(initialView.zoom);
 /** @param {number} z */
 function setZoom(z) {
 	zoom = clampZoom(z);
@@ -88,6 +103,7 @@ let pan = $state(null);
 // frames, and every x/y write re-runs the $effect tracker (JSON.stringify,
 // measured ~4.4ms at 200 tables) + edgePaths + Svelte DOM churn. Writing once
 // per frame keeps drag at 60fps instead of compounding per event.
+/** @type {{ dx: number, dy: number } | null} */
 let dragPending = null;
 let dragRaf = 0;
 // Fix C: hysteresis memory for edge routing — one Map per session, passed to
@@ -96,18 +112,19 @@ let dragRaf = 0;
 let edgeSticky = new Map();
 
 // <4px = click (select), not a drag/pan
-/** @param {{ x0: number, y0: number }} origin */
+/** @param {{ x0: number, y0: number }} origin @param {PointerEvent} ev */
 function pastClickThreshold(origin, ev) {
 	return Math.hypot(ev.clientX - origin.x0, ev.clientY - origin.y0) >= 4;
 }
 
 function applyDragPending() {
 	dragRaf = 0;
-	if (!drag || !dragPending) return;
-	const t = store.schema.tables.find((x) => x.id === drag.id);
+	const d = drag;
+	if (!d || !dragPending) return;
+	const t = store.schema.tables.find((x) => x.id === d.id);
 	if (t) {
-		t.x = snapCoord(Math.max(0, drag.tx0 + dragPending.dx));
-		t.y = snapCoord(Math.max(0, drag.ty0 + dragPending.dy));
+		t.x = snapCoord(Math.max(0, d.tx0 + dragPending.dx));
+		t.y = snapCoord(Math.max(0, d.ty0 + dragPending.dy));
 		// Position-only write: bump the local pos state (not struct) so the
 		// edge derivation re-runs on the same frame — the mutation alone may
 		// not invalidate $derived — while the memoized name/ref maps in
@@ -175,6 +192,61 @@ $effect(() => {
 	document.documentElement.dataset.theme = store.theme;
 });
 
+// Warn before tab close with unsaved edits: autosave flushes on pagehide, but
+// a save in flight can still fail server-side after the page is gone.
+$effect(() => {
+	if (!store.dirty || !store.currentFile) return;
+	/** @param {BeforeUnloadEvent} e */
+	const warn = (e) => e.preventDefault();
+	window.addEventListener("beforeunload", warn);
+	return () => window.removeEventListener("beforeunload", warn);
+});
+
+// URL mirror: panels, zoom, file and selection stay deep-linkable via
+// replaceState (no history spam per keystroke/drag frame). Selection writes
+// the table NAME — ids are session-local, names survive reload. Find text
+// (?q=) is owned by Toolbar's input handler; this effect reads it from the
+// URL so the two writers never fight over one param.
+// Tracked reactive roots: showSql/showLint/zoom/store.schema/store.selected/
+// store.currentFile. untrack() is absent here on purpose — every root above
+// must re-fire the mirror when it changes.
+$effect(() => {
+	const selName =
+		store.schema.tables.find((t) => t.id === store.selected)?.name ?? "";
+	const q = new URLSearchParams(location.search).get("q") ?? "";
+	const qs = encodeViewState({
+		file: store.currentFile.replace(/\.sql$/, ""),
+		showSql,
+		showLint,
+		zoom,
+		query: q,
+		sel: selName,
+	}).toString();
+	const next = qs ? `?${qs}` : location.pathname;
+	if (next !== location.pathname + location.search)
+		history.replaceState(null, "", next);
+});
+
+// Deep-link apply: once the FILE lands, resolve ?sel= (name) to an id and
+// select + scroll to it. ?file= is opened by schema.svelte's startup (which
+// owns the file list); this effect waits for currentFile (not just the list)
+// so the schema is the loaded file — refreshing SQL on the scratch default
+// would fetch (and briefly render) the wrong DDL, and the touch effect's
+// debounced refresh can land after the real one.
+$effect(() => {
+	const files = store.files;
+	if (!files.length || appliedDeepLink || !store.currentFile) return;
+	appliedDeepLink = true;
+	if (initialView.showSql) {
+		showSql = true;
+		refreshSql();
+	}
+	if (initialView.sel) {
+		const id = resolveSelectedId(store.schema, initialView.sel);
+		if (id) scrollToTable(id, initialView.sel, setSelected);
+	}
+});
+
 function toggleSql() {
 	showSql = !showSql;
 	if (showSql) refreshSql();
@@ -182,6 +254,7 @@ function toggleSql() {
 
 /**
  * @param {import("./erd.js").Table} t
+ * @param {PointerEvent} ev
  */
 function startDrag(t, ev) {
 	// Click-select lives on .hdr (both the select button and the header
@@ -203,7 +276,8 @@ function startDrag(t, ev) {
 		z: zoom,
 		moved: false,
 	};
-	if (!ev.target.closest("input")) ev.preventDefault();
+	if (!(ev.target instanceof HTMLElement) || !ev.target.closest("input"))
+		ev.preventDefault();
 }
 // Empty-canvas drag pans the viewport, the partner to the layout-box fix:
 // zoomed content is reachable by drag, not just scrollbars. Table headers own
@@ -213,9 +287,8 @@ function startDrag(t, ev) {
 /** @param {PointerEvent} ev */
 function startPan(ev) {
 	if (ev.button !== 0 || ev.pointerType === "touch" || !canvasEl) return;
-	if (
-		ev.target.closest("section.table, dialog, button, input, select, textarea")
-	)
+	const el = ev.target instanceof HTMLElement ? ev.target : null;
+	if (el?.closest("section.table, dialog, button, input, select, textarea"))
 		return;
 	pan = {
 		x0: ev.clientX,
@@ -232,9 +305,8 @@ function startPan(ev) {
 /** @param {MouseEvent} ev */
 function onDbl(ev) {
 	if (!canvasEl) return;
-	if (
-		ev.target.closest("section.table, dialog, button, input, select, textarea")
-	)
+	const el = ev.target instanceof HTMLElement ? ev.target : null;
+	if (el?.closest("section.table, dialog, button, input, select, textarea"))
 		return;
 	const r = canvasEl.getBoundingClientRect();
 	addTableAt(
@@ -249,9 +321,10 @@ function onDbl(ev) {
 // empty-canvas release / no movement) → no mutation, no snap.
 /** @type {{ childId: string, colId: string, x0: number, y0: number, x1: number, y1: number, x2: number, y2: number } | null} */
 let connect = $state(null);
-/** Canvas-relative model coords for a client pointer (zoom-aware). */
+/** Canvas-relative model coords for a client pointer (zoom-aware). @param {PointerEvent} ev */
 function toModel(ev) {
-	const r = canvasEl.getBoundingClientRect();
+	const r = canvasEl?.getBoundingClientRect();
+	if (!r || !canvasEl) return { x: 0, y: 0 };
 	return {
 		x: (ev.clientX - r.left + canvasEl.scrollLeft) / zoom,
 		y: (ev.clientY - r.top + canvasEl.scrollTop) / zoom,
@@ -262,7 +335,9 @@ function beginConnect(childId, colId, ev) {
 	if (ev.button !== 0 || !canvasEl) return;
 	const t = store.schema.tables.find((x) => x.id === childId);
 	if (!t) return;
-	const idx = t.columns.findIndex((c) => c.id === colId);
+	const idx = t.columns.findIndex(
+		(/** @param {{ id: string }} c */ c) => c.id === colId,
+	);
 	if (idx < 0) return;
 	const a = columnAnchor(t, idx);
 	const m = toModel(ev);
@@ -278,12 +353,14 @@ function beginConnect(childId, colId, ev) {
 	};
 	ev.preventDefault();
 }
+/** @param {PointerEvent} ev */
 function moveConnect(ev) {
 	if (!connect || !canvasEl) return;
 	const m = toModel(ev);
 	connect.x2 = m.x;
 	connect.y2 = m.y;
 }
+/** @param {PointerEvent} ev */
 function endConnect(ev) {
 	if (!connect) return;
 	const c = connect;
@@ -294,7 +371,8 @@ function endConnect(ev) {
 	const el = document
 		.elementFromPoint(ev.clientX, ev.clientY)
 		?.closest("section.table");
-	const parentId = el?.dataset?.tableId ?? null;
+	const parentId =
+		el instanceof HTMLElement ? (el.dataset.tableId ?? null) : null;
 	if (!parentId) return; // dropped on empty canvas: abort, no snap
 	if (parentId === c.childId) {
 		flash("child and parent must be distinct tables", "err");
@@ -302,6 +380,7 @@ function endConnect(ev) {
 	}
 	addRelationship(c.childId, parentId, "1:N");
 }
+/** @param {PointerEvent} ev */
 function onMove(ev) {
 	if (connect) {
 		moveConnect(ev);
@@ -359,6 +438,7 @@ function onWheel(ev) {
 	ev.preventDefault();
 	setZoom(zoom - Math.sign(ev.deltaY) * 0.1);
 }
+/** @param {PointerEvent} ev */
 function onUp(ev) {
 	if (connect) {
 		endConnect(ev);
@@ -394,6 +474,7 @@ function onCancel() {
 	dragPending = null;
 	pan = null;
 }
+/** @param {KeyboardEvent} ev */
 function onKey(ev) {
 	// The column dialog owns the keyboard while it is open. Without this, a
 	// focused <button> inside it is not INPUT/SELECT/TEXTAREA, so `editing` is
@@ -491,7 +572,10 @@ function onKey(ev) {
 />
 
 <main>
+	<a class="skip-link" href="#erd-canvas">Skip to canvas</a>
 	<div
+		id="erd-canvas"
+		tabindex="-1"
 		bind:this={canvasEl}
 		class="canvas"
 		class:dragging={!!drag}
@@ -646,10 +730,29 @@ function onKey(ev) {
 		font: 13px system-ui, sans-serif;
 		background: var(--color-bg);
 		color: var(--color-text);
+		touch-action: manipulation;
 	}
 	main {
 		display: flex;
 		height: calc(100vh - 41px);
+	}
+	.skip-link {
+		position: absolute;
+		left: 8px;
+		top: -48px;
+		z-index: 60;
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-focus);
+		border-radius: var(--radius-md);
+		padding: 8px 12px;
+		text-decoration: none;
+		transition: transform 0.15s ease, opacity 0.15s ease;
+	}
+	.skip-link:focus-visible {
+		transform: translateY(56px);
+		outline: 2px solid var(--color-focus);
+		outline-offset: 2px;
 	}
 	/* .sr-only lives in tokens.css (global) — one class, not four copies. */
 	.canvas {

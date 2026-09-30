@@ -161,10 +161,9 @@ func parsePostgres(sql string) (*Schema, []string, error) {
 				// m[5] is the whole " ON DELETE <action>" clause; m[6] is the action.
 				// (The constraint-name capture at the front shifts these one past
 				// the mysql regex, which has no such group and uses m[5].)
-				// m[7]/m[8] are the same pair for ON UPDATE; an absent clause leaves
-				// m[8] empty, which is how the model says "no ON UPDATE".
-				action := defaultFKAction(m[6])
-				pending = append(pending, pendingFK{tbl.ID, unquoteDQ(m[2]), unquoteDQ(m[3]), action, normalizeFKAction(m[8])})
+				// resolveActions applies the DELETE default + UPDATE omit rule.
+				del, upd := resolveActions(m[6], m[8])
+				pending = append(pending, pendingFK{tbl.ID, unquoteDQ(m[2]), unquoteDQ(m[3]), del, upd})
 				continue
 			}
 			if rePgKeyword.MatchString(body) {

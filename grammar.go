@@ -481,47 +481,11 @@ func splitIndexCols(list string, unquote func(string) string) []string {
 	return out
 }
 
-// fkActions is the set of referential actions this tool emits and accepts.
-//
-// This is an allowlist rather than a free-text field for the same reason the
-// type field is pattern-matched (validate.go): the action is emitted as raw
-// SQL text inside a constraint clause, so "SET NULL; DROP TABLE users;--" would
-// be injection if it were copied through. Validating it here means the value
-// that reaches the emitter is one of five known-good tokens.
-//
-// The file parser applies the same check, so a hand-written .sql cannot persist
-// an action that re-emits on every save — the same reasoning as the type check.
-var fkActions = map[string]bool{
-	"CASCADE":     true,
-	"RESTRICT":    true,
-	"SET NULL":    true,
-	"SET DEFAULT": true,
-	"NO ACTION":   true,
-}
-
-// validateFKAction checks one referential action. Empty is allowed for ON
-// UPDATE (it means "omit the clause"); the ON DELETE default is applied at
-// emit time (fkAction), so an empty value passes validation here — this is the
-// only place the raw wire value is seen, so it must not reject what the
-// defaulting accepts.
-func validateFKAction(what, v string) error {
-	if v == "" {
-		return nil
-	}
-	if !fkActions[v] {
-		return fmt.Errorf("%s is not a known referential action", what)
-	}
-	return nil
-}
-
-// normalizeFKAction canonicalizes an action read from a file. The parser
-// uppercases type names the same way (reTypeNorm), so a hand-written
-// "on delete cascade" loads as the canonical "CASCADE" the emitters write
-// rather than failing the allowlist on save.
-func normalizeFKAction(s string) string {
-	return strings.ToUpper(strings.TrimSpace(s))
-}
-
+// pendingFK and the parser helpers below are the shared per-parse
+// accumulator. Referental-action policy (fkActions, validateFKAction,
+// normalizeFKAction, defaultFKAction) and the type model (splitType, baseOf,
+// isInt, isArrayType) live in spec.go so validate, emitters, parsers, and
+// import all query one implementation.
 type pendingFK struct {
 	tableID, col, table, action, onUpdate string
 }
@@ -568,15 +532,6 @@ func routeIndex(tbl *Table, cols []string, name string) (string, bool) {
 		tbl.Indexes = append(tbl.Indexes, Index{Name: name, Cols: cols})
 	}
 	return "", true
-}
-
-// defaultFKAction normalizes a raw ON DELETE action, applying the model's
-// historical CASCADE default when absent.
-func defaultFKAction(raw string) string {
-	if action := normalizeFKAction(raw); action != "" {
-		return action
-	}
-	return "CASCADE"
 }
 
 // ParseDDL rebuilds a schema from DDL this tool emitted, detecting the dialect
@@ -817,9 +772,10 @@ func parseMysqlClause(body, rawLine string, tbl *Table, pending *[]pendingFK, n 
 		return nil
 	}
 	if m := reFK.FindStringSubmatch(body); m != nil {
-		// m[7] is the ON UPDATE action; empty means the clause was absent, which
-		// is how the model represents "no ON UPDATE" — see the Ref comment.
-		*pending = append(*pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), defaultFKAction(m[5]), normalizeFKAction(m[7])})
+		// m[5]/m[7] are the raw ON DELETE/UPDATE actions; resolveActions
+		// (spec.go) applies the DELETE default and the UPDATE omit rule.
+		del, upd := resolveActions(m[5], m[7])
+		*pending = append(*pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), del, upd})
 		return nil
 	}
 	return fmt.Errorf("line %d: unsupported clause: %s", n, lineExcerpt(rawLine))

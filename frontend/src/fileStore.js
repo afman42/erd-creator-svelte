@@ -7,7 +7,7 @@ import {
 	clearTimers as clearAutosaveTimers,
 	editGeneration,
 	flushCurrent as flushAutosave,
-	markSkipTouch,
+	load as loadAutosave,
 	setDirtyBoth,
 } from "./autosave.js";
 import {
@@ -137,7 +137,10 @@ export async function openFile(store, name, flash) {
 	await flushCurrent(store, flash);
 	try {
 		const loaded = await apiJson(`/api/files/${encodeURIComponent(name)}`);
-		markSkipTouch();
+		// Load event BEFORE the schema swap: arms the echo-drop + clears
+		// pending timers/dirty, so the App $effect firing on the swap below
+		// schedules nothing.
+		loadAutosave(store);
 		if (!loaded.dialect) loaded.dialect = DEFAULT_DIALECT;
 		if (!loaded.sqliteTypes) loaded.sqliteTypes = DEFAULT_SQLITE_TYPES;
 		store.schema = adoptIds(loaded);
@@ -165,7 +168,7 @@ export async function newFile(store, flash) {
 		return;
 	}
 	await flushCurrent(store, flash);
-	markSkipTouch();
+	loadAutosave(store);
 	store.schema = newSchema(store.schema.dialect, [newTable("users")]);
 	layout(store.schema);
 	store.currentFile = name;
