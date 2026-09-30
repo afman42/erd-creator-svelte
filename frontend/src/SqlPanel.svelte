@@ -16,11 +16,11 @@ const sqlLoading = $derived(store.sqlLoading && !store.sqlText);
 		<button onclick={copySql} aria-label="Copy SQL to clipboard">Copy</button>
 	</div>
 	{#if sqlLoading}
-		<div class="skeleton" aria-busy="true" aria-label="Loading…">
-			<div class="sk-line w70"></div>
-			<div class="sk-line w85"></div>
-			<div class="sk-line w60"></div>
-			<div class="sk-line short w45"></div>
+		<div class="skeleton" role="status" aria-label="Loading SQL preview">
+			<div class="sk-line w70" aria-hidden="true"></div>
+			<div class="sk-line w85" aria-hidden="true"></div>
+			<div class="sk-line w60" aria-hidden="true"></div>
+			<div class="sk-line short w45" aria-hidden="true"></div>
 		</div>
 	{:else}
 		<!-- aria-live OFF + labelled region: the full dump re-renders on every

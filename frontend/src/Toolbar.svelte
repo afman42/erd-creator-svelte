@@ -157,7 +157,18 @@ function syncQueryParam() {
 		/>
 	</div>
 	<details class="more">
-		<summary aria-label="More share actions">⋯</summary>
+		<summary
+			aria-label="More share actions"
+			aria-keyshortcuts="Escape"
+			onkeydown={(e) => {
+				if (e.key !== "Escape") return;
+				const d = e.currentTarget.closest("details");
+				if (d?.open) {
+					d.open = false;
+					e.currentTarget.blur();
+				}
+			}}
+		>⋯</summary>
 		<div class="grp" role="group" aria-label="Share">
 			<button onclick={copySql} aria-label="Copy SQL" title="Copy the current DDL to the clipboard">Copy SQL</button>
 			<button onclick={copyInserts} aria-label="Copy INSERTs" title="Copy seed-row INSERT templates">Copy INSERTs</button>

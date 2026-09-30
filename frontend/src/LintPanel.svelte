@@ -42,10 +42,10 @@ function longestTablePrefix(msg) {
 	{#if store.lint.length === 0}
 		<p class="clean" data-testid="lint-clean">No issues</p>
 	{:else}
-		<ul data-testid="lint-list">
+		<ul data-testid="lint-list" aria-label="Lint findings list">
 			{#each store.lint as msg, i (i)}
 				<li>
-					<button onclick={() => jumpTo(msg)} title="jump to table">
+					<button onclick={() => jumpTo(msg)} aria-label="Jump to table for: {msg}" title="jump to table">
 						{msg}
 					</button>
 				</li>

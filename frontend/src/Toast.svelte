@@ -12,13 +12,12 @@ import { store } from "./schema.svelte.js";
 // e2e (getByTestId("toast") text assertions) keeps passing unchanged.
 </script>
 
-<div data-testid="toast" aria-live="off">
+<div data-testid="toast">
 	{#each store.notices as n (n.id)}
 		<span
 			class={n.kind}
 			title={n.msg}
-			role={n.kind === "err" ? "alert" : "status"}
-			aria-live={n.kind === "err" ? "assertive" : "polite"}>{n.msg}</span>
+			role={n.kind === "err" ? "alert" : "status"}>{n.msg}</span>
 	{/each}
 </div>
 
