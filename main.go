@@ -69,15 +69,16 @@ func main() {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	// Order matters: the Host allowlist runs first so a rebinding request is
-	// refused before it reaches any handler, then the same-origin check, then
-	// the response headers (set on the way out, including on those refusals).
+	// Order matters: securityHeaders is outermost so every reply — including
+	// hostGuard/sameOriginGuard refusals — carries CSP/nosniff/DENY. The guards
+	// run before any handler, so a rebinding request is still refused before
+	// it reaches the mux.
 	var h http.Handler = mux
-	h = requestLog(h)
-	h = recoverPanic(h)
-	h = securityHeaders(h)
-	h = sameOriginGuard(h)
 	h = hostGuard(*host)(h)
+	h = sameOriginGuard(h)
+	h = recoverPanic(h)
+	h = requestLog(h)
+	h = securityHeaders(h)
 
 	// Listen explicitly rather than http.ListenAndServe so the log line can
 	// report the port actually bound — with -port 0 that is the only way to
@@ -89,6 +90,9 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("erd-creator started", "url", displayURL(ln.Addr()), "dir", *dir)
+	if *host == "" || *host == "0.0.0.0" || *host == "::" {
+		slog.Warn("listening on all interfaces with no authentication; restrict -host to loopback on untrusted networks", "host", *host)
+	}
 	srv := newServer(h)
 	// Serve rather than ListenAndServe: the listener is already bound, so the
 	// resolved port is known and logged before the first request is accepted.

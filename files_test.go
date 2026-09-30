@@ -200,6 +200,34 @@ func TestTrashNameCollision(t *testing.T) {
 	}
 }
 
+// TestTrashKeepsFreshMtime: os.Link preserves the source mtime, so a recycle
+// must re-stamp the trash entry with the delete time — otherwise an old file
+// deleted today looks old to sweepTrash and loses its 7-day retention.
+func TestTrashKeepsFreshMtime(t *testing.T) {
+	dir := t.TempDir()
+	h := handleFiles(dir)
+	rec := do(t, h, "PUT", "/api/files/x.sql", jsonBody(sampleSchema()))
+	if rec.Code != 204 {
+		t.Fatalf("save: %d", rec.Code)
+	}
+	full := filepath.Join(dir, "x.sql")
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(full, old, old); err != nil {
+		t.Fatal(err)
+	}
+	rec = do(t, h, "DELETE", "/api/files/x.sql", nil)
+	if rec.Code != 204 {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	info, err := os.Stat(filepath.Join(dir, trashDirName, "x.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(info.ModTime()) > time.Hour {
+		t.Errorf("trash entry mtime %v, want ~now (retention defeated)", info.ModTime())
+	}
+}
+
 // TestFilesListFilters: the list must show only addressable .sql files, so a
 // file the UI cannot open (or delete) is never offered.
 func TestFilesListFilters(t *testing.T) {

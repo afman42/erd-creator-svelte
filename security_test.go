@@ -630,6 +630,42 @@ func TestSecurityHeadersOnError(t *testing.T) {
 	}
 }
 
+// TestGuardRefusalsCarryHeaders: the guards run inside securityHeaders, so a
+// Host/Origin refusal must still carry CSP/nosniff — the composition main()
+// uses, not securityHeaders alone.
+func TestGuardRefusalsCarryHeaders(t *testing.T) {
+	var h http.Handler = http.NewServeMux()
+	h = hostGuard()(h)
+	h = sameOriginGuard(h)
+	h = securityHeaders(h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "evil.example"
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code %d, want 403", rec.Code)
+	}
+	if rec.Header().Get("Content-Security-Policy") == "" {
+		t.Error("host-guard refusal missing CSP — securityHeaders is not outermost")
+	}
+	if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("host-guard refusal missing nosniff")
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/files/x.sql", nil)
+	req2.Host = "127.0.0.1:8731"
+	req2.Header.Set("Origin", "http://evil.example")
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("code %d, want 403", rec2.Code)
+	}
+	if rec2.Header().Get("Content-Security-Policy") == "" {
+		t.Error("origin-guard refusal missing CSP — securityHeaders is not outermost")
+	}
+}
+
 // ---- timeouts ----
 
 // TestServerTimeouts: a bare listener has no read deadline, so a client can

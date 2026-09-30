@@ -153,7 +153,7 @@ func handleFiles(dir string) http.Handler {
 				if os.IsNotExist(err) {
 					http.Error(w, "file not found: "+name, http.StatusNotFound)
 				} else {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					internalFail(w, "delete failed", "delete failed", "path", full, "error", err)
 				}
 				return
 			}
@@ -221,6 +221,13 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 	}
 	if _, err := os.Lstat(toFull); err == nil {
 		http.Error(w, "file already exists: "+req.To, http.StatusConflict)
+		return
+	} else if !os.IsNotExist(err) {
+		// Lstat failed for a reason other than absence (permissions, I/O):
+		// fail closed rather than racing into a rename against an unknown
+		// target state. os.Rename below still reports a concurrent create
+		// as a plain error (last-writer-wins inside the store, no escape).
+		internalFail(w, "rename failed", "rename target stat failed", "path", toFull, "error", err)
 		return
 	}
 	if copy {
@@ -298,7 +305,7 @@ func internalFail(w http.ResponseWriter, msg, logMsg string, args ...any) {
 func listFiles(w http.ResponseWriter, dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalFail(w, "list failed", "list failed", "dir", dir, "error", err)
 		return
 	}
 	type fileInfo struct {
@@ -569,6 +576,18 @@ func trashSuffix(name string) (string, error) {
 	return name + "." + hex.EncodeToString(suffix[:]), nil
 }
 
+// touchTrash stamps a recycled file with the delete time. os.Link preserves
+// the source mtime, so without this an 8-day-old file recycled today would
+// look 8 days old to sweepTrash and be removed immediately, defeating the
+// 7-day retention. Best-effort: a failed stamp only shortens retention for
+// that entry, it never blocks the recycle.
+func touchTrash(dst string) {
+	now := time.Now()
+	if err := os.Chtimes(dst, now, now); err != nil {
+		slog.Error("trash touch failed", "path", dst, "error", err)
+	}
+}
+
 func trashFile(dir, full, name string) error {
 	td, err := trashPath(dir)
 	if err != nil {
@@ -578,6 +597,7 @@ func trashFile(dir, full, name string) error {
 	// Rename, which silently replaces it): no stat-then-rename TOCTOU where a
 	// link planted between the check and the rename eats the recycled file.
 	if err := os.Link(full, filepath.Join(td, name)); err == nil {
+		touchTrash(filepath.Join(td, name))
 		//nolint:gosec // full is storePath-resolved; td is trashPath-resolved inside the store
 		return os.Remove(full)
 	} else if !os.IsExist(err) {
@@ -598,6 +618,7 @@ func trashFile(dir, full, name string) error {
 			}
 			return plainRenameFallback(full, name, td)
 		}
+		touchTrash(dst)
 		//nolint:gosec // full is storePath-resolved; dst is trashPath-resolved inside the store
 		return os.Remove(full)
 	}
@@ -610,6 +631,7 @@ func trashFile(dir, full, name string) error {
 func plainRenameFallback(full, name, td string) error {
 	//nolint:gosec // full is storePath-resolved; td is trashPath-resolved inside the store
 	if err := os.Rename(full, filepath.Join(td, name)); err == nil {
+		touchTrash(filepath.Join(td, name))
 		return nil
 	} else if !os.IsExist(err) {
 		return err
@@ -644,6 +666,7 @@ func renameWithSuffix(full, name, td string) error {
 			}
 			continue
 		}
+		touchTrash(dst)
 		return nil
 	}
 	return fmt.Errorf("trash collision for %q", name)
