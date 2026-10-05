@@ -191,7 +191,7 @@ function syncQueryParam() {
 			onclick={onToggleLint}
 			aria-label="Show or hide lint findings"
 			aria-expanded={showLint}
-			class:active={showLint}
+			class={showLint && "active"}
 			data-testid="lint-toggle"
 		>
 			Lint{store.lint.length ? ` (${store.lint.length})` : ""}

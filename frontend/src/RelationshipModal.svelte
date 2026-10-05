@@ -132,7 +132,7 @@ function create() {
 
 	<fieldset class="types">
 		<legend>Type</legend>
-		<label class="type" class:on={type === "1:N"}>
+		<label class={["type", type === "1:N" && "on"]}>
 			<input
 				type="radio"
 				name="rel-type"
@@ -144,7 +144,7 @@ function create() {
 			<span class="tn">1:N</span>
 			<small>one to many</small>
 		</label>
-		<label class="type" class:on={type === "1:1"}>
+		<label class={["type", type === "1:1" && "on"]}>
 			<input
 				type="radio"
 				name="rel-type"
@@ -156,7 +156,7 @@ function create() {
 			<span class="tn">1:1</span>
 			<small>one to one</small>
 		</label>
-		<label class="type" class:on={type === "N:N"}>
+		<label class={["type", type === "N:N" && "on"]}>
 			<input
 				type="radio"
 				name="rel-type"

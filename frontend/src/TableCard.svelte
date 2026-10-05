@@ -79,8 +79,7 @@ function cardMetricsAttachment(el) {
 </script>
 
 <section
-	class="table"
-	class:selected={store.selected === table.id}
+	class={["table", store.selected === table.id && "selected"]}
 	data-table-id={table.id}
 	{@attach cardMetricsAttachment}
 	style="left:{table.x}px; top:{table.y}px"

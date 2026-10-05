@@ -10,7 +10,7 @@ let {
 </script>
 
 <div class="row">
-	<span class="cname" class:pk={column.pk} title={column.name || undefined}>{column.name}</span>
+	<span class={["cname", column.pk && "pk"]} title={column.name || undefined}>{column.name}</span>
 	<span class="ty" title={column.type || undefined}>{column.type}</span>
 	<span class="flags">
 		{#if column.pk}<b>PK</b>{/if}

@@ -594,9 +594,7 @@ function onKey(ev) {
 		id="erd-canvas"
 		tabindex="-1"
 		{@attach canvasAttach}
-		class="canvas"
-		class:dragging={!!drag}
-		class:panning={!!pan?.moved}
+		class={["canvas", drag && "dragging", pan?.moved && "panning"]}
 		role="application"
 		aria-label="ERD canvas. Drag empty space to pan; arrow keys pan when no table is selected."
 		onwheel={onWheel}

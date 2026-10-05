@@ -248,7 +248,7 @@ function remove() {
 		<fieldset class="rel">
 			<legend>Relationship · {relState}</legend>
 			<div class="relkinds">
-				<label class="relkind" class:on={relKind === "1:N"}>
+				<label class={["relkind", relKind === "1:N" && "on"]}>
 					<input
 						type="radio"
 						name="rel-kind-{column.id}"
@@ -258,7 +258,7 @@ function remove() {
 					/>
 					<span>1:N</span>
 				</label>
-				<label class="relkind" class:on={relKind === "1:1"}>
+				<label class={["relkind", relKind === "1:1" && "on"]}>
 					<input
 						type="radio"
 						name="rel-kind-{column.id}"

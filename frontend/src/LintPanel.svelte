@@ -43,7 +43,10 @@ function longestTablePrefix(msg) {
 		<p class="clean" data-testid="lint-clean">No issues</p>
 	{:else}
 		<ul data-testid="lint-list" aria-label="Lint findings list">
-			{#each store.lint as msg, i (i)}
+			<!-- Keyed by the message itself, not the index: messages carry the
+			     "<table>.<column>" prefix (see Lint() in grammar.go), so each
+			     column can emit at most one finding — strings are unique. -->
+			{#each store.lint as msg (msg)}
 				<li>
 					<button onclick={() => jumpTo(msg)} aria-label="Jump to table for: {msg}" title="jump to table">
 						{msg}
