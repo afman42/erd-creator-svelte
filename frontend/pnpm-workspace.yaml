@@ -1,0 +1,6 @@
+# pnpm 10+ settings (the "pnpm" field in package.json is no longer read).
+# Force the patched devalue: svelte 5.57.0 pins 5.9.2, which is vulnerable
+# to three high-severity advisories (GHSA-j22f-vq7h-c4qm, GHSA-mcm9-63f2-9j32,
+# GHSA-x5rw-q4pp-hg5g); 5.9.3 patches all of them.
+overrides:
+  devalue: ^5.9.3
