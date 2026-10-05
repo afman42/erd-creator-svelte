@@ -89,14 +89,22 @@ function setRelKind(kind) {
 let dlg = $state(null);
 
 // showModal() is imperative, so it cannot be an attribute — see showDialog().
-$effect(() => {
-	showDialog(dlg);
-});
+// The attach runs on mount (the <dialog> is fresh per open); it opens the
+// dialog AND stashes the element: the $state write is what the focus effect
+// below subscribes to, replacing the old bind:this + $effect round-trip.
+/** @param {HTMLDialogElement} el */
+function mountDialog(el) {
+	dlg = el;
+	showDialog(el);
+}
 
 // Focus the name field whenever the edited column changes (mount + "Add
 // another" switches). Edits never change column.id, so keystrokes do not
 // re-trigger — only a column switch does. Desktop fine pointers only: on
 // touch the focus would pop the keyboard over the dialog just opened.
+// Imperative DOM work (matchMedia/querySelector/focus are method calls, no
+// state writes) — the autofixer's "$derived instead" suggestion does not
+// apply to a focus() call.
 $effect(() => {
 	void column.id;
 	if (!window.matchMedia("(pointer: fine)").matches) return;
@@ -128,7 +136,7 @@ function remove() {
 }
 </script>
 
-<dialog bind:this={dlg} onclose={onClose} class="modal coledit" aria-labelledby="coledit-title" aria-describedby="coledit-desc">
+<dialog {@attach mountDialog} onclose={onClose} class="modal coledit" aria-labelledby="coledit-title" aria-describedby="coledit-desc">
 	<h2 id="coledit-title">{table.name} · column</h2>
 	<p id="coledit-desc" class="sr-only">Edit column properties. Press Escape to close without losing changes; edits apply live.</p>
 	<!-- Inline field errors (S8): the same failures flash() toasts now also

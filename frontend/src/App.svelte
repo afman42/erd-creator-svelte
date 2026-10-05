@@ -92,10 +92,18 @@ const contentW = $derived(contentSize(store.schema).w);
 const contentH = $derived(contentSize(store.schema).h);
 /** @type {{ id: string, x0: number, y0: number, tx0: number, ty0: number, z: number, moved: boolean } | null} */
 let drag = $state(null);
-// Bound canvas viewport: Svelte 5 delegates events, so ev.currentTarget is
-// unreliable in startPan — read scroll off this instead of the event.
+// Canvas viewport: read scroll off this instead of ev.currentTarget (Svelte 5
+// delegates events, so currentTarget is unreliable in startPan). Assigned by
+// the {@attach} on #erd-canvas — an attachment running on mount, not an
+// $effect round-trip through bind:this.
 /** @type {HTMLElement | null} */
 let canvasEl = $state(null);
+// The canvas lives for the app's lifetime, so the attachment runs exactly
+// once; the $state write is what the read-only handlers subscribe to.
+/** @param {HTMLElement} el */
+function canvasAttach(el) {
+	canvasEl = el;
+}
 // Empty-canvas pan: press origin + scroll origin; moves scroll, never schema.
 /** @type {{ x0: number, y0: number, sl0: number, st0: number, moved: boolean } | null} */
 let pan = $state(null);
@@ -180,6 +188,9 @@ const dark = $derived(store.theme === "dark");
 
 // store.schema is the single reactive root; deep-change tracker + debounce fan-out.
 // showSql read untracked so toggling the panel alone doesn't mark the file dirty.
+// touch() schedules debounced lint/save/SQL work — an imperative side channel
+// (no $derived can fetch DDL or write storage), so the untrack+touch pair is
+// deliberate, not an assignment the autofixer's $derived suggestion applies to.
 $effect(() => {
 	void JSON.stringify(store.schema);
 	untrack(() => touch(showSql));
@@ -209,7 +220,9 @@ $effect(() => {
 // URL so the two writers never fight over one param.
 // Tracked reactive roots: showSql/showLint/zoom/store.schema/store.selected/
 // store.currentFile. untrack() is absent here on purpose — every root above
-// must re-fire the mirror when it changes.
+// must re-fire the mirror when it changes. The mirror writes to the browser
+// history (encodeViewState is called for its side effect), so the whole body
+// is an imperative sync, not a value that could be $derived.
 $effect(() => {
 	const selName =
 		store.schema.tables.find((t) => t.id === store.selected)?.name ?? "";
@@ -233,6 +246,10 @@ $effect(() => {
 // so the schema is the loaded file — refreshing SQL on the scratch default
 // would fetch (and briefly render) the wrong DDL, and the touch effect's
 // debounced refresh can land after the real one.
+// The showSql write below is the one-shot result of the deep link — a
+// conditional initialized here on purpose (opening it at mount would schedule
+// a scratch-schema SQL refresh via touch), so it must stay in the guarded
+// effect rather than becoming an initializer or a $derived.
 $effect(() => {
 	const files = store.files;
 	if (!files.length || appliedDeepLink || !store.currentFile) return;
@@ -576,7 +593,7 @@ function onKey(ev) {
 	<div
 		id="erd-canvas"
 		tabindex="-1"
-		bind:this={canvasEl}
+		{@attach canvasAttach}
 		class="canvas"
 		class:dragging={!!drag}
 		class:panning={!!pan?.moved}

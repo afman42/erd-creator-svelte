@@ -57,13 +57,14 @@ const junctionName = $derived(
 	type === "N:N" ? `${childName}_${parentName}` : null,
 );
 
-/** @type {HTMLDialogElement | null} */
-let dlg = $state(null);
-
 // showModal() is imperative, so it cannot be an attribute — see showDialog().
-$effect(() => {
-	showDialog(dlg);
-});
+// The attach runs once on mount (the <dialog> is fresh per open) and hands
+// the element straight to the shared helper: no bind:this + $state + $effect
+// round-trip, no element handle needed elsewhere in this modal.
+/** @param {HTMLDialogElement} el */
+function mountDialog(el) {
+	showDialog(el);
+}
 
 // Human description per type, shown under the select so the flags written
 // (NOT NULL / UNIQUE / junction) are visible before Create.
@@ -95,7 +96,7 @@ function create() {
 }
 </script>
 
-<dialog bind:this={dlg} onclose={onClose} class="modal reledit" aria-labelledby="rel-title">
+<dialog {@attach mountDialog} onclose={onClose} class="modal reledit" aria-labelledby="rel-title">
 	<h2 id="rel-title">New relationship</h2>
 	<p class="sub">Pick the two tables and how they link — the FK is added for you.</p>
 

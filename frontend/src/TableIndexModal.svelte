@@ -33,13 +33,15 @@ let { table, onClose } = $props();
 let draft = $state([]);
 
 const indexes = $derived(table.indexes ?? []);
-/** @type {HTMLDialogElement | null} */
-let dlg = $state(null);
 
 // showModal() is imperative, so it cannot be an attribute — see showDialog().
-$effect(() => {
-	showDialog(dlg);
-});
+// The attach runs once on mount (the <dialog> is fresh per open) and hands
+// the element straight to the shared helper: no bind:this + $state + $effect
+// round-trip, no element handle needed elsewhere in this modal.
+/** @param {HTMLDialogElement} el */
+function mountDialog(el) {
+	showDialog(el);
+}
 
 function toggleDraft(id) {
 	draft = draft.includes(id) ? draft.filter((n) => n !== id) : [...draft, id];
@@ -63,7 +65,7 @@ function shownName(ix) {
 }
 </script>
 
-<dialog bind:this={dlg} onclose={onClose} class="modal idxedit" aria-labelledby="idxedit-title" aria-describedby="idxedit-desc">
+<dialog {@attach mountDialog} onclose={onClose} class="modal idxedit" aria-labelledby="idxedit-title" aria-describedby="idxedit-desc">
 	<h2 id="idxedit-title">{table.name} · table</h2>
 	<p id="idxedit-desc" class="sr-only">Edit the table comment and composite indexes. Press Escape to close.</p>
 
@@ -136,7 +138,9 @@ function shownName(ix) {
 	</fieldset>
 
 	<footer>
-		<button class="done" onclick={() => dlg?.close()}>Done</button>
+		<!-- Close = parent unmounts the dialog ({#if} in TableCard): no element
+		     handle needed, Escape still closes natively via onclose. -->
+		<button class="done" onclick={onClose}>Done</button>
 	</footer>
 </dialog>
 
