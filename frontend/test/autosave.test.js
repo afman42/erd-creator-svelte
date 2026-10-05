@@ -57,7 +57,7 @@ test("touch with showSql schedules sql", async () => {
 	resetAutosave();
 });
 
-test("load drops the swap echo and clears timers+dirty", async () => {
+test("load clears timers+dirty but the swap echo refreshes panels", async () => {
 	resetAutosave();
 	const store = makeStore();
 	let lintCalled = 0;
@@ -72,17 +72,17 @@ test("load drops the swap echo and clears timers+dirty", async () => {
 	load(store);
 	assert.equal(isDirty(), false);
 	assert.equal(store.dirty, false);
-	// the $effect echo from the schema swap schedules nothing
+	// the $effect echo from the schema swap schedules no save and never
+	// dirties, but it must refresh lint so an opened file's findings show
 	touch(false, deps);
 	assert.equal(isDirty(), false);
-	assert.equal(lintCalled, 0);
 	await sleep(350);
-	assert.equal(lintCalled, 0);
+	assert.equal(lintCalled, 1);
 	// next real edit works
 	touch(false, deps);
 	assert.equal(isDirty(), true);
 	await sleep(350);
-	assert.equal(lintCalled, 1);
+	assert.equal(lintCalled, 2);
 	resetAutosave();
 });
 

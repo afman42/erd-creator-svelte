@@ -92,6 +92,15 @@ export function touch(
 ) {
 	if (skipNextTouch) {
 		skipNextTouch = false;
+		// A load swap is not an edit: no dirty flag, no autosave (the file
+		// was just read). But the panels must still see the loaded schema —
+		// skipNextTouch used to skip the whole fan-out, so opening a file
+		// with lint findings left the lint panel stale (empty or the
+		// previous file's list) until the first edit.
+		lintTimer = schedule(lintTimer, LINT_DEBOUNCE_MS, refreshLint);
+		if (showSql) {
+			sqlTimer = schedule(sqlTimer, SQL_DEBOUNCE_MS, refreshSql);
+		}
 		return;
 	}
 	editGen++;
