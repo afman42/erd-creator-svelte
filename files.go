@@ -578,14 +578,38 @@ func trashPath(dir string) (string, error) {
 // recycled file or block the recycle. O_EXCL fails on an existing path
 // (including a dangling symlink), and the claim is removed on any failure
 // below so it cannot accumulate.
-// trashSuffix claims a free name with a crypto-rand suffix (O_EXCL semantics via
-// the caller): up to 100 attempts, then a collision error.
+
+// trashSuffix appends a crypto-rand suffix to a trash file name, so a
+// colliding recycle retries with an unpredictable fresh name.
 func trashSuffix(name string) (string, error) {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		return "", err
 	}
 	return name + "." + hex.EncodeToString(suffix[:]), nil
+}
+
+// trashAttempts drives the collision-retry protocol both recycle paths share:
+// try up to 100 fresh suffixed names, handing each to claim. claim reports
+// whether it took the name (done=true — the recycle is settled) and any
+// error; a nil error with done=false means the name collided, try the next.
+// The O_EXCL/EEXIST mechanism belongs to the caller; the attempt count and
+// the collision error belong here, so the two loops cannot drift.
+func trashAttempts(name, td string, claim func(dst string) (done bool, err error)) error {
+	for i := 0; i < 100; i++ {
+		suffixed, err := trashSuffix(name)
+		if err != nil {
+			return err
+		}
+		done, err := claim(filepath.Join(td, suffixed))
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+	}
+	return fmt.Errorf("trash collision for %q", name)
 }
 
 // touchTrash stamps a recycled file with the delete time. os.Link preserves
@@ -618,23 +642,20 @@ func trashFile(dir, full, name string) error {
 		// classify with os.IsNotExist.
 		return plainRenameFallback(full, name, td)
 	}
-	for i := 0; i < 100; i++ {
-		suffixed, err := trashSuffix(name)
-		if err != nil {
-			return err
-		}
-		dst := filepath.Join(td, suffixed)
+	return trashAttempts(name, td, func(dst string) (bool, error) {
+		//nolint:gosec // full is storePath-resolved; dst is trashPath-resolved inside the store
 		if err := os.Link(full, dst); err != nil {
 			if os.IsExist(err) {
-				continue
+				return false, nil // collision: next suffix
 			}
-			return plainRenameFallback(full, name, td)
+			// Cross-device/permission failures fall through to the plain-rename
+			// path (same as the unsuffixed attempt above).
+			return false, plainRenameFallback(full, name, td)
 		}
 		touchTrash(dst)
 		//nolint:gosec // full is storePath-resolved; dst is trashPath-resolved inside the store
-		return os.Remove(full)
-	}
-	return fmt.Errorf("trash collision for %q", name)
+		return true, os.Remove(full)
+	})
 }
 
 // plainRenameFallback handles filesystems where os.Link cannot work
@@ -652,36 +673,30 @@ func plainRenameFallback(full, name, td string) error {
 }
 
 func renameWithSuffix(full, name, td string) error {
-	for i := 0; i < 100; i++ {
-		suffixed, err := trashSuffix(name)
-		if err != nil {
-			return err
-		}
-		dst := filepath.Join(td, suffixed)
+	return trashAttempts(name, td, func(dst string) (bool, error) {
 		//nolint:gosec // dst is trashPath-resolved with a crypto-rand suffix, O_EXCL-claimed
 		claim, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			if os.IsExist(err) {
-				continue
+				return false, nil // collision: next suffix
 			}
-			return err
+			return false, err
 		}
 		if err := claim.Close(); err != nil {
 			_ = os.Remove(dst) //nolint:gosec // dst is the O_EXCL-claimed trash path above
-			return err
+			return false, err
 		}
 		//nolint:gosec // full is storePath-resolved; dst is the O_EXCL-claimed trash path
 		if err := os.Rename(full, dst); err != nil {
 			_ = os.Remove(dst) //nolint:gosec // dst is the just-claimed trash path above
 			if os.IsNotExist(err) {
-				return err
+				return false, err
 			}
-			continue
+			return false, nil // claim was lost (raced a sweep): next suffix
 		}
 		touchTrash(dst)
-		return nil
-	}
-	return fmt.Errorf("trash collision for %q", name)
+		return true, nil
+	})
 }
 
 // sweepTrash removes trash entries older than trashRetention. Called after
