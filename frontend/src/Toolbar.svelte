@@ -323,8 +323,18 @@ function syncQueryParam() {
 		background: var(--color-primary);
 		transform: scaleX(0);
 		transform-origin: left;
-		transition: transform 0.22s ease, opacity 0.22s ease;
+		transition: transform 220ms var(--ease-out), opacity 220ms var(--ease-out);
 		pointer-events: none;
+	}
+	/* The underline's trigger: slides to full width on hover (fine pointers
+	   only — touch taps shouldn't flag the bar) and on keyboard focus. */
+	@media (hover: hover) and (pointer: fine) {
+		.grp:hover::after {
+			transform: scaleX(1);
+		}
+	}
+	.grp:focus-within::after {
+		transform: scaleX(1);
 	}
 	header input.search {
 		background-color: var(--color-bg);
