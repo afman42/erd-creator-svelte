@@ -92,10 +92,8 @@ func allowedHosts(hostHeader string, extra ...string) bool {
 		return true
 	}
 	// Only the name form needs a case: every IP literal ("127.0.0.1", "::1")
-	// already returned via net.ParseIP above, so listing them here would be
-	// unreachable.
-	switch host {
-	case "localhost":
+	// already returned via net.ParseIP above, so they need no list here.
+	if host == "localhost" {
 		return true
 	}
 	for _, e := range extra {

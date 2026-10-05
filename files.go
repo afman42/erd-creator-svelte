@@ -643,7 +643,6 @@ func trashFile(dir, full, name string) error {
 		return plainRenameFallback(full, name, td)
 	}
 	return trashAttempts(name, td, func(dst string) (bool, error) {
-		//nolint:gosec // full is storePath-resolved; dst is trashPath-resolved inside the store
 		if err := os.Link(full, dst); err != nil {
 			if os.IsExist(err) {
 				return false, nil // collision: next suffix
