@@ -1,14 +1,15 @@
 <script>
-import { store } from "./schema.svelte.js";
-import { fly } from "svelte/transition";
 import { quintOut } from "svelte/easing";
+import { fly } from "svelte/transition";
+import { store } from "./schema.svelte.js";
 
 // Toasts enter from below (they stack at the bottom-right edge) and fade out
 // on dismissal: 180ms with a strong ease-out, transform + opacity only.
 // Reduced motion: zero-length flight keeps the live-region announcement but
 // skips the movement — fly is a JS transition, so the CSS media query alone
 // cannot switch it off.
-const toastMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+const toastMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+	.matches
 	? { duration: 0 }
 	: { y: 8, duration: 180, easing: quintOut };
 

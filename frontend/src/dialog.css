@@ -77,7 +77,9 @@ dialog.modal footer {
 }
 dialog.modal button:not(:disabled) {
 	/* Press feedback + hover brightness, both eased by the shared curve. */
-	transition: transform 160ms var(--ease-out), filter 160ms var(--ease-out);
+	transition:
+		transform 160ms var(--ease-out),
+		filter 160ms var(--ease-out);
 }
 dialog.modal button:not(:disabled):hover {
 	filter: brightness(1.08);
