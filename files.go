@@ -36,6 +36,42 @@ func statCapped(full string) (tooLarge bool, err error) {
 	return fi.Size() > maxOpenFile, nil
 }
 
+// handleStatErr maps statCapped's outcome onto the store's response idiom: a
+// missing file is 404 ("file not found: <name>"), an oversize one is 413, and
+// any other stat error is a logged server fault. op names both the user-facing
+// message and the log detail ("rename" → "rename failed" / "rename stat
+// failed"). Returns true when the response is written, so callers return
+// straight after.
+func handleStatErr(w http.ResponseWriter, full, name, op string, tooLarge bool, err error) bool {
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "file not found: "+name, http.StatusNotFound)
+		} else {
+			internalFail(w, op+" failed", op+" stat failed", "path", full, "error", err)
+		}
+		return true
+	}
+	if tooLarge {
+		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+		return true
+	}
+	return false
+}
+
+// handleOpenErr maps an open/rename/delete error onto the same idiom as
+// handleStatErr: missing is 404, anything else a logged server fault.
+func handleOpenErr(w http.ResponseWriter, full, name, op string, err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsNotExist(err) {
+		http.Error(w, "file not found: "+name, http.StatusNotFound)
+	} else {
+		internalFail(w, op+" failed", op+" failed", "path", full, "error", err)
+	}
+	return true
+}
+
 var validName = regexp.MustCompile(`^[\w.-]{1,64}\.sql$`)
 
 // safeName rejects anything that could escape the store dir.
@@ -149,12 +185,7 @@ func handleFiles(dir string) http.Handler {
 			// with no recourse. The rename is same-filesystem (the trash lives
 			// inside the store), so it is atomic and cannot fail halfway. A
 			// missing file stays a 404; everything else is a server fault.
-			if err := trashFile(dir, full, name); err != nil {
-				if os.IsNotExist(err) {
-					http.Error(w, "file not found: "+name, http.StatusNotFound)
-				} else {
-					internalFail(w, "delete failed", "delete failed", "path", full, "error", err)
-				}
+			if err := trashFile(dir, full, name); handleOpenErr(w, full, name, "delete", err) {
 				return
 			}
 			sweepTrash(dir)
@@ -200,15 +231,8 @@ func handleFileOp(w http.ResponseWriter, r *http.Request, dir string, copy bool)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if tooLarge, err := statCapped(fromFull); err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "file not found: "+req.From, http.StatusNotFound)
-		} else {
-			internalFail(w, "rename failed", "rename stat failed", "path", fromFull, "error", err)
-		}
-		return
-	} else if tooLarge {
-		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+	tooLarge, err := statCapped(fromFull)
+	if handleStatErr(w, fromFull, req.From, "rename", tooLarge, err) {
 		return
 	}
 	// Resolving the target refuses a symlink escaping the store either way
@@ -352,25 +376,13 @@ func openReadResult(f *os.File, full string, w http.ResponseWriter) ([]byte, boo
 func openFile(w http.ResponseWriter, full, name string) {
 	// Stat first: the store holds small DDL texts, so an oversized file is
 	// refused with 413 before it is read into memory.
-	if tooLarge, err := statCapped(full); err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "file not found: "+name, http.StatusNotFound)
-		} else {
-			internalFail(w, "open failed", "open stat failed", "path", full, "error", err)
-		}
-		return
-	} else if tooLarge {
-		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+	tooLarge, err := statCapped(full)
+	if handleStatErr(w, full, name, "open", tooLarge, err) {
 		return
 	}
 	//nolint:gosec // full is storePath-resolved inside the store root, never raw user input
 	f, err := os.Open(full)
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "file not found: "+name, http.StatusNotFound)
-		} else {
-			internalFail(w, "open failed", "open failed", "path", full, "error", err)
-		}
+	if handleOpenErr(w, full, name, "open", err) {
 		return
 	}
 	defer func() {
