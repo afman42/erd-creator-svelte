@@ -260,13 +260,13 @@ function syncQueryParam() {
 		flex: 0 0 auto;
 		white-space: nowrap;
 		min-height: 44px;
-		transition: transform 0.15s ease, opacity 0.15s ease;
+		transition: transform 160ms var(--ease-out), opacity 160ms var(--ease-out);
 	}
 	header button:not(:disabled):hover {
 		opacity: 0.92;
 	}
 	header button:not(:disabled):active {
-		transform: translateY(1px);
+		transform: scale(0.97);
 	}
 	header button:focus-visible {
 		outline: 2px solid var(--color-focus);
@@ -310,7 +310,7 @@ function syncQueryParam() {
 		border-radius: var(--radius-md);
 		padding: 6px 8px;
 		scroll-snap-align: start;
-		transition: opacity 0.18s ease;
+		transition: opacity 180ms var(--ease-out);
 	}
 	.grp::after {
 		content: "";
@@ -402,7 +402,7 @@ function syncQueryParam() {
 			flex-wrap: wrap;
 		}
 		.more[open] .grp {
-			animation: more-pop 0.18s ease;
+			animation: more-pop 180ms var(--ease-out);
 		}
 	}
 	@keyframes more-pop {

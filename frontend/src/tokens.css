@@ -50,6 +50,11 @@
 	--space-3: 12px;
 	--space-4: 16px;
 	--font-mono: ui-monospace, monospace;
+	/* Motion: strong custom curves, not stock CSS easings. --ease-out starts
+	   fast (instant feedback) and settles cleanly; --ease-in-out is for
+	   on-screen movement. UI durations stay under 300ms. */
+	--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 /* Visually-hidden but screen-reader-readable. Single shared class: Svelte

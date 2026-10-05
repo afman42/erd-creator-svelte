@@ -762,7 +762,7 @@ function onKey(ev) {
 		border-radius: var(--radius-md);
 		padding: 8px 12px;
 		text-decoration: none;
-		transition: transform 0.15s ease, opacity 0.15s ease;
+		transition: transform 150ms var(--ease-out), opacity 150ms var(--ease-out);
 	}
 	.skip-link:focus-visible {
 		transform: translateY(56px);
@@ -833,10 +833,10 @@ function onKey(ev) {
 	   scopes @keyframes by default, so wrap each name in -global- to unmangle.
 	   Killed under prefers-reduced-motion. */
 	:global(dialog[open]) {
-		animation: dialog-in 140ms ease-out;
+		animation: dialog-in 140ms var(--ease-out);
 	}
 	:global(dialog[open]::backdrop) {
-		animation: backdrop-in 140ms ease-out;
+		animation: backdrop-in 140ms var(--ease-out);
 	}
 	@keyframes -global-dialog-in {
 		from {

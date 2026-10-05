@@ -91,7 +91,7 @@ const sqlLoading = $derived(store.sqlLoading && !store.sqlText);
 		height: 12px;
 		background: var(--color-border-strong);
 		border-radius: var(--radius-sm);
-		animation: pulse 1.4s ease-in-out infinite;
+		animation: pulse 1.4s var(--ease-in-out) infinite;
 	}
 	.sk-line.w70 { width: 70%; }
 	.sk-line.w85 { width: 85%; }
