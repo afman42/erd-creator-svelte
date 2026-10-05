@@ -273,13 +273,21 @@ func quotedCols(ix Index, q func(string) string) string {
 
 // ---- MySQL / MariaDB ----
 
-// fkConstraintLine renders one inline FK constraint for the mysql/postgres
-// builders (CONSTRAINT fk_t_c FOREIGN KEY ...). SQLite has no named
-// CONSTRAINT — it inlines FOREIGN KEY without one — so it keeps its own form.
-func fkConstraintLine(q func(string) string, t Table, c Col, rt Table, rp Col) string {
+// fkConstraintLine renders one inline FK constraint. MySQL/Postgres name it
+// (CONSTRAINT fk_t_c FOREIGN KEY ...); SQLite's column grammar has no
+// CONSTRAINT keyword, so it inlines FOREIGN KEY without a name — the clause
+// core is identical, so one builder with named=false is safer than a second
+// copy that can drift.
+func fkConstraintLine(q func(string) string, t Table, c Col, rt Table, rp Col, named bool) string {
+	if named {
+		return fmt.Sprintf(
+			"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
+			q("fk_"+t.Name+"_"+c.Name), q(c.Name), q(rt.Name), q(rp.Name), fkAction(c), fkUpdateClause(c),
+		)
+	}
 	return fmt.Sprintf(
-		"  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
-		q("fk_"+t.Name+"_"+c.Name), q(c.Name), q(rt.Name), q(rp.Name), fkAction(c), fkUpdateClause(c),
+		"  FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
+		q(c.Name), q(rt.Name), q(rp.Name), fkAction(c), fkUpdateClause(c),
 	)
 }
 
@@ -372,7 +380,7 @@ func buildMysql(tables []Table, header string) string {
 			if !ok {
 				continue
 			}
-			lines = append(lines, fkConstraintLine(quoteTick, t, c, *rt, rp))
+			lines = append(lines, fkConstraintLine(quoteTick, t, c, *rt, rp, true))
 		}
 		// MySQL stores a table comment as a table option following ENGINE.
 		// MariaDB shares the builder, so both dialects carry it. SQLite has no
@@ -501,7 +509,7 @@ func buildPostgres(tables []Table) string {
 			if !ok {
 				continue
 			}
-			lines = append(lines, fkConstraintLine(quoteDQ, t, c, *rt, rp))
+			lines = append(lines, fkConstraintLine(quoteDQ, t, c, *rt, rp, true))
 		}
 		out = append(out, "CREATE TABLE "+quoteDQ(t.Name)+" (\n"+strings.Join(lines, ",\n")+"\n);")
 		out = append(out, post...)
@@ -613,10 +621,7 @@ func buildSqlite(tables []Table, typesMode string) string {
 			if !ok {
 				continue
 			}
-			lines = append(lines, fmt.Sprintf(
-				"  FOREIGN KEY (%s) REFERENCES %s (%s) ON DELETE %s%s",
-				quoteTick(c.Name), quoteTick(rt.Name), quoteTick(rp.Name), fkAction(c), fkUpdateClause(c),
-			))
+			lines = append(lines, fkConstraintLine(quoteTick, t, c, *rt, rp, false))
 		}
 		out = append(out, "CREATE TABLE "+quoteTick(t.Name)+" (\n"+strings.Join(lines, ",\n")+"\n);")
 		out = append(out, post...)
