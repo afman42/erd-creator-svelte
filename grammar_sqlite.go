@@ -78,17 +78,16 @@ func stripCommentName(line, colName string) string {
 // without the marker means native — which is also what every file written before
 // the setting existed means.
 func sqliteTypesFromHeader(sql string) string {
-	for _, line := range strings.Split(sql, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !strings.HasPrefix(line, "--") {
-			break // past the header block
-		}
+	portable := false
+	forHeaderLine(sql, func(line string) bool {
 		if strings.Contains(strings.ToLower(line), "types: "+SqliteTypesPortable) {
-			return SqliteTypesPortable
+			portable = true
+			return false // marker found; stop
 		}
+		return true
+	})
+	if portable {
+		return SqliteTypesPortable
 	}
 	return SqliteTypesNative
 }
