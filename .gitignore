@@ -11,3 +11,4 @@ frontend/test-results/
 test-results/
 # Bughunters: local data and screenshots of the real app
 .bughunters/runs/
+.abrunt/
