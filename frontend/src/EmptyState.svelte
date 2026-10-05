@@ -43,12 +43,21 @@ import { addTable } from "./schema.svelte.js";
 		font: inherit;
 		min-height: 44px;
 		min-width: 44px;
+		transition: transform 160ms var(--ease-out);
 	}
 	.empty-cta:hover {
 		background: var(--color-primary-hover);
 	}
+	.empty-cta:active {
+		transform: scale(0.97);
+	}
 	.empty-cta:focus-visible {
 		outline: 2px solid var(--color-focus);
 		outline-offset: 2px;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.empty-cta {
+			transition: none;
+		}
 	}
 </style>

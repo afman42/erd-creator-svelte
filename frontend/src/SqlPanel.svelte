@@ -61,9 +61,13 @@ const sqlLoading = $derived(store.sqlLoading && !store.sqlText);
 		font: inherit;
 		min-height: 44px;
 		min-width: 44px;
+		transition: transform 160ms var(--ease-out);
 	}
 	.sqlhead button:hover {
 		background: var(--color-primary-hover);
+	}
+	.sqlhead button:active {
+		transform: scale(0.97);
 	}
 	.sqlhead button:focus-visible {
 		outline: 2px solid var(--color-focus);
@@ -107,6 +111,9 @@ const sqlLoading = $derived(store.sqlLoading && !store.sqlText);
 	@media (prefers-reduced-motion: reduce) {
 		.sk-line {
 			animation: none;
+		}
+		.sqlhead button {
+			transition: none;
 		}
 	}
 </style>

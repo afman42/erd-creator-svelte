@@ -71,12 +71,16 @@ let {
 		cursor: grab;
 		font-size: 14px;
 		padding: 0;
+		transition: transform 160ms var(--ease-out);
 	}
 	.row:hover .conn,
 	.row:focus-within .conn,
 	.row .conn:focus-visible {
 		opacity: 1;
 		pointer-events: auto;
+	}
+	.row .conn:active {
+		transform: translateY(-50%) scale(0.97);
 	}
 	.row .conn:focus-visible {
 		outline: 1px solid var(--color-focus);
@@ -141,9 +145,13 @@ let {
 		cursor: pointer;
 		font-size: 14px;
 		padding: 0;
+		transition: transform 160ms var(--ease-out);
 	}
 	.row .edit:hover {
 		color: var(--color-focus);
+	}
+	.row .edit:active {
+		transform: scale(0.97);
 	}
 	.row .edit:focus-visible {
 		outline: 1px solid var(--color-focus);
@@ -159,5 +167,11 @@ let {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.row .edit,
+		.row .conn {
+			transition: none;
+		}
 	}
 </style>

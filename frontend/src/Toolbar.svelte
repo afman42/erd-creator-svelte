@@ -372,10 +372,13 @@ function syncQueryParam() {
 		box-sizing: border-box;
 		display: inline-flex;
 		align-items: center;
-		transition: opacity 0.18s ease;
+		transition: opacity 180ms var(--ease-out), transform 160ms var(--ease-out);
 	}
 	.more > summary:hover {
 		border-color: var(--color-border-strong);
+	}
+	.more > summary:active {
+		transform: scale(0.97);
 	}
 	.more[open] > summary {
 		border-color: var(--color-primary);

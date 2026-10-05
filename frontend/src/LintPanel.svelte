@@ -107,13 +107,22 @@ function longestTablePrefix(msg) {
 		cursor: pointer;
 		min-height: 44px;
 		overflow-wrap: anywhere;
+		transition: transform 160ms var(--ease-out);
 	}
 	li button:hover {
 		outline: 1px solid var(--color-border);
 		outline-offset: -1px;
 	}
+	li button:active {
+		transform: scale(0.97);
+	}
 	li button:focus-visible {
 		outline: 1px solid var(--color-focus);
 		outline-offset: -1px;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		li button {
+			transition: none;
+		}
 	}
 </style>

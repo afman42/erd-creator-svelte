@@ -75,8 +75,21 @@ dialog.modal footer {
 	align-items: center;
 	margin-top: 12px;
 }
+dialog.modal button:not(:disabled) {
+	/* Press feedback + hover brightness, both eased by the shared curve. */
+	transition: transform 160ms var(--ease-out), filter 160ms var(--ease-out);
+}
 dialog.modal button:not(:disabled):hover {
 	filter: brightness(1.08);
+}
+dialog.modal button:not(:disabled):active {
+	transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	dialog.modal button:not(:disabled) {
+		transition: none;
+	}
 }
 
 dialog.modal button:focus-visible,

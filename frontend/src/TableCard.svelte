@@ -248,6 +248,7 @@ function cardMetricsAttachment(el) {
 		cursor: pointer;
 		font-size: 14px;
 		line-height: 1;
+		transition: transform 160ms var(--ease-out);
 	}
 	/* Selection dot: filled when the card is selected (aria-pressed + the
 	   section.selected ring already announce it; the dot is the visual). */
@@ -263,6 +264,9 @@ function cardMetricsAttachment(el) {
 	}
 	.hdr button:hover {
 		color: var(--color-danger);
+	}
+	.hdr button:active {
+		transform: scale(0.97);
 	}
 	.hdr button.selectbtn:hover {
 		color: var(--color-text-muted);
@@ -286,13 +290,23 @@ function cardMetricsAttachment(el) {
 		padding: 3px;
 		cursor: pointer;
 		font: inherit;
+		transition: transform 160ms var(--ease-out);
 	}
 	.addcol:hover {
 		color: var(--color-primary-hover);
+	}
+	.addcol:active {
+		transform: scale(0.97);
 	}
 
 	.addcol:focus-visible {
 		outline: 1px solid var(--color-focus);
 		outline-offset: -1px;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.hdr button,
+		.addcol {
+			transition: none;
+		}
 	}
 </style>
