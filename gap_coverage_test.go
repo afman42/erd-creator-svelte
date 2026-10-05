@@ -263,14 +263,14 @@ func TestParseMysqlBodyLineBranches(t *testing.T) {
 	tbl := &Table{ID: "t1", Name: "t", Columns: []Col{{Name: "id", Type: "INT"}, {Name: "email", Type: "VARCHAR(10)"}}}
 	var pending []pendingFK
 	// PK
-	if err := parseMysqlBodyLine("PRIMARY KEY (`id`)", "PRIMARY KEY (`id`),", tbl, &pending, 1); err != nil {
+	if err := parseMysqlBodyLine("PRIMARY KEY (`id`)", "PRIMARY KEY (`id`),", bodyCtx{tbl, &pending, 1}); err != nil {
 		t.Fatalf("PK: %v", err)
 	}
 	if !tbl.Columns[0].Pk {
 		t.Error("PK not marked")
 	}
 	// UKey
-	if err := parseMysqlBodyLine("UNIQUE KEY `ux_email` (`email`)", "UNIQUE KEY `ux_email` (`email`),", tbl, &pending, 2); err != nil {
+	if err := parseMysqlBodyLine("UNIQUE KEY `ux_email` (`email`)", "UNIQUE KEY `ux_email` (`email`),", bodyCtx{tbl, &pending, 2}); err != nil {
 		t.Fatalf("UKey: %v", err)
 	}
 	if !tbl.Columns[1].Ux {
@@ -278,7 +278,7 @@ func TestParseMysqlBodyLineBranches(t *testing.T) {
 	}
 	// Index
 	tbl2 := &Table{ID: "t2", Name: "t", Columns: []Col{{Name: "tag", Type: "VARCHAR(10)"}}}
-	if err := parseMysqlBodyLine("KEY `idx_t_tag` (`tag`)", "KEY `idx_t_tag` (`tag`),", tbl2, &pending, 3); err != nil {
+	if err := parseMysqlBodyLine("KEY `idx_t_tag` (`tag`)", "KEY `idx_t_tag` (`tag`),", bodyCtx{tbl2, &pending, 3}); err != nil {
 		t.Fatal(err)
 	}
 	if !tbl2.Columns[0].Ix {
@@ -286,23 +286,23 @@ func TestParseMysqlBodyLineBranches(t *testing.T) {
 	}
 	// FK
 	tbl3 := &Table{ID: "t3", Name: "posts", Columns: []Col{{Name: "user_id", Type: "INT"}}}
-	if err := parseMysqlBodyLine("CONSTRAINT `fk_posts_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE", "CONSTRAINT ...", tbl3, &pending, 4); err != nil {
+	if err := parseMysqlBodyLine("CONSTRAINT `fk_posts_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE", "CONSTRAINT ...", bodyCtx{tbl3, &pending, 4}); err != nil {
 		t.Fatal(err)
 	}
 	if len(pending) == 0 {
 		t.Error("FK not pending")
 	}
 	// unsupported clause
-	if err := parseMysqlBodyLine("FOREIGN KEY (`x`) REFERENCES `y` (`id`)", "FOREIGN KEY (`x`) REFERENCES `y` (`id`)", tbl, &pending, 5); err == nil {
+	if err := parseMysqlBodyLine("FOREIGN KEY (`x`) REFERENCES `y` (`id`)", "FOREIGN KEY (`x`) REFERENCES `y` (`id`)", bodyCtx{tbl, &pending, 5}); err == nil {
 		t.Error("unsupported should error")
 	}
 	// cannot parse
-	if err := parseMysqlBodyLine("???", "???", tbl, &pending, 6); err == nil {
+	if err := parseMysqlBodyLine("???", "???", bodyCtx{tbl, &pending, 6}); err == nil {
 		t.Error("garbage should error")
 	}
 	// column
 	tbl4 := &Table{ID: "t4", Name: "t", Columns: []Col{}}
-	if err := parseMysqlBodyLine("`name` VARCHAR(255) NOT NULL", "`name` VARCHAR(255) NOT NULL,", tbl4, &pending, 7); err != nil {
+	if err := parseMysqlBodyLine("`name` VARCHAR(255) NOT NULL", "`name` VARCHAR(255) NOT NULL,", bodyCtx{tbl4, &pending, 7}); err != nil {
 		t.Fatal(err)
 	}
 	if len(tbl4.Columns) != 1 || tbl4.Columns[0].Name != "name" {

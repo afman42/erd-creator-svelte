@@ -507,6 +507,16 @@ func newParserState(dialect string) *parserState {
 	return &parserState{s: &Schema{Dialect: dialect}, byName: map[string]int{}, byID: map[string]int{}, cur: -1}
 }
 
+// bodyCtx bundles the per-body-line parse state the mysql clause helpers all
+// take: the current table, the pending-FK accumulator, and the line number for
+// errors. Three arguments that always travel together — one struct keeps the
+// delegation readable and the error text line-anchored.
+type bodyCtx struct {
+	tbl     *Table
+	pending *[]pendingFK
+	n       int
+}
+
 func (p *parserState) addTable(name string, n int) error {
 	if _, dup := p.byName[name]; dup {
 		return fmt.Errorf("line %d: duplicate table %q", n, name)
@@ -693,7 +703,7 @@ func parseMysql(sql, dialect string) (*Schema, []string, error) {
 		if p.cur < 0 {
 			return nil, nil, fmt.Errorf("line %d: not inside CREATE TABLE: %s", n, lineExcerpt(line))
 		}
-		if err := parseMysqlBodyLine(strings.TrimSuffix(line, ","), line, &p.s.Tables[p.cur], &p.pending, n); err != nil {
+		if err := parseMysqlBodyLine(strings.TrimSuffix(line, ","), line, bodyCtx{&p.s.Tables[p.cur], &p.pending, n}); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -709,7 +719,7 @@ func isSkippableLine(line string) bool {
 	return line == "" || strings.HasPrefix(line, "--") || reInsert.MatchString(line)
 }
 
-func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, n int) error {
+func parseMysqlBodyLine(body, rawLine string, ctx bodyCtx) error {
 	// Clause dispatch on the first token: the old chain ran all four clause
 	// regexps (rePK, reUKey, reIndex, reFK) on EVERY column line — and the
 	// column regexp on every clause line — before reaching the right branch.
@@ -718,17 +728,17 @@ func parseMysqlBodyLine(body, rawLine string, tbl *Table, pending *[]pendingFK, 
 	// clause line never parses as a column first, so one prefix switch picks
 	// the single regexp to run.
 	if hasClausePrefix(body) {
-		return parseMysqlClause(body, rawLine, tbl, pending, n)
+		return parseMysqlClause(body, rawLine, ctx)
 	}
 	m := reColumn.FindStringSubmatch(body)
 	if m == nil {
-		return fmt.Errorf("line %d: cannot parse: %s", n, lineExcerpt(rawLine))
+		return fmt.Errorf("line %d: cannot parse: %s", ctx.n, lineExcerpt(rawLine))
 	}
 	ty := m[2]
 	if mm := reTypeNorm.FindStringSubmatch(ty); mm != nil {
 		ty = strings.ToUpper(mm[1]) + mm[2]
 	}
-	tbl.Columns = append(tbl.Columns, Col{
+	ctx.tbl.Columns = append(ctx.tbl.Columns, Col{
 		Name:    unquoteTick(m[1]),
 		Type:    ty,
 		Nn:      m[3] != "",
@@ -763,18 +773,18 @@ func hasClausePrefix(body string) bool {
 	return false
 }
 
-func parseMysqlClause(body, rawLine string, tbl *Table, pending *[]pendingFK, n int) error {
+func parseMysqlClause(body, rawLine string, ctx bodyCtx) error {
 	if m := rePK.FindStringSubmatch(body); m != nil {
 		// PK lists are comma-separated like index lists, so they get the same
 		// quote-aware split: a column named `a, b` must stay one name.
-		if err := markPKColumns(tbl, splitIndexCols(m[1], unquoteTick), n); err != nil {
+		if err := markPKColumns(ctx.tbl, splitIndexCols(m[1], unquoteTick), ctx.n); err != nil {
 			return err
 		}
 		return nil
 	}
 	if m := reUKey.FindStringSubmatch(body); m != nil {
-		if name := unquoteTick(m[2]); !markCol(tbl, name, func(c *Col) { c.Ux = true }) {
-			return fmt.Errorf("line %d: unknown column %q", n, name)
+		if name := unquoteTick(m[2]); !markCol(ctx.tbl, name, func(c *Col) { c.Ux = true }) {
+			return fmt.Errorf("line %d: unknown column %q", ctx.n, name)
 		}
 		return nil
 	}
@@ -784,8 +794,8 @@ func parseMysqlClause(body, rawLine string, tbl *Table, pending *[]pendingFK, n 
 		// than one is a composite Index on the table. Before this, the pattern
 		// matched but the index was silently dropped — a hand-written
 		// `KEY idx (a, b)` parsed without error and lost the index entirely.
-		if name, ok := routeIndex(tbl, splitIndexCols(m[2], unquoteTick), unquoteTick(m[1])); !ok {
-			return fmt.Errorf("line %d: unknown column %q", n, name)
+		if name, ok := routeIndex(ctx.tbl, splitIndexCols(m[2], unquoteTick), unquoteTick(m[1])); !ok {
+			return fmt.Errorf("line %d: unknown column %q", ctx.n, name)
 		}
 		return nil
 	}
@@ -793,10 +803,10 @@ func parseMysqlClause(body, rawLine string, tbl *Table, pending *[]pendingFK, n 
 		// m[5]/m[7] are the raw ON DELETE/UPDATE actions; resolveActions
 		// (spec.go) applies the DELETE default and the UPDATE omit rule.
 		del, upd := resolveActions(m[5], m[7])
-		*pending = append(*pending, pendingFK{tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), del, upd})
+		*ctx.pending = append(*ctx.pending, pendingFK{ctx.tbl.ID, unquoteTick(m[1]), unquoteTick(m[2]), del, upd})
 		return nil
 	}
-	return fmt.Errorf("line %d: unsupported clause: %s", n, lineExcerpt(rawLine))
+	return fmt.Errorf("line %d: unsupported clause: %s", ctx.n, lineExcerpt(rawLine))
 }
 
 func attachPendingFKs(s *Schema, byName, byID map[string]int, pending []pendingFK, onDrop func(p pendingFK, reason string)) {

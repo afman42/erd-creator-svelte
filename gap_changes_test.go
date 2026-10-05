@@ -56,7 +56,7 @@ func TestHasClausePrefixTable(t *testing.T) {
 func TestEmptyBodyMysqlLine(t *testing.T) {
 	tbl := &Table{ID: "t1", Name: "a"}
 	var pending []pendingFK
-	if err := parseMysqlBodyLine("", "", tbl, &pending, 1); err == nil {
+	if err := parseMysqlBodyLine("", "", bodyCtx{tbl, &pending, 1}); err == nil {
 		t.Error("empty body should error, not panic or append")
 	}
 	if len(tbl.Columns) != 0 {
