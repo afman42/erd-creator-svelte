@@ -97,6 +97,7 @@ function cardMetricsAttachment(el) {
 	     inner-focus special case in the Delete-key guard. -->
 	<div
 		class="hdr"
+		role="presentation"
 		onpointerdown={(e) => onDragStart(table, e)}
 		title="Drag to move · keyboard: select, then arrow keys"
 	>
