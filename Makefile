@@ -47,7 +47,11 @@ $(BIN): $(GO_SRC) frontend
 
 test:
 	cd frontend && pnpm install --frozen-lockfile && pnpm test && pnpm run build
-	$(GO) test -count=1 ./...
+	# -race matches the CI gate: the store is a concurrent HTTP server, so the
+	# race detector is the point, not a courtesy. The override is required —
+	# CGO_ENABLED=0 above is right for the binary, but -race needs cgo (the
+	# CI step keeps it on for exactly this reason).
+	CGO_ENABLED=1 $(GO) test -race -count=1 ./...
 
 lint:
 	test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
