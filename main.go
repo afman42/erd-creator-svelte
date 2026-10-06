@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -14,12 +15,20 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 //go:embed frontend/dist
 var dist embed.FS
+
+// shutdownTimeout bounds the drain window on SIGINT/SIGTERM. Requests here are
+// small JSON/DDL replies that finish in milliseconds; 10s covers a stalled
+// client without letting a stuck connection hold the process open forever.
+const shutdownTimeout = 10 * time.Second
 
 func main() {
 	dir := flag.String("dir", "schemas", "directory holding .sql schema files")
@@ -94,12 +103,33 @@ func main() {
 		slog.Warn("listening on all interfaces with no authentication; restrict -host to loopback on untrusted networks", "host", *host)
 	}
 	srv := newServer(h)
+
+	// Graceful shutdown on SIGINT/SIGTERM. A hard kill would not corrupt a
+	// file — saves are atomic temp+rename — but it would truncate a reply the
+	// browser is mid-read. Shutdown closes the listener (Serve then returns
+	// ErrServerClosed) and drains in-flight requests for up to shutdownTimeout;
+	// done closes only when the drain has finished, so main exits after it.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-quit
+		slog.Info("shutting down")
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			slog.Error("shutdown failed", "error", err)
+		}
+	}()
+
 	// Serve rather than ListenAndServe: the listener is already bound, so the
 	// resolved port is known and logged before the first request is accepted.
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+	<-done
 }
 
 // listenAddr joins the -host and -port flags into an address net.Listen
