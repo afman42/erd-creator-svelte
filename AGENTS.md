@@ -47,7 +47,6 @@ secondary skills per intent. Do not work on Go code without it.
 ### Required Go skills
 
 Beyond routing, always apply these on Go changes in this repo:
-- `.agents/skills/safe-sql-execution/SKILL.md` — grammar/Validate/GenSQL/export/import/store (first, not only at review)
 - `samber/cc-skills-golang@golang-error-handling` — creation, wrapping, single-handling, slog
 - `samber/cc-skills-golang@golang-safety` — nil traps, bounds, overflow on untrusted input
 - `samber/cc-skills-golang@golang-lint` — `.golangci.yml` is source of truth; `make lint` gate
@@ -66,8 +65,7 @@ Single-context layout (root `GLOSSARY.md` + `docs/adr/`). See `docs/agents/domai
 
 - Codebase question → `graphify query/path/explain` first; `graphify-out/wiki/index.md` for navigation; `GRAPH_REPORT.md` only for broad review.
 - Perf regression/optimization ask → `svelte-performance-investigation` global skill.
-- Frontend unit test ask → `.agents/skills/frontend-unit-testing/SKILL.md` (behaviour, frozen literals, VISUAL todos); `svelte-frontend-unit-testing` global skill if present.
-- E2E / browser validation ask → `.agents/skills/playwright-cli/SKILL.md` (serial suite, probe, wipeStore); never point at real `schemas/`.
-- Grammar/Validate/GenSQL/export/import/store ask → `.agents/skills/safe-sql-execution/SKILL.md` first, not only at review.
+- Frontend unit test ask → behaviour, frozen literals, VISUAL todos; `svelte-frontend-unit-testing` global skill if present.
+- E2E / browser validation ask → serial suite, probe, wipeStore; never point at real `schemas/`.
 - After code change → `graphify update .`.
 - Source of truth: README for architecture/threat model; Makefile for targets. Do not copy values here.
